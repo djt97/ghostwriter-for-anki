@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MathJax Preview Sandbox</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      font: 13px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: inherit;
+      background: transparent;
+    }
+    #root {
+      padding: 8px;
+      overflow-wrap: anywhere;
+    }
+    #root > :first-child { margin-top: 0; }
+    #root > :last-child { margin-bottom: 0; }
+    #root img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+    }
+    #root pre {
+      background: rgba(15, 23, 42, 0.08);
+      padding: 8px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    #root code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    #root blockquote {
+      margin: 8px 0;
+      padding-left: 10px;
+      border-left: 3px solid rgba(148, 163, 184, 0.6);
+      color: inherit;
+    }
+    #root table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin: 8px 0;
+    }
+    #root th,
+    #root td {
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      padding: 6px;
+      text-align: left;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- 1) MathJax config (local file) -->
+  <script src="mathjax-config.js"></script>
+
+  <!-- 2) Local MathJax bundle -->
+  <script src="libs/mathjax/tex-mml-chtml.js"></script>
+
+  <!-- 3) Local markdown-it -->
+  <script src="libs/markdown-it.min.js"></script>
+
+  <!-- 4) Sandbox glue code -->
+  <script src="mathjax-sandbox.js"></script>
+</body>
+</html>

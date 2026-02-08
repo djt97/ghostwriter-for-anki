@@ -1,0 +1,16 @@
+{
+  "name": "ghostwriter",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build:full": "node scripts/build-release.js full",
+    "build:lite": "node scripts/build-release.js lite",
+    "build:release": "node scripts/build-release.js",
+    "test:ui": "playwright test -c playwright.config.ts --grep @screenshots",
+    "test:install": "playwright install --with-deps chromium",
+    "test:screenshots": "playwright test -c playwright.config.ts --grep @screenshots"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

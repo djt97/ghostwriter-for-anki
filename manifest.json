@@ -1,0 +1,99 @@
+{
+  "manifest_version": 3,
+  "name": "Ghostwriter for Anki",
+  "description": "Create Anki flashcards with source + context; auto-tag with AI; send via AnkiConnect.",
+  "version": "0.3.0",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' blob: data: http://127.0.0.1:* http://localhost:* https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs.hf.co https://smart.ultimateai.org https://api.openai.com https://generativelanguage.googleapis.com",
+    "sandbox": "sandbox allow-scripts allow-forms; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; object-src 'self'"
+  },
+  "action": {
+  "default_title": "Ghostwriter for Anki",
+  "default_icon": {
+    "16": "icons/icon16.png",
+    "19": "icons/icon19.png",
+    "32": "icons/icon32.png",
+    "38": "icons/icon38.png"
+  }
+},
+"icons": {
+  "16": "icons/icon16.png",
+  "32": "icons/icon32.png",
+  "48": "icons/icon48.png",
+  "128": "icons/icon128.png"
+},
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "contextMenus",
+    "sidePanel",
+    "clipboardRead"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://api.openai.com/*",
+    "https://smart.ultimateai.org/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://huggingface.co/*",
+    "https://cdn-lfs.huggingface.co/*",
+    "https://cdn-lfs.hf.co/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "resources": [
+        "panel.html",
+        "panel.js",
+        "prompts.js",
+        "mathjax-sandbox.html",
+        "mathjax-sandbox.js",
+        "mathjax-config.js",
+        "libs/markdown-it.min.js",
+        "libs/mathjax/tex-mml-chtml.js"
+      ]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "commands": {
+    "open-ghostwriter": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+F",
+        "mac": "Command+Shift+F"
+      },
+      "description": "Open Ghostwriter for Anki Overlay"
+    },
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Open Ghostwriter for Anki side panel"
+    },
+    "open-ghostwriter-with-selection": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+G",
+        "mac": "Command+Shift+G"
+      },
+      "description": "Open Ghostwriter for Anki and paste the current selection into Back"
+    },
+    "quickflash-toggle-source-mode": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Toggle Copilot Source mode (auto/clipboard/page)"
+    }
+  },
+  "options_page": "options.html"
+}

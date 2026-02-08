@@ -1,0 +1,1214 @@
+
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+  />
+  <title>Ghostwriter for Anki</title>
+  <style>
+    /* ---------- Design tokens (light) ---------- */
+    :root {
+      --bg:            #f8fafc;  /* slate-50 */
+      --surface:       #ffffff;  /* card surface */
+      --surface-2:     #f1f5f9;  /* subtle panels */
+      --border:        #e2e8f0;  /* soft strokes */
+      --text:          #0f172a;  /* slate-900 */
+      --muted:         #475569;  /* slate-600 */
+      --accent:        #2563eb;  /* blue-600 (AA on white) */
+      --accent-ink:    #ffffff;
+      --ring:          color-mix(in oklab, var(--accent) 30%, white);
+      --radius:        12px;
+      --radii-sm:      8px;
+      --shadow-sm:     0 1px 2px rgba(15,23,42,.06), 0 1px 1px rgba(15,23,42,.04);
+      --shadow-md:     0 10px 24px rgba(15,23,42,.12), 0 2px 8px rgba(15,23,42,.08);
+      --input-bg:      #ffffff;
+      --input-border:  var(--border);
+      --focus-outline: 3px;
+    }
+    /* ---------- Design tokens (dark) ---------- */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:           #0b1220;  /* near-slate-950 */
+        --surface:      #0f172a;  /* slate-900 */
+        --surface-2:    #111827;  /* slightly lighter than surface */
+        --border:       #1f2937;  /* slate-800 */
+        --text:         #e5e7eb;  /* slate-200 */
+        --muted:        #94a3b8;  /* slate-400 */
+        --accent:       #60a5fa;  /* blue-400 (AA on slate-900) */
+        --accent-ink:   #0b1220;
+        --ring:         color-mix(in oklab, var(--accent) 30%, black);
+        --input-bg:     #0f172a;
+        --input-border: #273548;
+        --shadow-sm:    0 1px 2px rgba(0,0,0,.6), 0 1px 1px rgba(0,0,0,.5);
+        --shadow-md:    0 10px 24px rgba(0,0,0,.65), 0 2px 8px rgba(0,0,0,.5);
+      }
+    }
+
+    /* ---------- Base ---------- */
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    html, body {
+      height: 100%;
+      width: 100%;
+      max-width: 100vw;
+      overflow-x: hidden;
+    }
+    body {
+      margin: 0;
+      font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+    .small { font-size: 12px; color: var(--muted); }
+    .label { font-weight: 600; color: var(--text); }
+
+    header {
+      position: sticky; top: 0; z-index: 5;
+      padding: 10px 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: saturate(1.2) blur(6px);
+    }
+    header h1 { font-size: 14px; margin: 0; color: var(--text); }
+    header h1 .version { font-size: 10px; font-weight: 500; color: var(--muted); margin-left: 6px; }
+    header .inline a { color: var(--muted); text-decoration: none; }
+    header .inline a:hover { text-decoration: underline; }
+
+    main { padding: 12px; padding-bottom: 60px; display: grid; gap: 12px; max-width: 820px; margin: 0 auto; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .quick-options-shell { border: none; padding: 0; background: transparent; }
+    .quick-options-shell summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--text);
+      padding: 4px 2px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      list-style: none;
+    }
+    .quick-options-shell summary::-webkit-details-marker { display: none; }
+    .quick-options-shell summary::before { content: '▸'; display: inline-block; transition: transform .15s ease; }
+    .quick-options-shell[open] summary::before { transform: rotate(90deg); }
+    .quick-options {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 6px 10px;
+      padding: 10px;
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .quick-options label { display: inline-flex; align-items: center; gap: 6px; }
+    .quick-options b { font-weight: 700; }
+
+    /* ---------- Controls ---------- */
+    textarea, input[type="text"], select {
+      width: 100%;
+      background: var(--input-bg);
+      color: var(--text);
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      box-shadow: var(--shadow-sm);
+      transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+    }
+    textarea { min-height: 96px; }
+    textarea.ai-source { min-height: 120px; }
+    textarea::placeholder, input::placeholder { color: var(--muted); }
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 var(--focus-outline) var(--ring);
+    }
+
+    @media (pointer: coarse) {
+      textarea,
+      input[type="text"],
+      select {
+        font-size: 16px;
+      }
+    }
+
+    .context-input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px;
+      align-items: stretch;
+    }
+    .sticky-toggle {
+      min-width: 36px;
+      padding: 0 10px;
+      border-radius: 10px;
+      border: 1px solid var(--input-border);
+      background: var(--surface-2);
+      color: var(--muted);
+      box-shadow: var(--shadow-sm);
+      cursor: pointer;
+      transition: border-color .15s ease, box-shadow .15s ease, color .15s ease, background .15s ease;
+    }
+    .sticky-toggle:hover,
+    .sticky-toggle[aria-pressed="true"] {
+      color: var(--text);
+      background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+      border-color: color-mix(in srgb, var(--accent) 40%, var(--input-border));
+    }
+    .source-mode-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+    #sourceModeToggle { font-size: 12px; padding: 4px 8px; }
+    #sourceModeHint { margin-top: 4px; }
+    .context-input-row.is-sticky input[type="text"] {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 var(--focus-outline) color-mix(in srgb, #fbbf24 35%, transparent);
+    }
+
+    .qf-ghost-wrap { position: relative; }
+    .qf-ghost {
+      position: absolute; inset: 0; pointer-events: none;
+      padding: 10px 12px;
+      white-space: pre-wrap; overflow-wrap: anywhere;
+      color: var(--muted); opacity: .75; font: inherit; line-height: inherit;
+    }
+    .qf-ghost .mirror { visibility: hidden; }
+    .qf-ghost[hidden] { display: none; }
+    .copilot-suggestion[hidden] { display: none; }
+
+    .copilot-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: -4px;
+    }
+    .copilot-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .copilot-status {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .copilot-status.error { color: #b91c1c; }
+    .copilot-suggestion {
+      margin-top: 6px;
+      padding: 8px 10px;
+      border-radius: var(--radii-sm);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      display: grid;
+      gap: 6px;
+    }
+    .copilot-working {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .copilot-working[hidden] { display: none; }
+    .copilot-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .copilot-meta {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+    }
+    .copilot-hint {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .copilot-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .copilot-suggestion.loading .copilot-text { color: var(--muted); }
+    .copilot-suggestion.error .copilot-text { color: #b91c1c; }
+    .copilot-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .copilot-actions button {
+      font-size: 11px;
+      padding: 4px 6px;
+    }
+
+    .btns { display:flex; gap: 8px; flex-wrap: wrap; }
+    .btns .subtle-btn {
+      font-size: 12px;
+      padding: 6px 10px;
+      background: transparent;
+      color: var(--muted);
+      border-style: dashed;
+    }
+    .btns .subtle-btn:hover { color: var(--text); }
+    .outbox-hint { margin-top: 6px; }
+    button {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, color-mix(in oklab, var(--surface) 92%, white), var(--surface));
+      color: var(--text);
+      cursor: pointer;
+      border-radius: 10px;
+      box-shadow: var(--shadow-sm);
+      transition: transform .06s ease, box-shadow .15s ease, border-color .15s ease, background .15s ease;
+    }
+    button:hover { border-color: color-mix(in oklab, var(--border) 60%, var(--text)); }
+    button:active { transform: translateY(1px); }
+    button.primary {
+      background: var(--accent);
+      color: var(--accent-ink);
+      border-color: var(--accent);
+      box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 6px 16px color-mix(in oklab, var(--accent) 30%, transparent);
+    }
+    button.primary:hover { filter: brightness(1.02); }
+    button.primary:focus-visible { outline: none; box-shadow: 0 0 0 var(--focus-outline) var(--ring); }
+    button.warning {
+      background: color-mix(in oklab, #ef4444 18%, var(--surface));
+      color: #991b1b;
+      border-color: color-mix(in oklab, #ef4444 22%, var(--border));
+    }
+    button.warning:hover { filter: brightness(1.02); }
+
+    .inline { display:inline-flex; align-items:center; gap:6px; }
+
+    /* ---------- Cards / sections ---------- */
+    details, .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      box-shadow: var(--shadow-sm);
+    }
+    details.card-entry { background: var(--surface); }
+    .card-entry summary { font-weight: 600; }
+    summary { cursor: pointer; font-weight: 600; color: var(--text); }
+    .card-entry-body { display: grid; gap: 12px; margin-top: 8px; }
+
+    .editor-bar {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:6px 0 2px;
+    }
+    .editor-status-wrap { display:flex; flex-direction:column; gap:2px; max-width: 100%; }
+    .editor-status { font-weight:600; font-size:13px; max-width: 100%; overflow-wrap: anywhere; }
+    .model-warning { color: #b45309; margin-top: 4px; }
+    .model-info { color: #1f4a85; margin-top: 4px; }
+    .editor-nav-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+    .editor-nav-buttons[hidden] { display: none; }
+    .editor-nav-buttons button { padding: 6px 8px; font-size: 12px; }
+    .editor-meta { font-size:12px; color:var(--muted); }
+    .alt-answers { display:flex; flex-direction:column; gap:8px; margin:10px 0 4px; }
+    .alt-answers[hidden] { display:none; }
+    .alt-answer {
+      display:flex; flex-direction:column; gap:6px;
+      border: 1px dashed var(--border);
+      padding: 8px;
+      border-radius: var(--radii-sm);
+      background: var(--surface-2);
+    }
+    .alt-text { font-size: 12px; color: var(--muted); }
+    .alt-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .alt-actions button { font-size:11px; padding:4px 6px; }
+    .debug-options { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+    .debug-block { display: grid; gap: 6px; }
+    .debug-block textarea {
+      min-height: 90px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+    }
+    .debug-block pre {
+      margin: 0;
+      padding: 8px;
+      border-radius: var(--radii-sm);
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .front-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .front-detection {
+      font-size: 11px;
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 2px 6px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      white-space: nowrap;
+    }
+    .front-detection[data-detected="cloze"] {
+      color: #1f4a85;
+      border-color: color-mix(in oklab, var(--border) 60%, #3b82f6);
+      background: color-mix(in oklab, var(--surface-2) 85%, #dbeafe);
+    }
+
+    /* Wrap long source/previews (AI draft, excerpts) */
+    textarea.ai-source, .source-note, .note-preview div {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- Outbox ---------- */
+    #outboxList { display:flex; flex-direction:column; gap:8px; margin:8px 0; }
+    .outbox-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+      background: var(--surface);
+      box-shadow: var(--shadow-sm);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .outbox-card-header { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .outbox-card-title { font-weight:600; font-size:12px; color: var(--text); flex:1; }
+    .outbox-card-meta { font-size:11px; color: var(--muted); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .outbox-card-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .outbox-card-actions button { font-size:11px; padding:4px 6px; }
+    .outbox-flag {
+      font-size:11px; padding:2px 6px; border-radius: 999px; border: 1px solid var(--border);
+      background: color-mix(in oklab, var(--surface) 85%, #ffedd5);
+      color: #7a2e0e;
+    }
+    .outbox-flag.error {
+      background: color-mix(in oklab, var(--surface) 85%, #fee2e2);
+      color: #991b1b;
+    }
+    .outbox-flag.forced {
+      background: color-mix(in oklab, var(--surface) 85%, #dcfce7);
+      color: #14532d;
+    }
+
+    /* ---------- Duplicate banner (in triage editor) ---------- */
+    .duplicate-banner {
+      margin: 8px 0; padding: 10px 12px;
+      border-radius: var(--radius);
+      border: 1px solid color-mix(in oklab, var(--border) 60%, #f59e0b);
+      background: color-mix(in oklab, var(--surface) 85%, #fff7ed);
+      color: #7a2e0e;
+      display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+    }
+    .duplicate-banner strong { font-weight:600; }
+    .duplicate-banner .actions { display:flex; gap:6px; flex-wrap:wrap; }
+
+    /* ---------- Modal ---------- */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    /* IMPORTANT: actually hide the overlay when [hidden] is set */
+    .modal-overlay[hidden] {
+      display: none !important;
+    }
+
+    .modal {
+      background: var(--surface);
+      border-radius: var(--radius);
+      max-width: 520px; width: calc(100% - 40px);
+      max-height: 80vh; overflow: auto;
+      box-shadow: var(--shadow-md);
+      padding: 12px; display: flex; flex-direction: column; gap: 12px;
+      border: 1px solid var(--border);
+    }
+    .modal header { display:flex; justify-content:space-between; align-items:center; padding:0; border:none; }
+    .modal header h2 { font-size: 14px; margin:0; color: var(--text); }
+    .modal header button { border:none; background:transparent; font-size:16px; cursor:pointer; padding:4px; line-height:1; color: var(--muted);}
+    .modal .modal-body { display:flex; flex-direction:column; gap:8px; font-size:12px; }
+    .modal .note-preview {
+      border: 1px solid var(--border);
+      border-radius: var(--radii-sm);
+      padding: 8px;
+      background: var(--surface-2);
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .modal .note-preview div { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+    .markdown-section {
+      border: 1px dashed color-mix(in oklab, var(--border) 70%, var(--accent));
+      border-radius: var(--radii-sm);
+      padding: 8px;
+      background: var(--surface-2);
+    }
+    .markdown-section[hidden] { display: none; }
+    .markdown-render {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+    .markdown-render.preview-frame {
+      width: 100%;
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      background: var(--input-bg);
+      min-height: 44px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* Inline “same box” MathJax preview – sits on top of textarea */
+    .markdown-section.inline-preview {
+      position: absolute;
+      inset: 0;
+      border: none;
+      padding: 0;
+      background: transparent;
+      pointer-events: none;
+    }
+
+    .markdown-section.inline-preview[hidden] {
+      display: none;
+    }
+
+    .markdown-section.inline-preview .preview-frame,
+    .markdown-section.inline-preview .markdown-render.preview-frame {
+      width: 100%;
+      height: 100%;
+      min-height: 44px;
+      border: 1px solid var(--input-border);
+      border-radius: 10px;       /* match textarea rounding */
+      background: var(--input-bg);
+      box-shadow: var(--shadow-sm);
+    }
+    .markdown-render > :first-child { margin-top: 0; }
+    .markdown-render > :last-child { margin-bottom: 0; }
+    .markdown-render img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .markdown-render pre {
+      background: rgba(15, 23, 42, 0.08);
+      padding: 8px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    .markdown-render code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .markdown-render blockquote {
+      margin: 8px 0;
+      padding-left: 10px;
+      border-left: 3px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+      color: var(--muted);
+    }
+    .markdown-render table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 12px;
+    }
+    .markdown-render th,
+    .markdown-render td {
+      border: 1px solid var(--border);
+      padding: 4px 6px;
+      text-align: left;
+    }
+
+    footer { padding: 10px 12px; border-top: 1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+
+    .shortcut-help-btn {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--shadow-md);
+      cursor: pointer;
+      z-index: 30;
+      transition: transform .15s ease, box-shadow .15s ease, color .15s ease, border-color .15s ease;
+    }
+    .shortcut-help-btn:hover {
+      color: var(--text);
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--accent) 40%, var(--input-border));
+      box-shadow: 0 8px 18px rgba(15,23,42,.18);
+    }
+    .shortcut-help-btn:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 var(--focus-outline) var(--ring);
+    }
+    body[data-triage-active="true"] .shortcut-help-btn {
+      bottom: 64px;
+    }
+    .shortcut-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 8px;
+    }
+    .shortcut-list li {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) auto;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: var(--radii-sm);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+    }
+    .shortcut-list code {
+      font-weight: 600;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--text);
+    }
+    .shortcut-note {
+      border-radius: var(--radii-sm);
+      padding: 8px 10px;
+      border: 1px solid color-mix(in oklab, var(--border) 60%, #f59e0b);
+      background: color-mix(in oklab, var(--surface) 88%, #fff7ed);
+      color: #7a2e0e;
+    }
+
+    .triage-footer {
+      position: fixed;
+      inset-inline: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -4px 12px rgba(0,0,0,.12);
+      z-index: 20;
+    }
+    .triage-footer[hidden] { display: none; }
+    .triage-footer button { padding: 8px 12px; font-size: 13px; }
+    body[data-triage-active="true"] header {
+      border-bottom-color: color-mix(in oklab, var(--accent) 60%, var(--border));
+      box-shadow: 0 4px 18px rgba(37,99,235,.12);
+    }
+    body[data-triage-active="true"] .editor-status {
+      color: var(--accent);
+    }
+    body[data-triage-active="true"] .triage-footer {
+      box-shadow: 0 -4px 16px rgba(15,23,42,.18);
+    }
+
+    /* ---------- Scrollbar polish (Chromium/WebKit) ---------- */
+    *::-webkit-scrollbar { height: 10px; width: 10px; }
+    *::-webkit-scrollbar-thumb {
+      background: color-mix(in oklab, var(--border) 40%, var(--text) 10%);
+      border-radius: 999px;
+      border: 2px solid var(--surface);
+    }
+    *::-webkit-scrollbar-track { background: transparent; }
+
+    /* ---------- Motion ---------- */
+    :root { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+    }
+
+    /* --- Compact Copilot bar (mobile-friendly) --- */
+    .mini-copilot-bar,
+    .copilot-mini {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin: 6px 0 10px;
+      flex-wrap: wrap;
+    }
+    .mini-copilot-bar {
+      justify-content: flex-end;
+      margin: 4px 0;
+    }
+    .mini-copilot-bar[hidden] { display: none; }
+    .mini-copilot-bar button { font-size: 12px; padding: 6px 8px; }
+
+    .triage-toolbar {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      margin: 4px 0 8px;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .triage-toolbar[hidden] {
+      display: none !important;
+    }
+    .triage-toolbar button {
+      font-size: 12px;
+      padding: 4px 8px;
+    }
+    .triage-toolbar button.primary {
+      background: var(--accent);
+      color: var(--accent-ink);
+      border-color: var(--accent);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* --- Mobile triage + Copilot integration --- */
+
+    /* In mobile editor view, turn triage toolbar into a sticky footer bar */
+    html[data-editor-view="mobile"] body[data-triage-active="true"] #triageToolbar {
+      position: sticky;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 20;
+      margin: 4px 0 0;
+      padding: 8px;
+      background: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--surface) 96%, transparent),
+        var(--surface)
+      );
+      border-top: 1px solid color-mix(in oklab, var(--border) 70%, var(--accent) 20%);
+      box-shadow: 0 -4px 16px rgba(15,23,42,.18);
+      justify-content: space-between;
+      flex-wrap: wrap;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+
+    html[data-editor-view="mobile"] body[data-triage-active="true"] #triageToolbar button {
+      flex: 1 1 calc(50% - 6px);
+      min-width: 0;
+      white-space: nowrap;
+    }
+
+    /* Make the Copilot mini bar feel attached to the triage bar in mobile triage mode */
+    html[data-editor-view="mobile"] body[data-triage-active="true"] #copilotMini {
+      margin-bottom: 0;
+      padding-bottom: 4px;
+      border-bottom: 1px dashed color-mix(in oklab, var(--border) 70%, var(--accent) 10%);
+    }
+
+    .copilot-mini select.small {
+      min-width: 0;
+      flex: 1 1 40%;
+    }
+    .copilot-mini button,
+    .copilot-mini .source-pill {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+    .copilot-mini[hidden] { display: none !important; }  /* make hidden actually hide */
+    .copilot-mini button { font-size:12px; padding:4px 8px; }
+    .source-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-weight: 600;
+      box-shadow: var(--shadow-sm);
+    }
+
+    @media (max-width: 560px) {
+      body { font-size: 16px; line-height: 1.5; }
+      header h1 { font-size: 18px; }
+      .label,
+      .editor-status,
+      .editor-meta { font-size: 14px; }
+      .small { font-size: 12px; }
+      textarea, input[type="text"], select { font-size: 16px; }
+      .quick-options { grid-template-columns: 1fr; }
+      .quick-options-shell { width: 100%; display: block; }
+      #front,
+      #back {
+        height: 22vh;
+        min-height: 22vh;
+        max-height: 40vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        resize: none;
+      }
+      /* Let status + nav wrap instead of forcing the overlay wider */
+      .editor-bar {
+        flex-wrap: wrap;
+        align-items: flex-start;
+      }
+      .editor-status-wrap {
+        flex: 1 1 100%;
+      }
+    }
+
+    /* One‑time triage gesture hint */
+    .triage-hint {
+      margin: 0 0 8px;
+    }
+    .triage-hint[hidden] {
+      display: none;
+    }
+    .triage-hint-body {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px dashed rgba(148, 163, 184, 0.7);
+      background: radial-gradient(circle at top left, rgba(59,130,246,0.18), transparent 55%), var(--surface-2);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: flex-start;
+      font-size: 13px;
+    }
+    .triage-hint-body strong {
+      font-size: 13px;
+    }
+    #triageHintDismiss {
+      margin-left: auto;
+      font-size: 12px;
+      padding: 4px 8px;
+    }
+
+    /* --- Mobile editor typography & tap-zoom behaviour --- */
+    html[data-editor-view="mobile"] body {
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    html[data-editor-view="mobile"] header h1 {
+      font-size: 16px;
+    }
+
+    html[data-editor-view="mobile"] header h1 .version {
+      font-size: 11px;
+    }
+
+    html[data-editor-view="mobile"] .label,
+    html[data-editor-view="mobile"] .editor-status,
+    html[data-editor-view="mobile"] .editor-meta {
+      font-size: 15px;
+    }
+
+    html[data-editor-view="mobile"] .small {
+      font-size: 13px;
+    }
+
+    html[data-editor-view="mobile"] textarea,
+    html[data-editor-view="mobile"] input[type="text"],
+    html[data-editor-view="mobile"] select {
+      font-size: 16px;
+    }
+
+    html[data-editor-view="mobile"] .triage-toolbar button,
+    html[data-editor-view="mobile"] .copilot-mini button,
+    html[data-editor-view="mobile"] .mini-copilot-bar button {
+      font-size: 14px;
+    }
+
+    /* ------ Layout tweaks for explicit mobile editor view ------ */
+    html[data-editor-view="mobile"] main {
+      max-width: 100%;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    html[data-editor-view="mobile"] .card-entry-body {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    html[data-editor-view="mobile"] .row {
+      grid-template-columns: 1fr;
+    }
+
+    /* In mobile view, keep Front & Back at about half height each and scroll on overflow */
+    html[data-editor-view="mobile"] #front,
+    html[data-editor-view="mobile"] #back {
+      height: 20vh;         /* roughly half of the old 40vh */
+      min-height: 20vh;
+      max-height: 40vh;     /* just in case the user manually resizes */
+      overflow-y: auto;     /* scroll when the text is long */
+    }
+
+    /* In mobile view, prefer the inline triage toolbar and hide footer triage bar */
+    html[data-editor-view="mobile"] #triageFooter {
+      display: none !important;
+    }
+
+    /* Hide the legacy Copilot suggestion card; only show ghost overlays */
+    .copilot-suggestion { display: none !important; }
+    .copilot-working    { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ghostwriter for Anki <span class="version">v0.3.0</span></h1>
+    <div class="inline small">
+      <a href="options.html" target="_blank">Options</a>
+      <!-- LITE-REMOVE-START -->
+      <span id="dashboardButtonContainer"></span>
+      <!-- LITE-REMOVE-END -->
+    </div>
+  </header>
+
+  <main>
+    <!-- One‑time mobile triage gesture hint -->
+    <div id="triageHint" class="triage-hint" hidden>
+      <div class="triage-hint-body">
+        <div>
+          <strong>Triage tips</strong>
+          <div>On mobile: swipe <b>right</b> to accept, swipe <b>left</b> to reject. You can also use the toolbar buttons.</div>
+        </div>
+        <button type="button" id="triageHintDismiss">Got it</button>
+      </div>
+    </div>
+    <details class="card-entry" open>
+      <summary>Card editor</summary>
+      <div class="card-entry-body">
+        <div class="row">
+          <div>
+            <div class="label">Deck</div>
+            <select id="deck"></select>
+          </div>
+          <div>
+            <div class="label">Note type</div>
+            <select id="model"></select>
+            <div id="modelFieldWarning" class="small model-warning" role="status" aria-live="polite" hidden></div>
+            <div id="clozeModelNotice" class="small model-info" role="status" aria-live="polite" hidden>Ghostwriter for Anki detects cloze deletions automatically. You can write cloze cards in basic mode; when deletions are present we send them as Cloze.</div>
+          </div>
+        </div>
+
+        <div class="editor-bar">
+          <div class="editor-status-wrap">
+            <div id="editorStatus" class="editor-status">New card</div>
+            <div id="triageMeta" class="editor-meta"></div>
+          </div>
+          <div class="editor-nav-buttons" id="editorNavButtons" hidden>
+            <button type="button" id="triagePrev">◀ Prev</button>
+            <button type="button" id="triageNext">Next ▶</button>
+          </div>
+        </div>
+
+        <details class="quick-options-shell" open>
+          <summary>Quick options</summary>
+          <div class="quick-options">
+            <label class="inline"><input id="fillSourceField" type="checkbox" checked /> Fill <b>Source</b> field (if it exists)</label>
+            <label class="inline"><input id="includeBackLink" type="checkbox" /> Add clickable link on Back</label>
+            <label class="inline"><input id="manualAutoTag" type="checkbox" /> Auto-tag with AI</label>
+            <label class="inline"><input id="manualAutoContext" type="checkbox" /> Generate context</label>
+            <label class="inline"><input id="mathjaxPreview" type="checkbox" /> Auto preview</label>
+            <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable Copilot</label>
+          </div>
+        </details>
+
+        <div>
+          <div class="label front-label-row">
+            <span>Question (Front)</span>
+            <span id="frontDetection" class="front-detection" data-detected="basic" role="status" aria-live="polite">Detected: Basic</span>
+          </div>
+          <div class="qf-ghost-wrap">
+            <textarea id="front" placeholder="Type your question…"></textarea>
+            <div class="qf-ghost" data-field="front" aria-hidden="true">
+              <span class="mirror"></span><span class="ghost"></span>
+            </div>
+            <div class="markdown-section inline-preview" data-preview-block="front" hidden>
+              <iframe id="previewFront" class="markdown-render preview-frame" title="Front preview"></iframe>
+            </div>
+          </div>
+          <div class="copilot-suggestion" data-field="front" hidden>
+            <div class="copilot-header">
+              <div class="copilot-meta">Copilot suggestion</div>
+              <div class="copilot-hint small"></div>
+            </div>
+            <div class="copilot-text"></div>
+            <div class="copilot-actions">
+              <button type="button" class="copilot-accept" data-field="front">Accept</button>
+              <button type="button" class="copilot-refresh" data-field="front">Regenerate</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Compact Copilot mini panel -->
+        <div id="copilotMini" class="copilot-mini">
+          <select id="editorTemplateSelect" class="small"></select>
+          <button type="button" id="editorGenerateBtn" title="Draft cards from Source">Gen</button>
+          <button type="button" id="copilotMiniGenerate" title="Generate Q &amp; A">Copilot</button>
+          <span id="sourceModePill" class="source-pill small" aria-live="polite">Source: Auto</span>
+          <button type="button" id="copilotMiniAccept" title="Accept both">Accept</button>
+          <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)">Reject</button>
+          <button type="button" id="copilotMiniClear" title="Clear Front &amp; Back">Clear</button>
+        </div>
+
+        <!-- Triage toolbar (mobile-friendly; shown when triage is active) -->
+        <div id="triageToolbar" class="triage-toolbar" hidden>
+          <button type="button" id="triageToolbarPrev" title="Previous (↑ / ←)">◀ Prev</button>
+          <button type="button" id="triageToolbarSkip" title="Reject (Esc)">Reject</button>
+          <button type="button" id="triageToolbarAccept" class="primary" title="Accept (A)">Accept</button>
+          <button type="button" id="triageToolbarNext" title="Next (↓ / →)">Next ▶</button>
+        </div>
+
+        <div>
+          <div class="label">Answer (Back)</div>
+          <div class="qf-ghost-wrap">
+            <textarea id="back" placeholder="Type the answer…"></textarea>
+            <div class="qf-ghost" data-field="back" aria-hidden="true">
+              <span class="mirror"></span><span class="ghost"></span>
+            </div>
+            <div class="markdown-section inline-preview" data-preview-block="back" hidden>
+              <iframe id="previewBack" class="markdown-render preview-frame" title="Back preview"></iframe>
+            </div>
+          </div>
+          <div class="copilot-suggestion" data-field="back" hidden>
+            <div class="copilot-header">
+              <div class="copilot-meta">Copilot suggestion</div>
+              <div class="copilot-hint small"></div>
+            </div>
+            <div class="copilot-text"></div>
+            <div class="copilot-actions">
+              <button type="button" class="copilot-accept" data-field="back">Accept</button>
+              <button type="button" class="copilot-refresh" data-field="back">Regenerate</button>
+            </div>
+          </div>
+        </div>
+
+        <details id="sourceContextDetails" class="card" open>
+          <summary>Source &amp; context</summary>
+          <div class="card-entry-body">
+            <div class="row">
+              <div id="contextGroup" data-field-block="context">
+                <div class="label">Context (optional)</div>
+                <div class="context-input-row" id="contextInputRow">
+                  <input id="context" type="text" placeholder="e.g. Chapter 3, lecture notes" />
+                  <button type="button" id="contextStickyToggle" class="sticky-toggle" aria-pressed="false" aria-label="Toggle sticky context" title="Keep this context for this tab">📌</button>
+                </div>
+              </div>
+              <div id="notesGroup" data-field-block="notes">
+                <div class="label">Notes / Extra</div>
+                <textarea id="notes" placeholder="Extra detail to map into the Anki note"></textarea>
+              </div>
+            </div>
+            <div id="sourceGroup" data-field-block="source">
+              <div class="label source-mode-row">
+                <span>Source excerpt</span>
+                <div class="inline" style="gap:6px; align-items:center;">
+                  <button id="useClipboardAsSource" type="button" class="small">Use clipboard as Source</button>
+                  <select id="sourceMode" class="small">
+                    <option value="auto">Source: Auto</option>
+                    <option value="clipboard">Source: Clipboard</option>
+                    <option value="page">Source: Page</option>
+                  </select>
+                  <button type="button" id="sourceModeToggle">Mode: Auto</button>
+                </div>
+              </div>
+              <div class="small" id="sourceModeHint"></div>
+              <textarea id="source" placeholder="Quote or excerpt from the source…"></textarea>
+            </div>
+          </div>
+        </details>
+
+        <div id="altAnswers" class="alt-answers" hidden></div>
+
+        <div class="row">
+          <div>
+            <div class="label">Tags (space-separated)</div>
+            <input id="tags" type="text" placeholder="e.g. research ai memory" />
+          </div>
+          <div class="copilot-row">
+            <div class="small">Copilot status</div>
+            <div id="copilotStatus" class="copilot-status small"></div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Import cards (JSON)</summary>
+      <textarea id="jsonImport" placeholder="Paste JSON from FlashcardGPT here…"></textarea>
+      <div class="btns">
+        <button type="button" id="parseJson">Parse cards</button>
+        <button type="button" id="clearJson">Clear</button>
+      </div>
+    </details>
+
+    <details id="debugPanel" class="card-entry" hidden>
+      <summary>Debugging</summary>
+      <div class="card-entry-body">
+        <div class="debug-options small">
+          <label class="inline"><input id="debugShowSource" type="checkbox" /> Current Source</label>
+          <label class="inline"><input id="debugShowPrompt" type="checkbox" /> Last AI prompt</label>
+          <label class="inline"><input id="debugShowResponse" type="checkbox" /> Last AI response</label>
+          <label class="inline"><input id="debugShowMeta" type="checkbox" /> Request metadata</label>
+          <label class="inline"><input id="debugShowError" type="checkbox" /> Last AI error</label>
+        </div>
+        <div class="debug-block" data-debug-block="source" hidden>
+          <div class="label">Current source excerpt</div>
+          <textarea id="debugSource" readonly></textarea>
+        </div>
+        <div class="debug-block" data-debug-block="prompt" hidden>
+          <div class="label">Last AI prompt</div>
+          <textarea id="debugPrompt" readonly></textarea>
+        </div>
+        <div class="debug-block" data-debug-block="response" hidden>
+          <div class="label">Last AI response</div>
+          <textarea id="debugResponse" readonly></textarea>
+        </div>
+        <div class="debug-block" data-debug-block="meta" hidden>
+          <div class="label">Request metadata</div>
+          <pre id="debugMeta"></pre>
+        </div>
+        <div class="debug-block" data-debug-block="error" hidden>
+          <div class="label">Last AI error</div>
+          <textarea id="debugError" readonly></textarea>
+        </div>
+      </div>
+    </details>
+
+    <details open>
+      <summary>Queue &amp; outbox</summary>
+      <div class="small" id="outboxMeta"></div>
+      <div id="outboxList"></div>
+      <div class="btns">
+        <button id="sendOutbox" class="primary">Send outbox to Anki</button>
+        <button id="undoLastSend">Undo last send</button>
+      </div>
+      <div class="btns">
+        <button type="button" id="triageAcceptAll" class="primary">Queue all remaining</button>
+        <button type="button" id="triageClear">Reset triage</button>
+        <button type="button" id="clearOutbox" class="subtle-btn" hidden>Clear outbox</button>
+        <button type="button" id="triageResume" hidden>Resume triage</button>
+      </div>
+      <div class="small outbox-hint">Tip: right-click or ⌘-click “Reset triage” to reveal the outbox clear action.</div>
+    </details>
+
+    <div class="btns">
+      <button id="refresh">↻ Refresh decks/types</button>
+      <button type="button" id="triageSkip" hidden>Reject</button>
+      <button class="primary" id="add">Add to Anki</button>
+    </div>
+
+    <div class="small" id="status"></div>
+  </main>
+
+  <div id="triageFooter" class="triage-footer" hidden>
+    <button type="button" id="triageFooterPrev">[←] Prev</button>
+    <button type="button" id="triageFooterReject" class="warning">[R] Reject</button>
+    <button type="button" id="triageFooterAccept" class="primary">[A] Accept</button>
+    <button type="button" id="triageFooterNext">[→] Next</button>
+  </div>
+
+  <footer class="small">
+    <span id="pageMeta"></span>
+  </footer>
+
+  <button type="button" id="shortcutHelpButton" class="shortcut-help-btn" aria-label="Show shortcuts">?</button>
+
+  <div id="shortcutHelpModal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcutHelpTitle">
+      <header>
+        <h2 id="shortcutHelpTitle">Keyboard shortcuts</h2>
+        <button type="button" id="shortcutHelpClose" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <ul class="shortcut-list">
+          <li>
+            <span>AI template menu</span>
+            <code id="shortcutAiTemplate">Cmd/Ctrl + Shift + G</code>
+          </li>
+          <li>
+            <span>Copilot generate</span>
+            <code id="shortcutCopilot">Cmd/Ctrl + Shift + X</code>
+          </li>
+          <li>
+            <span>Add to Anki</span>
+            <code id="shortcutAdd">Custom</code>
+          </li>
+          <li>
+            <span>Triage accept / reject</span>
+            <code>A / R (or Esc)</code>
+          </li>
+          <li>
+            <span>Triage next / previous</span>
+            <code>Arrow keys</code>
+          </li>
+          <li>
+            <span>Close overlay</span>
+            <code>Esc</code>
+          </li>
+          <li>
+            <span>Toggle side panel</span>
+            <code>Cmd/Ctrl + Shift + L</code>
+          </li>
+        </ul>
+        <p class="small shortcut-note">
+          If your overlay or side-panel shortcut is set to <strong>Cmd/Ctrl + Shift + G</strong>,
+          it will conflict with the AI template menu in the overlay. Consider choosing a different
+          overlay shortcut in your extension shortcuts.
+          Existing installs may need to rebind shortcuts manually if Chrome does not migrate them.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template chooser palette (keyboard-friendly) -->
+  <div id="aiTemplateModal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiTemplateModalTitle">
+      <header>
+        <h2 id="aiTemplateModalTitle">AI draft from template</h2>
+        <button type="button" id="aiTemplateModalClose" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="small">
+          Choose a template, then press <strong>Enter</strong> to draft cards
+          from the current Source (selection / clipboard / page).
+        </p>
+        <select id="aiTemplateModalSelect" class="small" style="width:100%; margin-top:6px;"></select>
+        <p class="small">
+          Shortcuts:
+          <code>↑/↓</code> to move, <code>Enter</code> to generate,
+          <code>Esc</code> to cancel.
+        </p>
+        <div class="btns" style="margin-top:8px;">
+          <button type="button" id="aiTemplateModalGenerate" class="primary">Generate</button>
+          <button type="button" id="aiTemplateModalCancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="prompts.js" defer></script>
+  <script src="panel.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+  />
+  <title>Ghostwriter for Anki — Knowledge Graph</title>
+  <link rel="stylesheet" href="dashboard.css" />
+  <script src="force-graph.js"></script>
+  
+  <!-- NEW: external import map (allowed by CSP) -->
+  <script type="importmap" src="vendor/importmap.json"></script>
+  <script type="module" src="dashboard.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="title-block">
+      <h1>Knowledge Graph</h1>
+      <p class="muted">Archive, sync, and explore your cards.</p>
+    </div>
+    <div class="actions">
+    <button id="syncNow" class="primary" title="Click: sync known cards. Alt/Option+Click: import all notes from the selected Anki deck into the archive.">Sync with Anki</button>
+    <button id="demoToggle">Try Demo</button>
+    <button id="exportArchive">Backup JSON</button>
+    <button id="importArchiveBtn">Restore JSON</button>
+    <button id="clearSemanticCaches" class="secondary" title="Delete embeddings + KNN cache, then rebuild">Clear semantic caches</button>
+    <input id="importArchive" type="file" accept="application/json" hidden />
+  </div>
+  </header>
+
+  <div id="statusToast" class="pill" style="position:fixed; right:12px; top:64px; z-index:20; display:none;">Embedding cards…</div>
+
+  <main>
+    <section class="controls">
+      <label class="field">
+        <span>Search</span>
+        <input id="search" type="text" placeholder="Front/back/context" />
+      </label>
+      <label class="field">
+        <span>Filter by tag</span>
+        <select id="tagFilter">
+          <option value="">All tags</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Status filter</span>
+        <select id="statusFilter">
+          <option value="all">All</option>
+          <option value="active">Active</option>
+          <option value="archived">Archived</option>
+          <option value="weak">Weak spots</option>
+          <option value="disconnected">Disconnected</option>
+        </select>
+      </label>
+      <label for="linkMode" class="field">
+        <span>Link mode</span>
+        <select id="linkMode">
+          <option value="source+tags">Source + Tags (default)</option>
+          <option value="tags-only">Tags only</option>
+          <option value="semantic-ec">Semantic (local embeddings; auto τ)</option>
+          <option value="semantic-nb">Compute semantic scores (NB near‑critical)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Link Threshold (Shared Tags)</span>
+        <input id="tagThreshold" type="number" min="1" max="10" value="2" />
+      </label>
+      <label class="field">
+        <span>Insight Mode</span>
+        <select id="insightMode">
+          <option value="none">None (Standard View)</option>
+          <option value="structural">Structural Risks</option>
+          <option value="connections">Potential Connections</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Centrality Metric</span>
+        <select id="centralityMetric">
+          <option value="degree">Degree (Simple)</option>
+          <option value="eigenvector">Eigenvector (Influence)</option>
+        </select>
+      </label>
+      <!-- Subgraph scope (applies live to the graph; does not modify the archive) -->
+      <section class="controls" id="scopeControls">
+        <label class="field">
+          <span>Subgraph tags (comma‑sep)</span>
+          <input id="scopeTags" type="text" placeholder="e.g., biology, metabolism" />
+        </label>
+        <label class="field">
+          <span>Tag match</span>
+          <select id="scopeTagMode">
+            <option value="any">Any</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Ghostwriter cards only</span>
+          <input id="scopeQuickflash" type="checkbox" />
+        </label>
+        <label class="field">
+          <span>Semantic topic (optional)</span>
+          <input id="scopeTopic" type="text" placeholder="Type a topic; we'll pick the top‑K most relevant cards" />
+        </label>
+        <label class="field">
+          <span>Max nodes</span>
+          <input id="scopeMaxNodes" type="number" min="50" max="2000" value="400" />
+        </label>
+        <label class="field">
+          <span>Semantic target average degree</span>
+          <input id="semanticTargetAvgDegree" type="number" min="0.5" max="4.0" step="0.1" value="2.0" />
+        </label>
+        <div class="field" style="align-self:end;">
+          <button id="applyGraphOpts" class="secondary" type="button">
+            Apply graph options
+          </button>
+        </div>
+      </section>
+      <label class="field">
+        <span>Show tags in hover</span>
+        <input id="hoverShowTags" type="checkbox" checked />
+      </label>
+      <label class="field">
+        <span>Semantic backend (dashboard)</span>
+        <select id="semanticBackend">
+          <option value="knn">KNN (cached neighbors)</option>
+          <option value="cosine">Brute cosine (no KNN cache)</option>
+        </select>
+        <p class="small">Switch to “Brute cosine” if you ever see an empty graph in Semantic mode.</p>
+      </label>
+      <label class="field">
+        <span>Semantic max joined fraction</span>
+        <input id="semanticMaxJoinedFraction" type="number" min="0.3" max="0.95" step="0.05" placeholder="0.65" />
+        <p class="small">
+          Approximate upper bound on how large the largest semantic component may be,
+          as a fraction of all nodes (default 0.65).
+        </p>
+      </label>
+      <label class="field">
+        <span>Edge labeling (LLM)</span>
+        <input id="edgeLabelingToggle" type="checkbox" />
+      </label>
+      <!-- Import filters (collapsed by default) -->
+      <details id="importFilters" class="field" style="grid-column: 1 / -1;">
+        <summary><strong>Import filters</strong> <span class="small">(applies when you Alt/Option‑click “Sync with Anki”)</span></summary>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:8px;">
+          <label class="field">
+            <span>Match mode</span>
+            <select id="ifMatchMode">
+              <option value="any">Any selected rule</option>
+              <option value="all">All selected rules</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Require Context field</span>
+            <select id="ifRequireContext">
+              <option value="false">No</option>
+              <option value="true">Yes (field non-empty)</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Require Source/URL field</span>
+            <select id="ifRequireSource">
+              <option value="false">No</option>
+              <option value="true">Yes (field non-empty)</option>
+            </select>
+          </label>
+
+          <label class="field" style="grid-column:1/-1;">
+            <span>Only import notes that have any of these tags (CSV)</span>
+            <input id="ifRequireTags" type="text" placeholder="e.g. biology, rome, metabolism" />
+          </label>
+
+          <div class="small" style="grid-column:1/-1;opacity:.8">
+            Tip: You can also pre-filter at the Anki side by deck name when prompted during import.
+          </div>
+        </div>
+      </details>
+      <div class="legend">
+        <span class="pill" data-kind="active">Active</span>
+        <span class="pill" data-kind="weak">Weak</span>
+        <span class="pill" data-kind="archived">Ghost</span>
+      </div>
+    </section>
+
+    <section class="canvas-wrap">
+      <div id="graph"></div>
+      <div id="hoverCard" class="popover" hidden></div>
+      <div id="graphStats" class="legend" style="position:absolute; left:12px; bottom:52px; z-index:6;"></div>
+      <!-- Component/bridge info pill -->
+      <div id="compPanel" class="pill" style="position:absolute; left:12px; bottom:12px; z-index:7; display:none;"></div>
+      <button id="recenter" class="fab" title="Recenter graph">⟳</button>
+    </section>
+  </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-content">
+      <header>
+        <h2 id="modalTitle"></h2>
+        <button id="closeModal" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p id="modalContext" class="muted"></p>
+        <div class="meta-row">
+          <span id="modalSource"></span>
+          <span id="modalStatus" class="pill"></span>
+        </div>
+        <pre id="modalFront" class="card-face"></pre>
+        <pre id="modalBack" class="card-face"></pre>
+        <p id="modalTags" class="muted"></p>
+        <p id="modalHint" class="muted"></p>
+        <div class="actions">
+          <button id="openSource" class="secondary">Open source</button>
+          <button id="remediate" class="primary">AI/Google help</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

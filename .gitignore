@@ -1,0 +1,17 @@
+node_modules/
+playwright-report/
+test-results/
+.tests/
+*.log
+.DS_Store
+
+# Playwright persistent profile
+tests/.pw-user/
+
+# Screenshot artifacts
+tests/screenshots/*.png
+
+# Build output
+/dist/full/
+/dist/lite/
+!/dist/ghostwriter-*.zip

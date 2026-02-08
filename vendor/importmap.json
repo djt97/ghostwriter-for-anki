@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "onnxruntime-web": "/vendor/onnx/ort.wasm.min.mjs",
+    "onnxruntime-web/webgpu": "/vendor/onnx/ort.webgpu.min.mjs"
+  }
+}

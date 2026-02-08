@@ -1,0 +1,83 @@
+name: ui-tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Detect lockfile type for caching + install strategy
+      - name: Detect lockfile
+        id: lock
+        run: |
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            echo "cache=npm" >> $GITHUB_OUTPUT
+          elif [ -f yarn.lock ]; then
+            echo "cache=yarn" >> $GITHUB_OUTPUT
+          elif [ -f pnpm-lock.yaml ]; then
+            echo "cache=pnpm" >> $GITHUB_OUTPUT
+          else
+            echo "cache=none" >> $GITHUB_OUTPUT
+          fi
+
+      # Use setup-node with cache only when a lockfile exists
+      - name: Setup Node (with cache)
+        if: steps.lock.outputs.cache != 'none'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: ${{ steps.lock.outputs.cache }}
+
+      - name: Setup Node (no cache)
+        if: steps.lock.outputs.cache == 'none'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Install dependencies appropriately for the detected package manager
+      - name: Install dependencies
+        run: |
+          if [ "${{ steps.lock.outputs.cache }}" = "npm" ]; then
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci; else npm install; fi
+          elif [ "${{ steps.lock.outputs.cache }}" = "yarn" ]; then
+            if [ -f yarn.lock ]; then yarn install --frozen-lockfile; else yarn install; fi
+          elif [ "${{ steps.lock.outputs.cache }}" = "pnpm" ]; then
+            npm install -g pnpm
+            if [ -f pnpm-lock.yaml ]; then pnpm i --frozen-lockfile; else pnpm i; fi
+          else
+            npm install
+          fi
+
+      # Ensure Playwright has a browser on the runner
+      - name: Install Playwright browsers (Chromium)
+        run: npx playwright install --with-deps chromium
+
+      # Run UI tests in a virtual display with Playwright browser debug logs
+      - name: Run UI tests (with virtual display, Playwright debug logs)
+        timeout-minutes: 12
+        env:
+          DEBUG: pw:browser*
+          EXT_PATH: ${{ github.workspace }}
+        run: xvfb-run -s "-screen 0 1280x800x24" -a npm run test:ui
+
+      # Always upload the Playwright report for debugging
+      - name: Upload Playwright report (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          if-no-files-found: ignore
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickflash-screenshots
+          path: tests/screenshots/

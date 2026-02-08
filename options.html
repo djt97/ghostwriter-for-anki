@@ -1,0 +1,506 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+  />
+  <title>Ghostwriter for Anki — Options</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <header class="page-header">
+    <p class="eyebrow">Settings</p>
+    <h1>Ghostwriter for Anki</h1>
+    <p class="muted">Configure your providers, Copilot preferences, and Anki defaults.</p>
+  </header>
+
+  <main>
+    <nav class="section-index" aria-label="Options sections">
+      <a href="#connection">Connection</a>
+      <a href="#copilot">Copilot</a>
+      <a href="#templates">Templates</a>
+      <a href="#editor">Editor</a>
+      <a href="#defaults">Defaults</a>
+      <a href="#ankiconnect">AnkiConnect</a>
+      <a href="#ankiconnect-status">Connection check</a>
+      <a href="#clipboard">Clipboard</a>
+      <a href="#debugging">Debugging</a>
+      <a href="#permissions">Permissions</a>
+      <a href="#privacy">Privacy</a>
+    </nav>
+
+    <section class="card" id="connection">
+      <div class="row-inline" style="justify-content: space-between; align-items: flex-start;">
+        <div>
+          <p class="eyebrow">AI Provider</p>
+          <h2>Connection</h2>
+          <p class="description">
+            Choose which AI provider to use, configure its base URL, and set defaults for tags/context helpers.
+          </p>
+        </div>
+        <span class="badge theme-badge">
+          <span id="themeBadgeText" class="small">Theme: System</span>
+          <select id="themeMode" aria-label="Theme">
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </span>
+      </div>
+
+      <!-- Provider choice -->
+      <div class="grid">
+        <div class="field">
+          <label for="providerPreset">Provider choice</label>
+          <select id="providerPreset">
+            <option value="ultimate">UltimateAI</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Google Gemini</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Provider-specific connection details -->
+      <div id="providerConnectionGrid" class="grid two">
+        <div class="field">
+          <label for="providerBaseUrl">API base URL</label>
+          <input id="providerBaseUrl" type="text" placeholder="https://smart.ultimateai.org/v1" />
+        </div>
+        <div class="field">
+          <label for="providerApiKey">API key</label>
+          <input id="providerApiKey" type="password" placeholder="API key" />
+        </div>
+        <div class="field">
+          <label for="providerModel">Default model</label>
+          <input id="providerModel" type="text" placeholder="gpt-4o-mini" />
+          <p id="providerModelHelp" class="small">
+            Used for UltimateAI and direct OpenAI calls.
+          </p>
+        </div>
+        <div class="field" id="providerStreamField">
+          <label for="providerStreamFront">
+            Stream front (TTFT) <span class="small">(recommended off)</span>
+          </label>
+          <select id="providerStreamFront">
+            <option value="false">Off</option>
+            <option value="true">On</option>
+          </select>
+          <p id="geminiStreamWarning" class="small" hidden>
+            Streaming is only supported for certain Gemini flash models (for example
+            <code>gemini-2.5-flash</code> and <code>gemini-2.0-flash</code>).
+            Because flashcards are atomic, responses usually stream in 1–2 chunks anyway, so streaming is
+            most useful only if you tune prompts for cards with longer backs.
+          </p>
+        </div>
+      </div>
+
+      <!-- Manual helpers: pinned at the bottom for every provider -->
+      <div class="grid two">
+        <div class="field">
+          <label for="manualAutoTag">Auto‑tag with AI</label>
+          <select id="manualAutoTag">
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+          <p class="small">Applies to both manual cards and AI‑generated cards.</p>
+        </div>
+        <div class="field">
+          <label for="manualAutoContext">Generate context with AI</label>
+          <select id="manualAutoContext">
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+          <p class="small">Applies to both manual cards and AI‑generated cards.</p>
+        </div>
+        <div class="field">
+          <label for="manualAutoPreview">Auto preview (manual editor)</label>
+          <select id="manualAutoPreview">
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+          <p class="small">Update inline previews while typing in the manual editor.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="copilot">
+      <details class="accordion" open>
+        <summary class="accordion-summary">
+          <div>
+            <p class="eyebrow">Copilot</p>
+            <h2>Copilot</h2>
+            <p class="description">Control assistance, tuning, and prompt behavior for suggestions.</p>
+          </div>
+        </summary>
+        <div class="accordion-body">
+          <details class="accordion sub-accordion" open>
+            <summary class="accordion-summary">
+              <div>
+                <h3>Assistance</h3>
+                <p class="description">Control autocomplete, shortcuts, and layout behavior.</p>
+              </div>
+            </summary>
+            <div class="accordion-body">
+              <div class="grid two">
+                <div class="field">
+                  <label for="autoCompleteAI">Copilot On/Off</label>
+                  <select id="autoCompleteAI">
+                    <option value="true">On</option>
+                    <option value="false">Off</option>
+                  </select>
+                  <p class="small">Enable or disable AI Copilot autocomplete suggestions in manual card fields.</p>
+                </div>
+                <div class="field">
+                  <label for="copilotShortcut">Trigger Copilot shortcut</label>
+                  <input id="copilotShortcut" type="text" placeholder="Cmd+Shift+X" />
+                  <p class="small">Press this to request a suggestion for the focused field.</p>
+                </div>
+              </div>
+              <div class="grid two">
+                <label class="inline-control"><input id="autoMagicGenerate" type="checkbox" /> Auto 'Magic Generate' (Smart Template)</label>
+                <label class="inline-control"><input id="manualCopilotOnly" type="checkbox" checked /> Manual Copilot (shortcut only)</label>
+              </div>
+              <div class="field">
+                <label for="editorViewMode">Editor layout (panel &amp; overlay)</label>
+                <select id="editorViewMode">
+                  <option value="auto" selected>Auto (desktop / mobile)</option>
+                  <option value="desktop">Force desktop layout</option>
+                  <option value="mobile">Force mobile layout</option>
+                </select>
+                <p class="small">
+                  “Mobile” makes Front/Back span the screen, stacks fields vertically, and hides the footer triage bar.
+                  “Auto” picks mobile layout on phones / narrow viewports.
+                </p>
+              </div>
+            </div>
+          </details>
+
+          <details class="accordion sub-accordion" open>
+            <summary class="accordion-summary">
+              <div>
+                <h3>Copilot tuning</h3>
+                <p class="description">Adjust generation caps, timeouts, and UI extras.</p>
+              </div>
+            </summary>
+            <div class="accordion-body">
+              <div class="grid two">
+                <div class="field">
+                  <label for="copilotFrontWordCap">Front word cap (max words)</label>
+                  <input id="copilotFrontWordCap" type="number" min="2" max="50" placeholder="20" />
+                </div>
+                <div class="field">
+                  <label for="copilotBackWordCap">Back word cap (max words)</label>
+                  <input id="copilotBackWordCap" type="number" min="4" max="50" placeholder="16" />
+                </div>
+              </div>
+              <div class="grid two">
+                <div class="field">
+                  <label for="copilotFrontMaxTokens">Front max tokens (API)</label>
+                  <input id="copilotFrontMaxTokens" type="number" min="8" max="4096" placeholder="1024" />
+                </div>
+                <div class="field">
+                  <label for="copilotBackMaxTokens">Back max tokens (API)</label>
+                  <input id="copilotBackMaxTokens" type="number" min="64" max="4096" placeholder="1024" />
+                </div>
+              </div>
+              <div class="grid two">
+                <div class="field">
+                  <label for="copilotMinIntervalMs">Min interval between Copilot calls (ms)</label>
+                  <input id="copilotMinIntervalMs" type="number" min="200" max="5000" placeholder="1200" />
+                </div>
+                <div class="field">
+                  <label for="copilotTimeoutSec">Copilot request timeout (seconds)</label>
+                  <input id="copilotTimeoutSec" type="number" min="3" max="120" placeholder="30" />
+                  <p class="small">How long to wait before giving up on a suggestion.</p>
+                </div>
+              </div>
+              <div class="grid two">
+                <div class="field">
+                  <label for="showMiniCopilotMode">Compact Copilot buttons (between Front &amp; Back)</label>
+                  <select id="showMiniCopilotMode">
+                    <option value="auto">Auto (mobile only)</option>
+                    <option value="on">On</option>
+                    <option value="off" selected>Off</option>
+                  </select>
+                  <p class="small">Adds “Copilot” and “Accept” buttons for touch workflows.</p>
+                </div>
+                <div class="field">
+                  <label for="copilotAutoFillBack" class="inline-control"><input id="copilotAutoFillBack" type="checkbox" checked /> Also fill Back when editing Front</label>
+                </div>
+              </div>
+              <div class="field">
+                <label for="showSourceModePill" class="inline-control"><input id="showSourceModePill" type="checkbox" checked /> Show Source mode pill next to Copilot</label>
+                <p class="small">Hide this badge if you prefer a cleaner compact Copilot bar.</p>
+              </div>
+            </div>
+          </details>
+
+          <details class="accordion sub-accordion" open>
+            <summary class="accordion-summary">
+              <div>
+                <h3>Copilot prompts</h3>
+                <p class="description">Customize system prompts for each suggestion type.</p>
+              </div>
+            </summary>
+            <div class="accordion-body">
+              <div class="grid">
+                <div class="field">
+                  <label for="copilotFrontSystemPrompt">Question (Front) system prompt</label>
+                  <textarea id="copilotFrontSystemPrompt" rows="3"></textarea>
+                </div>
+                <div class="field">
+                  <label for="copilotBackSystemPrompt">Answer (Back) system prompt</label>
+                  <textarea id="copilotBackSystemPrompt" rows="3"></textarea>
+                </div>
+                <div class="field">
+                  <label for="copilotFrontFromBackSystemPrompt">Front-from-back system prompt</label>
+                  <textarea id="copilotFrontFromBackSystemPrompt" rows="3"></textarea>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" id="templates">
+      <details class="accordion">
+        <summary class="accordion-summary">
+          <div>
+            <p class="eyebrow">Templates</p>
+            <h2>Manage AI Templates</h2>
+            <p class="description">Customize prompts used by “Ask AI to draft Q/A”.</p>
+            <p class="small">Use <code>{{TEXT}}</code> for the source text and <code>{{CONTEXT}}</code> for the page context placeholder.</p>
+          </div>
+        </summary>
+        <div class="accordion-body">
+          <div class="field">
+            <label for="templateUpdateMode">Template updates</label>
+            <select id="templateUpdateMode">
+              <option value="keep">Keep my custom templates</option>
+              <option value="apply">Apply new defaults</option>
+            </select>
+            <p class="small">
+              When enabled, default templates refresh on updates while templates you edit stay customized.
+            </p>
+          </div>
+          <div id="templateManager" class="grid">
+            <div id="templateList" class="template-list"></div>
+            <div id="templateForm" class="grid">
+              <input type="hidden" id="templateEditingId" />
+              <div class="field">
+                <label for="templateName">Template Name</label>
+                <input id="templateName" type="text" placeholder="Concept" />
+              </div>
+              <div class="field">
+                <label for="templatePrompt">Prompt Text (use {{TEXT}} and {{CONTEXT}} as placeholders)</label>
+                <textarea id="templatePrompt" rows="10" placeholder="Return ONLY valid JSON..."></textarea>
+              </div>
+              <div class="button-row">
+                <button type="button" id="templateSave" class="primary">Save template</button>
+                <button type="button" id="templateClear" class="ghost">Clear</button>
+              </div>
+            </div>
+            <div class="button-row">
+              <button type="button" id="templateReset">Reset to Defaults</button>
+              <div id="templateMsg" class="small status"></div>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- Customisable editor fields (labels, visibility, AI prompts) -->
+    <section class="card" id="editor">
+      <details class="accordion">
+        <summary class="accordion-summary">
+          <div>
+            <p class="eyebrow">Editor</p>
+            <h2>Custom editor fields</h2>
+            <p class="description">
+              Treat the secondary fields (Context, Source, Notes/Extra, Hint) as configurable slots:
+              you can rename them, show/hide them in the editor, and attach custom AI prompts per field.
+            </p>
+          </div>
+        </summary>
+        <div class="accordion-body">
+          <div class="field">
+            <label for="editorFieldConfig">Editor field config (JSON)</label>
+            <textarea id="editorFieldConfig" rows="8" spellcheck="false"></textarea>
+            <p class="small">
+              Keys are internal field ids (<code>context</code>, <code>extra</code>, <code>source_excerpt</code>,
+              <code>hint</code>). Each object may define:
+              <code>label</code> (string), <code>visible</code> (boolean),
+              and <code>aiPrompt</code> (string used by the Context auto-helper; other fields ignore it today).
+            </p>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" id="defaults">
+      <div>
+        <p class="eyebrow">Defaults</p>
+        <h2>New cards</h2>
+        <p class="description">Choose where cards land and which fields are visible.</p>
+      </div>
+      <div class="grid two">
+        <div class="field">
+          <label for="defaultDeck">Default deck</label>
+          <input id="defaultDeck" type="text" placeholder="All Decks" />
+        </div>
+        <div class="field">
+          <label for="defaultModel">Default note type</label>
+          <input id="defaultModel" type="text" placeholder="Basic" />
+        </div>
+      </div>
+      <div class="grid two">
+        <label class="inline-control">
+          <input id="showNotesField" type="checkbox" />
+          <span id="showNotesFieldLabel">Show “Notes” field</span>
+        </label>
+        <label class="inline-control">
+          <input id="showContextField" type="checkbox" checked />
+          <span id="showContextFieldLabel">Show “Context” field</span>
+        </label>
+        <label class="inline-control">
+          <input id="showSourceField" type="checkbox" checked />
+          <span id="showSourceFieldLabel">Show “Source” field</span>
+        </label>
+        <label class="inline-control">
+          <input id="appendContextToFrontWhenMissing" type="checkbox" />
+          <span>Append Context to Front when no Context field exists</span>
+        </label>
+      </div>
+      <div class="grid">
+        <div class="field">
+          <label for="addShortcut">“Add to Anki” shortcut</label>
+          <input id="addShortcut" type="text" placeholder="Cmd+Shift+A" />
+          <p class="small">Use modifiers (Ctrl, Alt, Shift, Cmd) plus a letter or number. Leave blank to disable.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="ankiconnect">
+      <div>
+        <p class="eyebrow">AnkiConnect</p>
+        <h2>Local API</h2>
+        <p class="description">Configure AnkiConnect endpoint and extension origin.</p>
+      </div>
+      <div class="grid two">
+        <div class="field">
+          <label for="ankiBaseUrl">Base URL (desktop/Android)</label>
+          <input id="ankiBaseUrl" type="text" placeholder="http://127.0.0.1:8765" />
+          <p class="small">Android recommended: <code>http://localhost:8765</code></p>
+        </div>
+        <div class="field">
+          <label>Extension origin (for AnkiconnectAndroid CORS)</label>
+          <div class="row-inline">
+            <input id="extOrigin" type="text" readonly />
+            <button id="copyExtOrigin" type="button">Copy</button>
+          </div>
+          <p class="small">Add this exact origin in AnkiconnectAndroid → Settings → CORS host.</p>
+        </div>
+      </div>
+
+      <!-- Anki — Tagging -->
+      <fieldset>
+        <legend>Anki — Tagging</legend>
+        <label class="row" style="gap:.5rem; align-items:center;">
+          <input type="checkbox" id="appendQuickflashTag" checked>
+          Auto‑append tag to every note
+          <span id="quickflashTagNameRow">
+            <input type="text" id="quickflashTagName" value="ghostwriter" size="14" placeholder="ghostwriter">
+          </span>
+        </label>
+        <p class="small muted">When enabled, every note this extension creates will include the tag above.</p>
+      </fieldset>
+    </section>
+
+    <section class="card" id="ankiconnect-status">
+      <div>
+        <p class="eyebrow">Connection check</p>
+        <h2>AnkiConnect status</h2>
+        <p class="description">Verify AnkiConnect and request permission to whitelist the extension origin (CORS).</p>
+      </div>
+      <div class="button-row">
+        <button id="test">Test AnkiConnect</button>
+        <span id="testMsg" class="status"></span>
+      </div>
+    </section>
+
+    <section class="card" id="clipboard">
+      <div class="grid">
+        <div>
+          <p class="eyebrow">Clipboard helper</p>
+          <h2>Fallback mode</h2>
+        </div>
+        <label class="inline-control">
+          <input id="clipboardFallback" type="checkbox" checked />
+          <span>When there’s <strong>no selection</strong>: <em>use clipboard as Source</em>. If opened via “paste selection” shortcut, also paste into <strong>Back</strong>.</span>
+        </label>
+        <p class="small">Normal open ➜ Source only. “Open &amp; paste” ➜ Source + paste to Back (for clipboard fallback).</p>
+      </div>
+    </section>
+
+    <section class="card" id="debugging">
+      <div>
+        <p class="eyebrow">Debugging</p>
+        <h2>Debugging mode</h2>
+        <p class="description">Expose AI diagnostics in the editor panel.</p>
+      </div>
+      <label class="inline-control">
+        <input id="debugMode" type="checkbox" />
+        <span>Enable debugging mode</span>
+      </label>
+      <p class="small">Shows extra panels for prompts, responses, and other AI metadata.</p>
+    </section>
+
+    <section class="card" id="permissions">
+      <div>
+        <p class="eyebrow">Permissions</p>
+        <h2>Why we request access</h2>
+        <p class="description">Ghostwriter for Anki only requests the permissions needed to capture your source text and open helper pages.</p>
+      </div>
+      <ul class="small">
+        <li><strong>Clipboard</strong>: Reads clipboard text to fill Source when you choose Clipboard mode or Auto mode can’t find a selection (including when the panel opens or Copilot runs with no selection).</li>
+        <li><strong>Tabs</strong>: Needed to detect the active tab’s selection/context and open the dashboard or side panel in the right tab.</li>
+      </ul>
+    </section>
+
+    <section class="card" id="privacy">
+      <div>
+        <p class="eyebrow">Privacy</p>
+        <h2>Data disclosure</h2>
+        <p class="description">
+          Ghostwriter for Anki stores your settings and draft card text locally. If you enable AI features or AnkiConnect,
+          the selected text and prompts are sent to your chosen provider or local Anki instance.
+        </p>
+        <p class="small">
+          Read the full <a href="privacy.md" target="_blank" rel="noopener">privacy policy</a>.
+        </p>
+      </div>
+    </section>
+
+    <div class="save-bar">
+      <div class="card">
+        <div class="button-row" style="justify-content: space-between;">
+          <div>
+            <h3 style="margin: 0;">Save changes</h3>
+            <p class="small" style="margin-top: 2px;">Applies across the extension immediately.</p>
+          </div>
+          <div class="button-row">
+            <button id="save" class="primary">Save</button>
+            <span id="msg" class="status"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="prompts.js" defer></script>
+  <script src="options.js" defer></script>
+</body>
+</html>

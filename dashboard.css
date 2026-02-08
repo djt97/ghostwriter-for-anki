@@ -1,0 +1,321 @@
+:root {
+  --bg: #0f172a;
+  --surface: #0b1220;
+  --panel: #111827;
+  --border: #1f2937;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --weak: #f97316;
+  --ghost: #94a3b8;
+  --radius: 12px;
+  --shadow: 0 10px 24px rgba(0,0,0,.4);
+  --input-bg: #0f172a;
+}
+
+/* Light mode (system prefers light) */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f8fafc;
+    --surface: #ffffff;
+    --panel: #ffffff;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --weak: #ea580c;
+    --ghost: #64748b;
+    --radius: 12px;
+    --shadow: 0 18px 40px rgba(15,23,42,.12);
+    --input-bg: #ffffff;
+  }
+}
+
+/* Manual theme override (set by Options; wins over system preference) */
+:root[data-theme="dark"] {
+  --bg: #0f172a;
+  --surface: #0b1220;
+  --panel: #111827;
+  --border: #1f2937;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --weak: #f97316;
+  --ghost: #94a3b8;
+  --radius: 12px;
+  --shadow: 0 10px 24px rgba(0,0,0,.4);
+  --input-bg: #0f172a;
+}
+
+:root[data-theme="light"] {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --panel: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --weak: #ea580c;
+  --ghost: #64748b;
+  --radius: 12px;
+  --shadow: 0 18px 40px rgba(15,23,42,.12);
+  --input-bg: #ffffff;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.08), transparent 32%),
+              radial-gradient(circle at 80% 20%, rgba(167,139,250,0.08), transparent 32%),
+              var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+header h1 { margin: 0; font-size: 20px; }
+header .muted { margin: 0; }
+header .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: transform .1s ease, box-shadow .15s ease, border-color .2s ease;
+}
+button:hover { transform: translateY(-1px); border-color: var(--accent); }
+button.primary { background: var(--accent); color: #04111f; border-color: var(--accent); }
+button.secondary { background: transparent; }
+
+main { padding: 16px 20px; display: grid; gap: 12px; }
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+.field { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.field input:not([type="checkbox"]), .field select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+}
+#scopeControls { margin-top: -4px; }
+#tagThreshold { max-width: 140px; }
+#insightMode { min-width: 180px; }
+.legend { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(148,163,184,.12);
+  border: 1px solid var(--border);
+}
+.pill[data-kind="weak"] { border-color: var(--weak); color: var(--weak); }
+.pill[data-kind="archived"] { border-color: var(--ghost); color: var(--ghost); }
+.pill[data-kind="active"] { border-color: var(--accent); color: var(--accent); }
+
+.canvas-wrap {
+  position: relative;
+  min-height: 70vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+#graph { width: 100%; height: 100%; touch-action: none; }
+.fab {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  border-radius: 999px;
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+  box-shadow: var(--shadow);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.modal[hidden] { display: none; }
+.modal-content {
+  width: min(720px, 94vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+.modal-content header { padding: 0; background: transparent; position: relative; }
+.modal-content header h2 { margin: 0; font-size: 18px; }
+.modal-content header button { border-radius: 8px; }
+.modal-body { display: grid; gap: 10px; }
+.meta-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.card-face {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.muted { color: var(--muted); margin: 0; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+@media (pointer: coarse) {
+  body {
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  .field input:not([type="checkbox"]),
+  .field select {
+    font-size: 16px;
+  }
+
+  #graph {
+    touch-action: pan-x pan-y; /* avoid odd zoom gestures on the canvas */
+  }
+}
+
+@media (max-width: 640px) {
+  header { flex-direction: column; align-items: flex-start; }
+  .controls { grid-template-columns: 1fr; }
+  .fab { bottom: 12px; right: 12px; }
+}
+
+.canvas-wrap { position: relative; }
+.popover {
+  position: absolute;
+  max-width: min(420px, 60vw);
+  padding: 10px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  pointer-events: none; /* don’t steal mouse */
+  z-index: 5;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.popover .title { font-weight: 600; margin-bottom: 6px; }
+.popover .tags  { margin-top: 6px; opacity: .8; font-style: italic; }
+.popover pre { margin: 6px 0 0; white-space: pre-wrap; }
+
+/* Graph stats overlay */
+#graphStats {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none; /* don’t block the canvas */
+}
+#graphStats .pill { pointer-events: auto; } /* allow selecting/copying text if needed */
+
+/* Compact, consistent checkboxes (avoid giant platform defaults) */
+.field input[type="checkbox"] {
+  appearance: none;
+  inline-size: 16px;
+  block-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+}
+.field input[type="checkbox"]::before {
+  content: "";
+  inline-size: 10px;
+  block-size: 10px;
+  transform: scale(0);
+  transition: transform .12s ease;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.field input[type="checkbox"]:checked::before { transform: scale(1); }
+
+/* Make the Subgraph scope controls span the full grid and feel like a fieldset */
+#scopeControls {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  margin-top: 4px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: rgba(148,163,184,.06);
+}
+#scopeControls::before {
+  content: "Subgraph scope";
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+  grid-column: 1 / -1;
+}
+
+/* Keep sizing consistent with adjacent selects to prevent “big gap” effects */
+#centralityMetric { min-width: 180px; }
+#scopeMaxNodes { max-width: 140px; }
+
+/* Semantic sparsity controls */
+#semanticTargetAvgDegree { max-width: 140px; }
+#applyGraphOpts { width: 100%; }
+
+/* When following system theme ("system" mode), nudge a few surfaces in light mode.
+   We explicitly *skip* this if a manual data-theme is set so Options overrides win. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .field input:not([type="checkbox"]),
+  :root:not([data-theme]) .field select {
+    background: #ffffff;
+    border-color: var(--border);
+  }
+
+  :root:not([data-theme]) .canvas-wrap {
+    background: var(--panel);
+  }
+
+  :root:not([data-theme]) .popover {
+    background: #ffffff;
+    color: var(--text);
+  }
+}
