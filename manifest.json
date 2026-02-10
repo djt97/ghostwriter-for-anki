@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Ghostwriter for Anki",
   "description": "Create Anki flashcards with source + context; auto-tag with AI; send via AnkiConnect.",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' blob: data: http://127.0.0.1:* http://localhost:* https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs.hf.co https://smart.ultimateai.org https://api.openai.com https://generativelanguage.googleapis.com",
     "sandbox": "sandbox allow-scripts allow-forms; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; object-src 'self'"
@@ -53,12 +53,13 @@
         "prompts.js",
         "mathjax-sandbox.html",
         "mathjax-sandbox.js",
-        "mathjax-config.js",
         "libs/markdown-it.min.js",
-        "libs/mathjax/tex-mml-chtml.js"
+        "libs/mathjax/mathjax-bundle.js",
+        "libs/mathjax/fonts/tex/*"
       ]
     }
-  ],
+],
+
   "background": {
     "service_worker": "background.js"
   },
@@ -69,7 +70,10 @@
     "open-ghostwriter": {
       "suggested_key": {
         "default": "Ctrl+Shift+F",
-        "mac": "Command+Shift+F"
+        "mac": "Command+Shift+F",
+        "windows": "Ctrl+Shift+F",
+        "linux": "Ctrl+Shift+F",
+        "chromeos": "Ctrl+Shift+F"
       },
       "description": "Open Ghostwriter for Anki Overlay"
     },
@@ -81,10 +85,6 @@
       "description": "Open Ghostwriter for Anki side panel"
     },
     "open-ghostwriter-with-selection": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+G",
-        "mac": "Command+Shift+G"
-      },
       "description": "Open Ghostwriter for Anki and paste the current selection into Back"
     },
     "quickflash-toggle-source-mode": {

@@ -1,71 +1,138 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MathJax Preview Sandbox</title>
-  <style>
-    html,
-    body {
-      margin: 0;
-      font: 13px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      color: inherit;
-      background: transparent;
-    }
-    #root {
-      padding: 8px;
-      overflow-wrap: anywhere;
-    }
-    #root > :first-child { margin-top: 0; }
-    #root > :last-child { margin-bottom: 0; }
-    #root img {
-      max-width: 100%;
-      height: auto;
-      border-radius: 6px;
-    }
-    #root pre {
-      background: rgba(15, 23, 42, 0.08);
-      padding: 8px;
-      border-radius: 8px;
-      overflow-x: auto;
-    }
-    #root code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px;
-    }
-    #root blockquote {
-      margin: 8px 0;
-      padding-left: 10px;
-      border-left: 3px solid rgba(148, 163, 184, 0.6);
-      color: inherit;
-    }
-    #root table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      margin: 8px 0;
-    }
-    #root th,
-    #root td {
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      padding: 6px;
-      text-align: left;
-    }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 4px 6px;
+        background: transparent;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+        line-height: 1.4;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
 
-  <!-- 1) MathJax config (local file) -->
-  <script src="mathjax-config.js"></script>
+      /* 🔹 Give the iframe a sensible text color for light & dark mode */
+      body {
+        color: #020617; /* slate-950-ish for light mode */
+      }
 
-  <!-- 2) Local MathJax bundle -->
-  <script src="libs/mathjax/tex-mml-chtml.js"></script>
+      @media (prefers-color-scheme: dark) {
+        body {
+          color: #e5e7eb; /* slate-200-ish for dark mode */
+        }
+      }
 
-  <!-- 3) Local markdown-it -->
-  <script src="libs/markdown-it.min.js"></script>
+      /* Root container acts like Anki's .card:
+         - slightly larger type than the editor
+         - centered body text
+         - transparent background so it matches the textarea chrome */
+      #root {
+        white-space: normal;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        /* removing these lines will restore editor default styling */
+        font-family: "Arial", "Helvetica Neue", system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 1.15rem; /* ~16px when base is 14px */
+        line-height: 1.5;
+        text-align: left;
+        padding: 2px 0;
+      }
 
-  <!-- 4) Sandbox glue code -->
-  <script src="mathjax-sandbox.js"></script>
-</body>
+      #root p {
+        margin: 0.4em 0;
+      }
+
+      #root p:first-child {
+        margin-top: 0;
+      }
+
+      #root p:last-child {
+        margin-bottom: 0;
+      }
+
+      /* Make code / blocks easier to read & closer to panel preview styling */
+      #root img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 6px;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        background: rgba(15, 23, 42, 0.02);
+      }
+
+      #root pre {
+        background: rgba(15, 23, 42, 0.06);
+        padding: 6px 8px;
+        border-radius: 6px;
+        overflow-x: auto;
+        text-align: left;
+      }
+
+      #root code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 0.85em;
+      }
+
+      #root blockquote {
+        margin: 0.5em 0;
+        padding-left: 10px;
+        border-left: 3px solid rgba(148, 163, 184, 0.6);
+        text-align: left;
+      }
+
+      #root table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9em;
+        text-align: left;
+      }
+
+      #root th,
+      #root td {
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        padding: 4px 6px;
+      }
+
+      /* Keep lists and other structural elements left-aligned (nicer for content) */
+      #root ul,
+      #root ol,
+      #root dl {
+        margin: 0.4em 0 0.4em 1.6em;
+        text-align: left;
+      }
+
+      /* 🔹 MathJax: inherit text color so it works on dark backgrounds */
+      mjx-container {
+        color: inherit;
+      }
+
+      /* 🔹 MathJax: keep math font size aligned with surrounding text */
+      mjx-container[jax="CHTML"] {
+        font-size: 1em;
+      }
+
+      /* 🔹 Ensure MathJax doesn’t introduce a background */
+      mjx-container[jax="CHTML"] mjx-math {
+        background: transparent;
+      }
+
+      /* Tweak display math spacing to feel like an Anki card */
+      #root mjx-container[jax="CHTML"][display="true"] {
+        margin: 0.6em auto 0.5em;
+      }
+    </style>
+
+    <!-- Local MathJax bundle, CSP-safe custom build -->
+    <script src="libs/mathjax/mathjax-bundle.js" defer></script>
+
+    <!-- Sandbox script that listens for messages and runs MathJax -->
+    <script src="mathjax-sandbox.js" defer></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>

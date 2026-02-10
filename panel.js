@@ -1,5 +1,5 @@
 
-// panel.js (v0.3.0)
+// panel.js (v0.3.1)
 // - Source field mapping + optional back link
 // - Notes field mapping
 // - UltimateAI-only AI generation + AI auto-tagging after Add
@@ -14,6 +14,38 @@ try {
 
 const PREVIEW_MODE_KEY = "quickflash_preview_mode_v1";
 const previewModeState = { mode: "preview" };
+const GHOSTWRITER_MODEL_NAME = "Basic [Ghostwriter]";
+const GHOSTWRITER_CLOZE_MODEL_NAME = "Cloze [Ghostwriter]";
+const LAST_MODEL_NAME_KEY = "qf_last_model_name";
+const GHOSTWRITER_MODEL_REGEX = /^basic\s*\[ghostwriter\]/i;
+const GHOSTWRITER_CLOZE_MODEL_REGEX = /^cloze\s*\[ghostwriter\]/i;
+const GHOSTWRITER_MODEL_CSS = [
+  ".card {",
+  "  font-family: arial;",
+  "  font-size: 20px;",
+  "  text-align: center;",
+  "  color: black;",
+  "  background-color: white;",
+  "}",
+  ".hint {",
+  "  display: inline-block;",
+  "  padding: 4px 8px;",
+  "  border: 1px solid #ccc;",
+  "  border-radius: 6px;",
+  "  background: #f6f6f6;",
+  "  font-size: 0.9em;",
+  "  cursor: pointer;",
+  "}",
+  ".hint:hover {",
+  "  background: #eee;",
+  "}",
+].join("\n");
+const GHOSTWRITER_BASIC_TEMPLATE_NAME = "Card 1";
+const GHOSTWRITER_CLOZE_TEMPLATE_NAME = "Cloze";
+const GHOSTWRITER_BASIC_FRONT_TEMPLATE = "{{Front}}<br><br>{{hint:Context}}";
+const GHOSTWRITER_BASIC_BACK_TEMPLATE = "{{FrontSide}}\n\n<hr id=\"answer\">\n\n{{Back}}";
+const GHOSTWRITER_CLOZE_FRONT_TEMPLATE = "{{cloze:Text}}<br><br>{{hint:Context}}";
+const GHOSTWRITER_CLOZE_BACK_TEMPLATE = "{{cloze:Text}}\n\n<hr id=\"answer\">\n\n{{Extra}}";
 const debugState = {
   enabled: false,
   prefs: {
@@ -1523,9 +1555,31 @@ function parseJSONLoose(text) {
 }
 
 const modelFieldsCache = new Map();
+let currentModelNames = [];
 let modelFieldWarningRequest = 0;
-const CLOZE_NOTICE_SESSION_KEY = "qf_cloze_notice_shown";
+const MODEL_FIELD_WARNING_DISMISSED_SESSION = "qf_model_field_warning_dismissed_session";
+const MODEL_FIELD_WARNING_HIDDEN_PREF = "qf_model_field_warning_hidden_pref";
+const GHOSTWRITER_INFO_SHOWN_KEY = "qf_ghostwriter_info_shown";
 const CLOZE_PATTERN = /{{c\d+::.+?}}/i;
+
+function getStorageFlag(storage, key) {
+  try {
+    return storage?.getItem(key) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setStorageFlag(storage, key, value) {
+  try {
+    if (!storage) return;
+    if (value) {
+      storage.setItem(key, "true");
+    } else {
+      storage.removeItem(key);
+    }
+  } catch {}
+}
 
 const copilot = {
   enabled: true,
@@ -3266,6 +3320,8 @@ const triage = {
   fingerprints: new Set(),
   deck: null,
 };
+const TRIAGE_UNDO_LIMIT = 50;
+const triageUndoStack = [];
 
 const triageFooter = document.getElementById('triageFooter');
 const triageMetaEl = document.getElementById('triageMeta');
@@ -4057,6 +4113,7 @@ function resetTriage() {
   triage.skipped = [];
   triage.fingerprints = new Set();
   triage.deck = null;
+  clearTriageUndoHistory();
   triageState.active = false;
   setTriageActive(false);
   renderEditor();
@@ -4423,6 +4480,17 @@ function normalizeImportedCards(parsed) {
     if (type !== "cloze" && type !== "reversible" && type !== "basic") type = "basic";
 
     const fields = raw.fields && typeof raw.fields === "object" ? raw.fields : {};
+    const lpcgLine = normalizeLpcgText(raw.line ?? raw.Line ?? fields.Line ?? fields.line);
+    const lpcgContext = normalizeLpcgText(raw.lpcgContext ?? raw.Context ?? fields.Context ?? fields.context);
+    const lpcgTitle = normalizeLpcgText(raw.title ?? raw.Title ?? fields.Title ?? fields.title);
+    const lpcgAuthor = normalizeLpcgText(raw.author ?? raw.Author ?? fields.Author ?? fields.author);
+    const lpcgPrompt = normalizeLpcgText(raw.prompt ?? raw.Prompt ?? fields.Prompt ?? fields.prompt);
+    const lpcgSequence = coerceLpcgNumber(
+      raw.sequence ?? raw.Sequence ?? fields.Sequence ?? fields.sequence ?? raw.index ?? raw.order,
+      null
+    );
+    const hasLpcgFields = !!(lpcgLine || lpcgContext || lpcgTitle || lpcgAuthor || lpcgPrompt || lpcgSequence);
+
     const front = pickString(
       raw.front,
       raw.q,
@@ -4431,8 +4499,11 @@ function normalizeImportedCards(parsed) {
       raw.text,
       raw.cloze,
       raw.clozeText,
+      lpcgLine,
       fields.Front,
       fields.front,
+      fields.Line,
+      fields.line,
       fields.Text,
       fields.text,
       fields.Cloze,
@@ -4451,7 +4522,7 @@ function normalizeImportedCards(parsed) {
     ).trim();
 
     if (!front) continue;
-    if (type !== "cloze" && !back) continue;
+    if (type !== "cloze" && !back && !hasLpcgFields) continue;
 
     const baseId = pickString(raw.id, raw.slug, raw.uid) || `import-${++counter}`;
     const tags = parseTags(raw.tags);
@@ -4472,6 +4543,16 @@ function normalizeImportedCards(parsed) {
       if (extra) card.extra = extra;
       if (sourceExcerpt) card.source_excerpt = sourceExcerpt;
       if (altAnswers) card.alt_answers = altAnswers;
+      if (hasLpcgFields) {
+        card.lpcg = {
+          line: lpcgLine,
+          context: lpcgContext,
+          title: lpcgTitle,
+          author: lpcgAuthor,
+          prompt: lpcgPrompt,
+          sequence: lpcgSequence,
+        };
+      }
       return card;
     };
 
@@ -4483,7 +4564,7 @@ function normalizeImportedCards(parsed) {
       pushCard(reverse);
     } else {
       const card = buildCard("", front, back, type === "cloze" ? "cloze" : "basic");
-      if (type !== "cloze" && !card.back) {
+      if (type !== "cloze" && !card.back && !hasLpcgFields) {
         // Basic card must have a back
         continue;
       }
@@ -4710,6 +4791,7 @@ function renderEditor({ persist = true } = {}) {
       clearEditorFields();
       focusFrontAtEnd();
     }
+    applyInlinePreviewAfterEditorRender({ refresh: true });
     updateMarkdownPreview();
     renderEditor.lastMode = "manual";
     updateTriageUI();
@@ -4751,6 +4833,8 @@ function renderEditor({ persist = true } = {}) {
     delete sourceEl.dataset.autoClipboard;
     sourceEl.value = card.source_excerpt || "";
   }
+
+  applyInlinePreviewAfterEditorRender({ refresh: true });
 
   if (altWrap) {
     altWrap.innerHTML = "";
@@ -4890,11 +4974,24 @@ function bindUnifiedEditorInputs() {
 
 const markdownPreviewState = {
   timer: null,
+  manualPreviewActive: {
+    front: false,
+    back: false,
+  },
   fields: [
     { inputId: "front", previewId: "previewFront" },
     { inputId: "back", previewId: "previewBack" }
   ]
 };
+
+function isManualPreviewActive(field) {
+  return !!markdownPreviewState.manualPreviewActive?.[field];
+}
+
+function setManualPreviewActive(field, active) {
+  if (!(field in markdownPreviewState.manualPreviewActive)) return;
+  markdownPreviewState.manualPreviewActive[field] = !!active;
+}
 
 const previewFrameState = {
   queued: new WeakMap(),
@@ -4952,9 +5049,10 @@ function getPreviewTextColor(sourceEl) {
 
 function queuePreviewFrameRender(frame, markdown, sourceEl) {
   if (!frame) return;
+  const html = renderMarkdownToHtml(markdown || "");
   const payload = {
     type: "preview-update",
-    text: markdown || "",
+    html,
     color: getPreviewTextColor(sourceEl),
   };
 
@@ -5004,13 +5102,17 @@ async function updateMarkdownPreview() {
     const input = document.getElementById(field.inputId);
     const output = document.getElementById(field.previewId);
     if (!output) continue;
+    const wrapper = output.closest("[data-preview-block]");
+    if (isPreviewFrame(output) && !isMathjaxPreviewSupported()) {
+      if (wrapper) wrapper.hidden = true;
+      continue;
+    }
     if (isPreviewFrame(output) && isInlineMathjaxPreviewEnabled()) {
       continue;
     }
-    const wrapper = output.closest("[data-preview-block]");
     const isFocused = document.activeElement === input;
     const value = input?.value || "";
-    const previewEnabled = typeof showPreview === "function" ? showPreview() : Boolean(showPreview);
+    const previewEnabled = isAutoPreviewEnabled() || isManualPreviewActive(field.inputId);
     if (!previewEnabled || !value.trim()) {
       if (wrapper) wrapper.hidden = true;
       if (!isPreviewFrame(output)) output.innerHTML = "";
@@ -5052,13 +5154,38 @@ function bindMarkdownPreviewInputs() {
     if (!input) continue;
     input.addEventListener("input", () => scheduleMarkdownPreviewUpdate());
     input.addEventListener("change", () => scheduleMarkdownPreviewUpdate());
-    input.addEventListener("blur", () => scheduleMarkdownPreviewUpdate({ force: true }));
+    input.addEventListener("blur", () => {
+      if (isAutoPreviewEnabled()) {
+        scheduleMarkdownPreviewUpdate({ force: true });
+      }
+    });
   }
 }
 
 window.addEventListener("message", (event) => {
   const data = event?.data;
-  if (!data || data.type !== "quickflash:previewRendered") return;
+  if (!data) return;
+  if (data.type === "quickflash:previewError") {
+    const errorMessage =
+      (typeof data.error === "string" && data.error.trim()
+        ? data.error
+        : typeof data?.error?.message === "string" && data.error.message.trim()
+          ? data.error.message
+          : "") || "MathJax not loaded";
+    const frame = markdownPreviewState.fields
+      .map((field) => document.getElementById(field.previewId))
+      .find((candidate) => candidate && candidate.contentWindow === event.source);
+    if (frame) {
+      const warning = frame.closest("[data-preview-block]")?.querySelector("[data-preview-warning]");
+      if (warning) {
+        warning.textContent = errorMessage;
+        warning.hidden = false;
+      }
+    }
+    console.warn("[QuickFlash][previewError]", errorMessage);
+    return;
+  }
+  if (data.type !== "quickflash:previewRendered") return;
   const frame = markdownPreviewState.fields
     .map((field) => document.getElementById(field.previewId))
     .find((candidate) => candidate && candidate.contentWindow === event.source);
@@ -5177,6 +5304,13 @@ async function replaceInlineImages(text, { track = true } = {}) {
         next = next.replace(match[0], replacement);
         if (track) files.add(filename);
       }
+    } else if (src.startsWith("blob:")) {
+      const filename = await storeBlobUrlAsFilename(src);
+      if (filename) {
+        const replacement = match[0].replace(src, filename);
+        next = next.replace(match[0], replacement);
+        if (track) files.add(filename);
+      }
     } else if (track) {
       files.add(src);
     }
@@ -5188,6 +5322,13 @@ async function replaceInlineImages(text, { track = true } = {}) {
     if (!src) continue;
     if (src.startsWith("data:image/")) {
       const filename = await ensureImageStoredFromDataUrl(src);
+      if (filename) {
+        const replacement = match[0].replace(src, filename);
+        next = next.replace(match[0], replacement);
+        if (track) files.add(filename);
+      }
+    } else if (src.startsWith("blob:")) {
+      const filename = await storeBlobUrlAsFilename(src);
       if (filename) {
         const replacement = match[0].replace(src, filename);
         next = next.replace(match[0], replacement);
@@ -5241,7 +5382,72 @@ function insertTextAtCursor(el, text) {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function handlePasteImage(event) {
+async function storeBlobUrlAsFilename(blobUrl) {
+  if (!blobUrl || !blobUrl.startsWith("blob:")) return null;
+  try {
+    const response = await fetch(blobUrl);
+    if (!response.ok) throw new Error(`Blob fetch failed: ${response.status}`);
+    const blob = await response.blob();
+    const buffer = await blob.arrayBuffer();
+    const mime = blob.type || "image/png";
+    const hash = await sha1Hex(buffer);
+    const filename = `paste-${hash}.${mimeToExtension(mime)}`;
+    const base64 = arrayBufferToBase64(buffer);
+    await addImageToStore({ filename, data: base64, type: mime });
+    return filename;
+  } catch (err) {
+    console.warn("Failed to store blob image", err);
+    return null;
+  }
+}
+
+async function replaceClipboardImageSources(text) {
+  if (!text) return { text: text || "", didReplace: false };
+  let next = text;
+  let didReplace = false;
+  const replacementMap = new Map();
+  const imgMatches = Array.from(text.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi));
+
+  for (const match of imgMatches) {
+    const src = match[1];
+    if (!src) continue;
+    if (replacementMap.has(src)) continue;
+    if (src.startsWith("data:image/")) {
+      const filename = await ensureImageStoredFromDataUrl(src);
+      if (filename) replacementMap.set(src, filename);
+    } else if (src.startsWith("blob:")) {
+      const filename = await storeBlobUrlAsFilename(src);
+      if (filename) replacementMap.set(src, filename);
+    }
+  }
+
+  for (const [src, filename] of replacementMap.entries()) {
+    const tagMatch = new RegExp(`(<img\\b[^>]*\\bsrc=["'])${src.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(["'][^>]*>)`, "gi");
+    next = next.replace(tagMatch, `$1${filename}$2`);
+    didReplace = true;
+  }
+
+  const blobMatches = Array.from(next.matchAll(/blob:[^\s"'>]+/g));
+  for (const match of blobMatches) {
+    const src = match[0];
+    if (!src) continue;
+    if (replacementMap.has(src)) {
+      next = next.replace(src, replacementMap.get(src));
+      didReplace = true;
+      continue;
+    }
+    const filename = await storeBlobUrlAsFilename(src);
+    if (filename) {
+      replacementMap.set(src, filename);
+      next = next.replace(src, filename);
+      didReplace = true;
+    }
+  }
+
+  return { text: next, didReplace };
+}
+
+async function handlePasteImage(event) {
   if (event.defaultPrevented) return;
   const target = event.target;
   if (!(target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type === "text"))) {
@@ -5249,13 +5455,12 @@ function handlePasteImage(event) {
   }
   const items = Array.from(event.clipboardData?.items || []);
   const imageItem = items.find((item) => item.type && item.type.startsWith("image/"));
-  if (!imageItem) return;
-  const file = imageItem.getAsFile();
-  if (!file) return;
-
-  event.preventDefault();
-  file.arrayBuffer()
-    .then(async (buffer) => {
+  if (imageItem) {
+    const file = imageItem.getAsFile();
+    if (!file) return;
+    event.preventDefault();
+    try {
+      const buffer = await file.arrayBuffer();
       const mime = file.type || "image/png";
       const ext = mimeToExtension(mime);
       const hash = await sha1Hex(buffer);
@@ -5265,333 +5470,250 @@ function handlePasteImage(event) {
       const htmlImage = `<img src="${filename}" data-editor-shrink="false">`;
       insertTextAtCursor(target, htmlImage);
       scheduleMarkdownPreviewUpdate();
-    })
-    .catch((err) => {
+    } catch (err) {
       console.warn("Failed to paste image", err);
-    });
+    }
+    return;
+  }
+
+  const clipboardData = event.clipboardData;
+  const html = clipboardData?.getData("text/html") || "";
+  const text = clipboardData?.getData("text/plain") || "";
+  const source = html || text;
+  if (!source) return;
+
+  try {
+    const result = await replaceClipboardImageSources(source);
+    if (!result.didReplace) return;
+    event.preventDefault();
+    insertTextAtCursor(target, result.text);
+    scheduleMarkdownPreviewUpdate();
+  } catch (err) {
+    console.warn("Failed to paste clipboard content with images", err);
+  }
 }
 
 function bindClipboardImagePaste() {
   document.addEventListener("paste", handlePasteImage);
 }
 
-document.addEventListener('DOMContentLoaded', async function () {
+// --- Inline MathJax preview (Front & Back) ------------------------
+
+const inlineManualPreviewState = {
+  front: false,
+  back: false,
+};
+
+const inlineMathPreviewLifecycle = {
+  applyPreviewForField: null,
+};
+
+function applyInlinePreviewAfterEditorRender({ refresh = false } = {}) {
+  if (typeof inlineMathPreviewLifecycle.applyPreviewForField !== "function") return;
+  for (const field of ["front", "back"]) {
+    inlineMathPreviewLifecycle.applyPreviewForField(field, {
+      refresh: !!refresh,
+    });
+  }
+}
+
+function initInlineMathPreview() {
   const front = document.getElementById('front');
   const back = document.getElementById('back');
-  const previewFrontFrame = document.getElementById('previewFront');
-  const previewBackFrame = document.getElementById('previewBack');
-  const autoPreviewCheckbox = document.getElementById('mathjaxPreview');
+  const frontBlock = document.querySelector(
+    '.markdown-section.inline-preview[data-preview-block="front"]'
+  );
+  const backBlock = document.querySelector(
+    '.markdown-section.inline-preview[data-preview-block="back"]'
+  );
+  const frontFrame = document.getElementById('previewFront');
+  const backFrame = document.getElementById('previewBack');
+  const autoCheckbox = document.getElementById('mathjaxPreview');
 
   // If the panel layout isn't present, bail out quietly.
-  if (!front || !back || !previewFrontFrame || !previewBackFrame) {
+  if (!front || !back || !frontBlock || !backBlock || !frontFrame || !backFrame || !autoCheckbox) {
     return;
   }
 
-  const frontPreviewBlock = document.querySelector('.markdown-section[data-preview-block="front"]');
-  const backPreviewBlock = document.querySelector('.markdown-section[data-preview-block="back"]');
-
   const sandboxUrl = chrome.runtime.getURL('mathjax-sandbox.html');
+  frontFrame.src = sandboxUrl;
+  backFrame.src = sandboxUrl;
 
-  let frontSandboxReady = false;
-  let backSandboxReady = false;
-  let sandboxBroken = false;
+  const state = {
+    front: { ready: false, lastText: '' },
+    back: { ready: false, lastText: '' }
+  };
 
-  function disableSandbox(reason) {
-    console.warn('[QuickFlash] Disabling MathJax sandbox preview:', reason);
-    sandboxBroken = true;
-
-    if (autoPreviewCheckbox) {
-      autoPreviewCheckbox.disabled = true;
-    }
-    if (frontPreviewBlock) frontPreviewBlock.hidden = true;
-    if (backPreviewBlock) backPreviewBlock.hidden = true;
+  function previewBlock(field) {
+    return field === 'front' ? frontBlock : backBlock;
   }
 
-  // Check that the iframe is present before we attempt any messaging.
-  function sandboxLoadOk(iframe) {
-    try {
-      const win = iframe.contentWindow;
-      if (!win) {
-        disableSandbox('no contentWindow');
-        return false;
-      }
-    } catch (e) {
-      disableSandbox('sandbox not accessible: ' + e);
-      return false;
-    }
-    return true;
+  function textareaFor(field) {
+    return field === 'front' ? front : back;
   }
 
-  function postPreviewUpdate(textarea, iframe) {
-    if (!isPreviewMode()) return;
-    if (sandboxBroken) return;
-    if (!iframe.contentWindow) return;
+  function iframeFor(field) {
+    return field === 'front' ? frontFrame : backFrame;
+  }
 
-    let textColor = '';
-    try {
-      if (textarea) {
-        textColor = getComputedStyle(textarea).color || '';
-      }
-      if (!textColor) {
-        textColor = getComputedStyle(document.documentElement).color || '';
-      }
-    } catch (err) {
-      console.warn('[QuickFlash] Failed to read preview text color:', err);
-      textColor = '';
+  function setWarning(field, visible, message) {
+    const block = previewBlock(field);
+    if (!block) return;
+    const warning = block.querySelector('[data-preview-warning]');
+    if (!warning) return;
+    if (typeof message === 'string') warning.textContent = message;
+    warning.hidden = !visible;
+  }
+
+  function showPreview(field) {
+    const block = previewBlock(field);
+    const ta = textareaFor(field);
+    if (!block || !ta) return;
+
+    block.hidden = false;
+
+    // Make textarea text invisible, but keep the caret visible.
+    ta.style.color = 'transparent';
+    ta.style.caretColor = '';
+
+    if (!state[field].ready) {
+      setWarning(field, true, 'Loading MathJax…');
+    }
+  }
+
+  function hidePreview(field) {
+    const block = previewBlock(field);
+    const ta = textareaFor(field);
+    if (!block || !ta) return;
+
+    block.hidden = true;
+    ta.style.color = '';
+    ta.style.caretColor = '';
+  }
+
+  function previewIsActive(field) {
+    return !!autoCheckbox.checked || !!inlineManualPreviewState[field];
+  }
+
+  function sendUpdate(field, { force = false } = {}) {
+    const frame = iframeFor(field);
+    const ta = textareaFor(field);
+    if (!frame || !frame.contentWindow || !ta) return;
+
+    const text = ta.value || '';
+    state[field].lastText = text;
+
+    if (!state[field].ready && !force) {
+      // Sandbox isn't ready yet; keep lastText for previewReady fallback.
     }
 
-    iframe.contentWindow.postMessage(
+    frame.contentWindow.postMessage(
       {
-        type: 'preview-update',
-        text: textarea.value || '',
-        color: textColor
+        type: 'quickflash:previewUpdate',
+        text
       },
       '*'
     );
   }
 
-  function handleSandboxReady(iframe, which) {
-    if (!iframe || iframe.contentWindow !== which) return false;
-    if (iframe === previewFrontFrame) {
-      frontSandboxReady = true;
-      postPreviewUpdate(front, previewFrontFrame);
-      updateFrontVisibility();
-      return true;
+  function applyPreviewForField(field, { refresh = false } = {}) {
+    if (!state[field]) return;
+    const active = previewIsActive(field);
+    if (!active) {
+      hidePreview(field);
+      setWarning(field, false);
+      return;
     }
-    if (iframe === previewBackFrame) {
-      backSandboxReady = true;
-      postPreviewUpdate(back, previewBackFrame);
-      updateBackVisibility();
-      return true;
-    }
-    return false;
+
+    showPreview(field);
+    sendUpdate(field, { force: !!refresh });
   }
 
-  window.addEventListener('message', function (event) {
+  inlineMathPreviewLifecycle.applyPreviewForField = applyPreviewForField;
+
+  // Listen for messages from both iframes
+  window.addEventListener('message', (event) => {
+    const src = event.source;
+    const field =
+      src === frontFrame.contentWindow ? 'front' :
+      src === backFrame.contentWindow ? 'back' :
+      null;
+    if (!field) return;
+
     const data = event.data || {};
-    if (data.type === 'quickflash:previewReady' || data.type === 'quickflash:previewRendered') {
-      if (handleSandboxReady(previewFrontFrame, event.source)) return;
-      handleSandboxReady(previewBackFrame, event.source);
+    if (data.type === 'quickflash:previewReady') {
+      state[field].ready = true;
+      setWarning(field, false);
+      applyPreviewForField(field, { refresh: true });
+    } else if (data.type === 'quickflash:previewError') {
+      const errorMessage =
+        (typeof data.error === 'string' && data.error.trim()
+          ? data.error
+          : typeof data?.error?.message === 'string' && data.error.message.trim()
+            ? data.error.message
+            : '') || 'MathJax error';
+      setWarning(field, true, errorMessage);
     }
   });
 
-  function pingSandboxReady(iframe) {
-    if (!iframe?.contentWindow) return;
-    try {
-      iframe.contentWindow.postMessage({ type: 'quickflash:previewPing' }, '*');
-    } catch (err) {
-      console.warn('[QuickFlash] Failed to ping preview sandbox:', err);
-    }
+  function handleInput(e) {
+    const field = e.target === front ? 'front' : e.target === back ? 'back' : null;
+    if (!field) return;
+
+    applyPreviewForField(field);
   }
 
-  // Wire load events BEFORE setting src so we catch the very first load.
-  previewFrontFrame.addEventListener('load', function () {
-    if (!sandboxLoadOk(previewFrontFrame)) return;
-    frontSandboxReady = false;
-    pingSandboxReady(previewFrontFrame);
-  });
+  front.addEventListener('input', handleInput);
+  back.addEventListener('input', handleInput);
 
-  previewBackFrame.addEventListener('load', function () {
-    if (!sandboxLoadOk(previewBackFrame)) return;
-    backSandboxReady = false;
-    pingSandboxReady(previewBackFrame);
-  });
-
-  previewFrontFrame.src = sandboxUrl;
-  previewBackFrame.src = sandboxUrl;
-
-  function isPreviewEnabled() {
-    return !sandboxBroken && isMathjaxPreviewEnabled();
+  // Manual toggle: Cmd/Ctrl + Shift + S
+  function setManualPreviewForFields(fields, active) {
+    fields.forEach((field) => {
+      if (!(field in inlineManualPreviewState)) return;
+      inlineManualPreviewState[field] = !!active;
+      setManualPreviewActive(field, !!active);
+    });
   }
 
-  // Core visibility logic: only show when NOT focused, text is non-empty, and sandbox is healthy.
-  function updateFieldPreviewVisibility(textarea, previewBlock, sandboxReady) {
-    if (!previewBlock) return;
+  function toggleManualPreview(field) {
+    if (!(field in inlineManualPreviewState)) return;
+    setManualPreviewForFields([field], !inlineManualPreviewState[field]);
+    applyPreviewForField(field, { refresh: true });
+  }
 
-    if (!isPreviewMode()) {
-      previewBlock.hidden = true;
+  function toggleManualPreviewGlobal() {
+    const nextBothState = !(inlineManualPreviewState.front && inlineManualPreviewState.back);
+    setManualPreviewForFields(['front', 'back'], nextBothState);
+    applyPreviewForField('front', { refresh: true });
+    applyPreviewForField('back', { refresh: true });
+  }
+
+  autoCheckbox.addEventListener('change', () => {
+    applyPreviewForField('front', { refresh: true });
+    applyPreviewForField('back', { refresh: true });
+  });
+
+  applyPreviewForField('front', { refresh: true });
+  applyPreviewForField('back', { refresh: true });
+
+  window.addEventListener('keydown', (event) => {
+    const isMod = event.metaKey || event.ctrlKey;
+    if (!isMod || !event.shiftKey) return;
+    if (event.key.toLowerCase() !== 's') return;
+
+    event.preventDefault();
+
+    let field;
+    if (document.activeElement === front) field = 'front';
+    else if (document.activeElement === back) field = 'back';
+    else {
+      toggleManualPreviewGlobal();
       return;
     }
 
-    if (!isPreviewEnabled() || !sandboxReady) {
-      previewBlock.hidden = true;
-      return;
-    }
-
-    const hasContent = (textarea.value || '').trim().length > 0;
-    if (!hasContent) {
-      previewBlock.hidden = true;
-      return;
-    }
-
-    const isFocused = document.activeElement === textarea;
-    // Option 3: render only when the user has clicked off the field.
-    previewBlock.hidden = isFocused;
-  }
-
-  function updateFrontVisibility() {
-    updateFieldPreviewVisibility(front, frontPreviewBlock, frontSandboxReady);
-  }
-
-  function updateBackVisibility() {
-    updateFieldPreviewVisibility(back, backPreviewBlock, backSandboxReady);
-  }
-
-  function matchesPreviewToggleShortcut(ev) {
-    const key = ev.key.toLowerCase();
-    if (key !== 's') return false;
-    if (isMacPlatform()) {
-      return ev.metaKey && ev.shiftKey && !ev.altKey && !ev.ctrlKey;
-    }
-    return ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey;
-  }
-
-  function onPreviewModeChanged(nextMode) {
-    setPreviewMode(nextMode);
-    if (nextMode === 'preview' && isPreviewEnabled()) {
-      postPreviewUpdate(front, previewFrontFrame);
-      postPreviewUpdate(back, previewBackFrame);
-    }
-    updateFrontVisibility();
-    updateBackVisibility();
-    if (!isInlineMathjaxPreviewEnabled()) {
-      updateMarkdownPreview().catch((err) => {
-        console.warn('Preview update failed', err);
-      });
-    }
-  }
-
-  function bindPreviewModeSync() {
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "sync") return;
-      if (!(PREVIEW_MODE_KEY in changes)) return;
-      const nextMode = normalizePreviewMode(changes[PREVIEW_MODE_KEY]?.newValue);
-      if (nextMode === previewModeState.mode) return;
-      onPreviewModeChanged(nextMode);
-    });
-  }
-
-  window.addEventListener('keydown', (ev) => {
-    if (!matchesPreviewToggleShortcut(ev)) return;
-    ev.preventDefault();
-
-    const nextMode = isPreviewMode() ? 'source' : 'preview';
-    setPreviewMode(nextMode, { persist: true });
-    onPreviewModeChanged(nextMode);
+    toggleManualPreview(field);
   });
-
-  const inlineAutoPreviewTimers = new WeakMap();
-
-  function scheduleInlinePreviewUpdate(textarea, iframe) {
-    if (!isAutoPreviewEnabled()) return;
-    if (!textarea || !iframe) return;
-    const existing = inlineAutoPreviewTimers.get(textarea);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => {
-      inlineAutoPreviewTimers.delete(textarea);
-      postPreviewUpdate(textarea, iframe);
-    }, 120);
-    inlineAutoPreviewTimers.set(textarea, timer);
-  }
-
-  function hookInlinePreview(textarea, iframe, updateFn) {
-    if (!textarea) return;
-
-    textarea.addEventListener('focus', function () {
-      // When the user starts editing, always show raw source.
-      updateFn();
-    });
-
-    textarea.addEventListener('input', function () {
-      scheduleInlinePreviewUpdate(textarea, iframe);
-    });
-
-    textarea.addEventListener('blur', function () {
-      // When they click off, update preview + possibly show it.
-      postPreviewUpdate(textarea, iframe);
-      updateFn();
-    });
-  }
-
-  hookInlinePreview(front, previewFrontFrame, updateFrontVisibility);
-  hookInlinePreview(back, previewBackFrame, updateBackVisibility);
-
-  if (autoPreviewCheckbox) {
-    autoPreviewCheckbox.addEventListener('change', function () {
-      updateFrontVisibility();
-      updateBackVisibility();
-    });
-  }
-
-  await loadPreviewMode();
-  bindPreviewModeSync();
-
-  // Initial visibility: if there are pre-filled values, we may show preview when not focused.
-  updateFrontVisibility();
-  updateBackVisibility();
-
-  // ---------- Image paste support (unchanged from before) ----------
-
-  function fileToDataUrl(file) {
-    return new Promise(function (resolve, reject) {
-      const reader = new FileReader();
-      reader.onload = function () { resolve(reader.result); };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
-  function insertAtCursor(textarea, text) {
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const value = textarea.value;
-    const before = value.slice(0, start);
-    const after = value.slice(end);
-
-    textarea.value = before + text + after;
-
-    const newPos = start + text.length;
-    textarea.selectionStart = newPos;
-    textarea.selectionEnd = newPos;
-  }
-
-  function hookImagePaste(textarea) {
-    if (!textarea) return;
-
-    textarea.addEventListener('paste', function (event) {
-      const clipboardData = event.clipboardData || window.clipboardData;
-      if (!clipboardData || !clipboardData.items) {
-        return;
-      }
-
-      const items = clipboardData.items;
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
-          event.preventDefault();
-
-          const file = item.getAsFile();
-          if (!file) return;
-
-          fileToDataUrl(file).then(function (dataUrl) {
-            const snippet = '\n\n![](' + dataUrl + ')\n\n';
-            insertAtCursor(textarea, snippet);
-
-            // Trigger preview update
-            textarea.dispatchEvent(new Event('input', { bubbles: true }));
-          }).catch(function (err) {
-            console.error('[panel] Failed to read pasted image:', err);
-          });
-
-          break; // only handle the first image
-        }
-      }
-    });
-  }
-
-  hookImagePaste(front);
-  hookImagePaste(back);
-});
+}
 
 // Allow Esc inside the iframe to close the overlay when not triaging
 document.addEventListener('keydown', (event) => {
@@ -5623,6 +5745,58 @@ function triggerTriagePrev() {
 
 function triggerTriageNext() {
   moveTriage(1);
+}
+
+function clearTriageUndoHistory() {
+  triageUndoStack.length = 0;
+}
+
+function pushTriageUndo(action) {
+  if (!action || !action.card) return;
+  triageUndoStack.push(action);
+  if (triageUndoStack.length > TRIAGE_UNDO_LIMIT) {
+    triageUndoStack.splice(0, triageUndoStack.length - TRIAGE_UNDO_LIMIT);
+  }
+}
+
+function undoLastTriageDecision() {
+  const action = triageUndoStack.pop();
+  if (!action) {
+    status("No triage action to undo.");
+    return;
+  }
+
+  const restoredCard = cloneCard(action.card);
+  if (!restoredCard) {
+    status("Could not restore the previous triage action.");
+    return;
+  }
+
+  delete restoredCard._status;
+  triage.accepted = triage.accepted.filter((c) => c.id !== restoredCard.id);
+  triage.skipped = triage.skipped.filter((c) => c.id !== restoredCard.id);
+
+  const insertIndex = Math.max(0, Math.min(action.index ?? triage.cards.length, triage.cards.length));
+  triage.cards.splice(insertIndex, 0, restoredCard);
+  triage.i = insertIndex;
+
+  const previousOutbox = action.outboxCard ? deepClone(action.outboxCard) : null;
+  if (previousOutbox) {
+    const idx = outbox.cards.findIndex((c) => c.id === previousOutbox.id);
+    if (idx !== -1) outbox.cards[idx] = previousOutbox;
+    else outbox.cards.push(previousOutbox);
+  } else {
+    removeFromOutbox(restoredCard.id, { silent: true });
+  }
+
+  triageState.active = true;
+  syncTriageState({ activateIfCards: true });
+  renderEditor();
+  renderOutboxList();
+  updateOutboxMeta();
+  persistTriageState();
+  persistOutboxState();
+  status("Undid last triage action.", true);
 }
 
 function focusNextPending(fromIndex) {
@@ -5659,6 +5833,9 @@ async function acceptCurrentCard() {
   if (!triageState.active) return;
   const card = triage.cards[triage.i];
   if (!card) return;
+  const cardBeforeAction = cloneCard(card);
+  const outboxBeforeAction = outbox.cards.find((c) => c.id === card.id);
+  const actionIndex = triage.i;
   card._status = "accepted";
   triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
   triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
@@ -5676,6 +5853,12 @@ async function acceptCurrentCard() {
       triage.i = Math.max(0, triage.cards.length - 1);
     }
   }
+  pushTriageUndo({
+    type: "accept",
+    card: cardBeforeAction,
+    outboxCard: outboxBeforeAction ? deepClone(outboxBeforeAction) : null,
+    index: actionIndex,
+  });
   renderEditor();
   persistTriageState();
   maybeCompleteTriage();
@@ -5685,6 +5868,9 @@ function skipCurrentCard() {
   if (!triageState.active) return;
   const card = triage.cards[triage.i];
   if (!card) return;
+  const cardBeforeAction = cloneCard(card);
+  const outboxBeforeAction = outbox.cards.find((c) => c.id === card.id);
+  const actionIndex = triage.i;
 
   // Mark it as skipped for stats / persistence
   card._status = "skipped";
@@ -5712,7 +5898,15 @@ function skipCurrentCard() {
     focusNextPending(triage.i);
   }
 
+  pushTriageUndo({
+    type: "skip",
+    card: cardBeforeAction,
+    outboxCard: outboxBeforeAction ? deepClone(outboxBeforeAction) : null,
+    index: actionIndex,
+  });
+
   renderEditor();
+  persistTriageState();
   maybeCompleteTriage();
 }
 
@@ -5848,12 +6042,9 @@ async function refreshMetaAndDefaults() {
     else value = false;
     autoPreviewCheckbox.checked = value;
     manualPrefsCache = { ...(manualPrefsCache || {}), autoPreview: value };
-  }
-
-  if (manualPrefs.mathjaxPreview !== undefined) {
-    manualPrefsCache = { ...(manualPrefsCache || {}), mathjaxPreview: !!manualPrefs.mathjaxPreview };
-  } else {
-    manualPrefsCache = { ...(manualPrefsCache || {}), mathjaxPreview: false };
+    const mathjaxPref = manualPrefs.mathjaxPreview;
+    const mathjaxValue = mathjaxPref !== undefined ? !!mathjaxPref : value;
+    manualPrefsCache = { ...(manualPrefsCache || {}), mathjaxPreview: mathjaxValue };
   }
 
   applyShortcutSetting(typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_ADD_SHORTCUT);
@@ -5887,15 +6078,27 @@ async function refreshMetaAndDefaults() {
   }
 
   try {
-    const [decks, models] = await Promise.all([ anki("deckNames"), anki("modelNames") ]);
+    const [decks, rawModels] = await Promise.all([ anki("deckNames"), anki("modelNames") ]);
+    let models = Array.isArray(rawModels) ? rawModels : [];
+    models = await ensureGhostwriterModel(models, { autoCreate: true });
+    currentModelNames = orderModelsWithGhostwriter(models);
     const deckSel = $("#deck"), modelSel = $("#model");
-    deckSel.innerHTML = ""; modelSel.innerHTML = "";
+    deckSel.innerHTML = "";
     for (const d of decks || []) { const opt = document.createElement("option"); opt.value = d; opt.textContent = d; deckSel.appendChild(opt); }
-    for (const m of models || []) { const opt = document.createElement("option"); opt.value = m; opt.textContent = m; modelSel.appendChild(opt); }
+    updateModelSelectOptions(models, { keepSelection: false });
 
     if (opts.defaultDeck && decks.includes(opts.defaultDeck)) deckSel.value = opts.defaultDeck;
-    if (opts.defaultModel && models.includes(opts.defaultModel)) modelSel.value = opts.defaultModel;
+    const storedModelName = (await chrome.storage.local.get(LAST_MODEL_NAME_KEY))?.[LAST_MODEL_NAME_KEY];
+    if (storedModelName && models.includes(storedModelName)) {
+      modelSel.value = storedModelName;
+    } else {
+      const preferredGhostwriter = models.find((name) => name === GHOSTWRITER_MODEL_NAME)
+        || models.find((name) => GHOSTWRITER_MODEL_REGEX.test(name));
+      if (preferredGhostwriter) modelSel.value = preferredGhostwriter;
+    }
     if (triage.deck && decks.includes(triage.deck)) deckSel.value = triage.deck;
+
+    await showGhostwriterModelInfoOnce();
 
     const ctx = await getPageContext();
     const draft = (await chrome.storage.local.get("quickflash_lastDraft")).quickflash_lastDraft;
@@ -5918,6 +6121,7 @@ async function refreshMetaAndDefaults() {
 }
 
 function applyStoredTriageData(triageData) {
+  clearTriageUndoHistory();
   if (!triageData) {
     triage.cards = [];
     triage.i = 0;
@@ -5992,6 +6196,19 @@ function bindStorageSync() {
     if (STORAGE_KEYS.outbox in changes) {
       applyStoredOutboxData(changes[STORAGE_KEYS.outbox]?.newValue);
       shouldRender = true;
+    }
+    if (LAST_MODEL_NAME_KEY in changes) {
+      const modelName = changes[LAST_MODEL_NAME_KEY]?.newValue || "";
+      const modelSel = $("#model");
+      if (modelSel && modelName) {
+        const hasModel = [...modelSel.options].some((opt) => opt.value === modelName);
+        if (hasModel && modelSel.value !== modelName) {
+          modelSel.value = modelName;
+          ensureOutboxPreflight({ force: true });
+          updateModelFieldWarning();
+          updateCardTypeUI();
+        }
+      }
     }
 
     if (shouldRender) {
@@ -6212,14 +6429,42 @@ function convertLatexToAnki(text) {
   return renderMarkdownToHtml(text);
 }
 
+function isMathjaxPreviewSupported() {
+  // MathJax preview is supported whenever we can address our sandbox page.
+  try {
+    if (!chrome?.runtime || typeof chrome.runtime.getURL !== "function") {
+      return false;
+    }
+
+    // Don't treat the sandbox iframe itself as a "preview-capable" host.
+    const selfUrl = new URL(window.location.href);
+    const sandboxUrl = new URL(chrome.runtime.getURL("mathjax-sandbox.html"));
+    if (selfUrl.pathname === sandboxUrl.pathname) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    // If anything goes wrong, fail closed rather than throwing.
+    return false;
+  }
+}
+
 function isMathjaxPreviewEnabled() {
-  return manualPrefsCache?.mathjaxPreview !== undefined ? !!manualPrefsCache?.mathjaxPreview : false;
+  if (!isMathjaxPreviewSupported()) return false;
+
+  // Prefer the live checkbox in the UI if we're in the full editor.
+  const toggle = $("#mathjaxPreview");
+  if (toggle) return !!toggle.checked;
+
+  // Fallback to whatever we loaded from storage (tests / edge cases).
+  return manualPrefsCache?.mathjaxPreview !== undefined ? !!manualPrefsCache.mathjaxPreview : false;
 }
 
 function isAutoPreviewEnabled() {
   const toggle = $("#mathjaxPreview");
   if (toggle) return !!toggle.checked;
-  return manualPrefsCache?.autoPreview !== undefined ? !!manualPrefsCache?.autoPreview : false;
+  return manualPrefsCache?.autoPreview !== undefined ? !!manualPrefsCache.autoPreview : false;
 }
 
 function typesetMath(target) {
@@ -6227,13 +6472,18 @@ function typesetMath(target) {
   const mathjax = window.MathJax;
   if (!mathjax?.typesetPromise) return;
   if (!isMathjaxPreviewEnabled()) return;
-  const run = () => mathjax.typesetPromise([target]).catch((err) => {
-    console.warn("MathJax typeset failed", err);
-  });
-  if (mathjax.startup?.promise) {
-    mathjax.startup.promise.then(run).catch((err) => {
-      console.warn("MathJax startup failed", err);
+
+  const run = () =>
+    mathjax.typesetPromise([target]).catch((err) => {
+      console.warn("MathJax typeset failed", err);
     });
+
+  if (mathjax.startup?.promise) {
+    mathjax.startup.promise
+      .then(run)
+      .catch((err) => {
+        console.warn("MathJax startup failed", err);
+      });
   } else {
     run();
   }
@@ -6248,10 +6498,203 @@ async function getModelFields(modelName) {
   return list;
 }
 
+async function updateGhostwriterModelTemplates(models) {
+  const list = Array.isArray(models) ? models : [];
+  const targets = [
+    {
+      names: list.filter((name) => name === GHOSTWRITER_MODEL_NAME || GHOSTWRITER_MODEL_REGEX.test(name)),
+      templateName: GHOSTWRITER_BASIC_TEMPLATE_NAME,
+      front: GHOSTWRITER_BASIC_FRONT_TEMPLATE,
+      back: GHOSTWRITER_BASIC_BACK_TEMPLATE,
+    },
+    {
+      names: list.filter((name) => name === GHOSTWRITER_CLOZE_MODEL_NAME || GHOSTWRITER_CLOZE_MODEL_REGEX.test(name)),
+      templateName: GHOSTWRITER_CLOZE_TEMPLATE_NAME,
+      front: GHOSTWRITER_CLOZE_FRONT_TEMPLATE,
+      back: GHOSTWRITER_CLOZE_BACK_TEMPLATE,
+    },
+  ];
+  const updates = [];
+  for (const target of targets) {
+    for (const name of target.names) {
+      updates.push(
+        anki("updateModelTemplates", {
+          model: {
+            name,
+            templates: {
+              [target.templateName]: {
+                Front: target.front,
+                Back: target.back,
+              },
+            },
+          },
+        }).catch((err) => {
+          console.warn(`Failed to update Ghostwriter templates for ${name}:`, err);
+        }),
+      );
+    }
+  }
+  if (updates.length) {
+    await Promise.all(updates);
+  }
+}
+
+async function ensureGhostwriterModel(models, { autoCreate = false } = {}) {
+  const list = Array.isArray(models) ? models.slice() : [];
+  let hasBasic = list.some((name) => name === GHOSTWRITER_MODEL_NAME || GHOSTWRITER_MODEL_REGEX.test(name));
+  let hasCloze = list.some((name) => name === GHOSTWRITER_CLOZE_MODEL_NAME || GHOSTWRITER_CLOZE_MODEL_REGEX.test(name));
+
+  if (autoCreate && !hasBasic) {
+    try {
+      await anki("createModel", {
+        modelName: GHOSTWRITER_MODEL_NAME,
+        inOrderFields: ["Front", "Back", "Context", "Source", "Extra"],
+        css: GHOSTWRITER_MODEL_CSS,
+        cardTemplates: [
+          {
+            Name: GHOSTWRITER_BASIC_TEMPLATE_NAME,
+            Front: GHOSTWRITER_BASIC_FRONT_TEMPLATE,
+            Back: GHOSTWRITER_BASIC_BACK_TEMPLATE,
+          },
+        ],
+      });
+      list.push(GHOSTWRITER_MODEL_NAME);
+      hasBasic = true;
+    } catch (err) {
+      console.warn("Failed to create Ghostwriter Basic note type:", err);
+    }
+  }
+
+  if (autoCreate && !hasCloze) {
+    try {
+      await anki("createModel", {
+        modelName: GHOSTWRITER_CLOZE_MODEL_NAME,
+        inOrderFields: ["Text", "Extra", "Context", "Source"],
+        css: GHOSTWRITER_MODEL_CSS,
+        cardTemplates: [
+          {
+            Name: GHOSTWRITER_CLOZE_TEMPLATE_NAME,
+            Front: GHOSTWRITER_CLOZE_FRONT_TEMPLATE,
+            Back: GHOSTWRITER_CLOZE_BACK_TEMPLATE,
+          },
+        ],
+      });
+      list.push(GHOSTWRITER_CLOZE_MODEL_NAME);
+      hasCloze = true;
+    } catch (err) {
+      console.warn("Failed to create Ghostwriter Cloze note type:", err);
+    }
+  }
+
+  if (hasBasic || hasCloze) {
+    await updateGhostwriterModelTemplates(list);
+  }
+  return list;
+}
+
+function orderModelsWithGhostwriter(models) {
+  const list = Array.isArray(models) ? models : [];
+  const ordered = [];
+  const seen = new Set();
+  const addUnique = (name) => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    ordered.push(name);
+  };
+  const basic = list.find((name) => name === GHOSTWRITER_MODEL_NAME) || list.find((name) => GHOSTWRITER_MODEL_REGEX.test(name));
+  const cloze = list.find((name) => name === GHOSTWRITER_CLOZE_MODEL_NAME) || list.find((name) => GHOSTWRITER_CLOZE_MODEL_REGEX.test(name));
+  addUnique(basic);
+  addUnique(cloze);
+  for (const name of list) addUnique(name);
+  return ordered;
+}
+
+function updateModelSelectOptions(models, { keepSelection = true } = {}) {
+  const modelSel = $("#model");
+  if (!modelSel) return;
+  const previous = keepSelection ? modelSel.value : null;
+  const orderedModels = orderModelsWithGhostwriter(models);
+  modelSel.innerHTML = "";
+  for (const m of orderedModels) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    modelSel.appendChild(opt);
+  }
+  if (previous && orderedModels.includes(previous)) {
+    modelSel.value = previous;
+  }
+}
+
+function getPreferredGhostwriterModel(models) {
+  const list = Array.isArray(models) ? models : [];
+  const basic = list.find((name) => name === GHOSTWRITER_MODEL_NAME);
+  if (basic) return basic;
+  return list.find((name) => GHOSTWRITER_CLOZE_MODEL_REGEX.test(name)) || null;
+}
+
+async function showGhostwriterModelInfoOnce() {
+  const infoEl = $("#ghostwriterModelInfo");
+  if (!infoEl) return;
+  bindGhostwriterModelInfoDismiss();
+  const stored = await readGhostwriterInfoShownFlag();
+  if (stored) {
+    infoEl.hidden = true;
+    infoEl.style.display = "none";
+    return;
+  }
+  infoEl.hidden = false;
+  infoEl.style.display = "";
+}
+
+function bindGhostwriterModelInfoDismiss() {
+  const infoEl = $("#ghostwriterModelInfo");
+  const dismissBtn = $("#ghostwriterModelInfoDismiss");
+  if (!infoEl || !dismissBtn || dismissBtn.dataset.bound) return;
+  dismissBtn.dataset.bound = "true";
+  dismissBtn.addEventListener("click", async () => {
+    infoEl.hidden = true;
+    infoEl.style.display = "none";
+    try {
+      await chrome.storage.local.set({ [GHOSTWRITER_INFO_SHOWN_KEY]: true });
+    } catch {
+      setStorageFlag(localStorage, GHOSTWRITER_INFO_SHOWN_KEY, true);
+      setStorageFlag(sessionStorage, GHOSTWRITER_INFO_SHOWN_KEY, true);
+    }
+  });
+}
+
+async function readGhostwriterInfoShownFlag() {
+  try {
+    const stored = await chrome.storage.local.get(GHOSTWRITER_INFO_SHOWN_KEY);
+    return !!stored?.[GHOSTWRITER_INFO_SHOWN_KEY];
+  } catch {
+    return getStorageFlag(localStorage, GHOSTWRITER_INFO_SHOWN_KEY) || getStorageFlag(sessionStorage, GHOSTWRITER_INFO_SHOWN_KEY);
+  }
+}
+
 async function updateModelFieldWarning() {
   const warningEl = $("#modelFieldWarning");
+  const warningTextEl = $("#modelFieldWarningText");
+  const warningActionsEl = $("#modelFieldWarningActions");
+  const hideCheckbox = $("#hideModelFieldWarning");
   const modelSel = $("#model");
-  if (!warningEl || !modelSel) return;
+  if (!warningEl || !warningTextEl || !modelSel) return;
+  const hideWarning = () => {
+    warningTextEl.textContent = "";
+    warningEl.hidden = true;
+    warningEl.style.display = "none";
+    if (warningActionsEl) warningActionsEl.hidden = true;
+    if (warningActionsEl) warningActionsEl.style.display = "none";
+  };
+  if (getStorageFlag(localStorage, MODEL_FIELD_WARNING_HIDDEN_PREF)) {
+    hideWarning();
+    return;
+  }
+  if (getStorageFlag(sessionStorage, MODEL_FIELD_WARNING_DISMISSED_SESSION)) {
+    hideWarning();
+    return;
+  }
   const modelName = modelSel.value || "Basic";
   const requestId = ++modelFieldWarningRequest;
   try {
@@ -6260,36 +6703,101 @@ async function updateModelFieldWarning() {
     const hasContext = fieldNames.includes("Context");
     const hasSource = fieldNames.includes("Source");
     if (hasContext && hasSource) {
-      warningEl.textContent = "";
-      warningEl.hidden = true;
+      hideWarning();
       return;
     }
     const missing = [];
     if (!hasContext) missing.push("Context");
     if (!hasSource) missing.push("Source");
-    warningEl.textContent = `Your selected note type has no ${missing.join("/")} field. Consider adding one in Anki to store those values.`;
+    const message = `Your selected note type has no ${missing.join("/")} field. Consider using the Basic or Cloze Ghostwriter note types, or adding Context/Source fields to your preferred type in Anki to store those values.`;
+    warningTextEl.textContent = message;
+    if (!message.trim()) {
+      hideWarning();
+      return;
+    }
+    if (hideCheckbox) {
+      hideCheckbox.checked = getStorageFlag(localStorage, MODEL_FIELD_WARNING_HIDDEN_PREF);
+    }
     warningEl.hidden = false;
+    warningEl.style.display = "";
+    if (warningActionsEl) warningActionsEl.hidden = false;
+    if (warningActionsEl) warningActionsEl.style.display = "";
   } catch {
     if (requestId !== modelFieldWarningRequest) return;
-    warningEl.textContent = "";
-    warningEl.hidden = true;
+    hideWarning();
   }
 }
 
-function updateClozeModelNotice(modelName) {
-  const noticeEl = $("#clozeModelNotice");
-  if (!noticeEl) return;
-  const isClozeModel = /cloze/i.test(modelName || "");
-  if (!isClozeModel) {
-    noticeEl.hidden = true;
+// --- Cloze helper notice ----------------------------------------
+
+// Very lightweight detector for Anki-style cloze deletions: {{c1::...}}
+// Works for {{c123::front}} and {{c1::front::hint}} patterns.
+function detectClozeSyntax(text) {
+  if (!text) return false;
+  return /\{\{c\d+::/i.test(text);
+}
+
+function initClozeNotice() {
+  const notice = document.getElementById('clozeModelNotice');
+  const dismissBtn = document.getElementById('dismissClozeNotice');
+  const hideCheckbox = document.getElementById('hideClozeNotice');
+  const front = document.getElementById('front');
+
+  if (!notice || !front) return;
+
+  const STORAGE_KEY = 'quickflash:hideClozeNotice';
+  const SESSION_KEY = 'quickflash:hideClozeNoticeSession';
+
+  // Respect "don't show again" settings
+  const hideForever = localStorage.getItem(STORAGE_KEY) === 'true';
+  const hideThisSession = sessionStorage.getItem(SESSION_KEY) === 'true';
+
+  if (hideForever || hideThisSession) {
+    notice.hidden = true;
     return;
   }
-  if (sessionStorage.getItem(CLOZE_NOTICE_SESSION_KEY) === "true") {
-    noticeEl.hidden = true;
-    return;
+
+  function maybeShow() {
+    // Only show after the user has actually typed a cloze deletion.
+    if (!detectClozeSyntax(front.value)) {
+      notice.hidden = true;
+      return;
+    }
+
+    const hideForeverNow = localStorage.getItem(STORAGE_KEY) === 'true';
+    const hideSessionNow = sessionStorage.getItem(SESSION_KEY) === 'true';
+
+    if (hideForeverNow || hideSessionNow) {
+      notice.hidden = true;
+      return;
+    }
+
+    notice.hidden = false;
   }
-  sessionStorage.setItem(CLOZE_NOTICE_SESSION_KEY, "true");
-  noticeEl.hidden = false;
+
+  // Re‑evaluate whenever the Front field changes.
+  front.addEventListener('input', maybeShow);
+  front.addEventListener('blur', maybeShow);
+
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => {
+      notice.hidden = true;
+      sessionStorage.setItem(SESSION_KEY, 'true');
+    });
+  }
+
+  if (hideCheckbox) {
+    hideCheckbox.addEventListener('change', () => {
+      if (hideCheckbox.checked) {
+        localStorage.setItem(STORAGE_KEY, 'true');
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    });
+  }
+
+  // Initial state on first load.
+  maybeShow();
 }
 
 function updateFrontDetection(frontText) {
@@ -6301,10 +6809,297 @@ function updateFrontDetection(frontText) {
   indicator.dataset.detected = isCloze ? "cloze" : "basic";
 }
 
+const lpcgState = {
+  tokens: [],
+  selected: new Set(),
+};
+
+function isLpcgMode() {
+  const modelName = $("#model")?.value || "";
+  return /lpcg/i.test(modelName);
+}
+
+function isLpcg1ModelName(modelName) {
+  return /lpcg\s*-?1/i.test(modelName || "");
+}
+
+function isClozeModelName(modelName) {
+  return /cloze/i.test(modelName || "");
+}
+
+function updateCardTypeUI() {
+  const lpcgPanel = $("#lpcgPanel");
+  const standardFields = $("#standardFields");
+  const isLpcg = isLpcgMode();
+
+  // Show LPCG import UI only when an LPCG model is selected
+  if (lpcgPanel) lpcgPanel.hidden = !isLpcg;
+  // Hide the normal Front / Back / Context editors when using LPCG
+  if (standardFields) standardFields.hidden = isLpcg;
+}
+
+function tokenizeLpcgLine(line) {
+  const parts = line.match(/(\s+|[^\s]+)/g) || [];
+  return parts.map((part) => ({
+    text: part,
+    isWord: /[\p{L}\p{N}]/u.test(part),
+  }));
+}
+
+function tokenizeLpcgText(text) {
+  const lines = (text || "").split(/\r?\n/);
+  let tokenId = 0;
+  return lines.map((line) => tokenizeLpcgLine(line).map((token) => ({
+    ...token,
+    id: `lpcg-${tokenId++}`,
+  })));
+}
+
+function updateLpcgSelectionCount() {
+  const countEl = $("#lpcgSelectionCount");
+  if (!countEl) return;
+  const count = lpcgState.selected.size;
+  countEl.textContent = count ? `${count} word${count === 1 ? "" : "s"} selected` : "No words selected";
+}
+
+function renderLpcgWordBank() {
+  const bank = $("#lpcgWordBank");
+  if (!bank) return;
+  bank.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  lpcgState.tokens.forEach((lineTokens) => {
+    const lineEl = document.createElement("div");
+    lineEl.className = "lpcg-line";
+    lineTokens.forEach((token) => {
+      if (token.isWord) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "lpcg-word";
+        btn.textContent = token.text;
+        btn.dataset.tokenId = token.id;
+        if (lpcgState.selected.has(token.id)) {
+          btn.classList.add("selected");
+        }
+        btn.addEventListener("click", () => {
+          if (lpcgState.selected.has(token.id)) {
+            lpcgState.selected.delete(token.id);
+            btn.classList.remove("selected");
+          } else {
+            lpcgState.selected.add(token.id);
+            btn.classList.add("selected");
+          }
+          updateLpcgSelectionCount();
+        });
+        lineEl.appendChild(btn);
+      } else {
+        const span = document.createElement("span");
+        span.textContent = token.text;
+        lineEl.appendChild(span);
+      }
+    });
+    fragment.appendChild(lineEl);
+  });
+  bank.appendChild(fragment);
+  updateLpcgSelectionCount();
+}
+
+function buildLpcgWordBank() {
+  const text = $("#lpcgText")?.value || "";
+  lpcgState.selected.clear();
+  lpcgState.tokens = tokenizeLpcgText(text);
+  renderLpcgWordBank();
+}
+
+function clearLpcgSelection() {
+  lpcgState.selected.clear();
+  renderLpcgWordBank();
+}
+
+function coerceLpcgNumber(value, fallback = null) {
+  if (value === null || value === undefined || value === "") return fallback;
+  const num = Number.parseInt(value, 10);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function parseLpcgPositiveInt(value) {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return null;
+  const num = Number(raw);
+  if (!Number.isFinite(num) || !Number.isInteger(num) || num <= 0) return null;
+  return num;
+}
+
+function applyLpcgDefaults() {
+  // Match LPCG's documented defaults:
+  //   Lines of Context: 2
+  //   Lines to Recite: 1
+  //   Lines in Groups of: 1
+  const defaults = [
+    { id: "lpcgLinesOfContext", value: "2" },
+    { id: "lpcgLinesToRecite", value: "1" },
+    { id: "lpcgLinesInGroupsOf", value: "1" },
+  ];
+
+  defaults.forEach(({ id, value }) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if ((el.value || "").trim() === "") {
+      el.value = value;
+    }
+  });
+}
+
+function normalizeLpcgText(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => pickString(entry)).filter(Boolean).join("\n");
+  }
+  return pickString(value);
+}
+
+function normalizeLpcgLineList(value) {
+  if (Array.isArray(value)) return value.map((entry) => pickString(entry)).filter(Boolean);
+  if (typeof value === "string") {
+    return value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function buildLpcgFields(card) {
+  const lpcg = card?.lpcg && typeof card.lpcg === "object" ? card.lpcg : {};
+
+  const allLines = normalizeLpcgLineList(
+    lpcg.lines || lpcg.allLines || lpcg.text
+  );
+
+  const sequence = coerceLpcgNumber(
+    lpcg.sequence ?? card.sequence ?? card.index ?? card.order,
+    null
+  );
+
+  const linesToRecite = coerceLpcgNumber(
+    lpcg.linesToRecite ?? card.linesToRecite ?? card.linesPerCard,
+    1
+  );
+
+  const linesOfContext = coerceLpcgNumber(
+    lpcg.linesOfContext ?? card.linesOfContext,
+    1
+  );
+
+  const linesInGroupsOf = coerceLpcgNumber(
+    lpcg.linesInGroupsOf ?? card.linesInGroupsOf ?? lpcg.linesPerGroup ?? card.linesPerGroup,
+    null
+  );
+  const groupSize = Math.max(linesInGroupsOf || linesToRecite || 1, 1);
+  const reciteSize = Math.max(linesToRecite || 1, 1);
+
+  // Line: same as before – fall back through card fields if LPCG-specific
+  // line isn't set.
+  let lineText = normalizeLpcgText(
+    lpcg.line || card.line || card.lines || card.front
+  );
+
+  // Context:
+  //  - Prefer an explicit LPCG context if one is ever provided.
+  //  - If we *don't* have parsed poem lines (allLines.length === 0),
+  //    fall back to the card's generic context (editor "Context" field).
+  //  - If we *do* have poem lines, we leave contextText empty so that the
+  //    logic below derives it from the poem and linesOfContext.
+  let contextText = normalizeLpcgText(lpcg.context);
+  if (!contextText && !allLines.length) {
+    contextText = normalizeLpcgText(card.context);
+  }
+
+  if (allLines.length && sequence) {
+    const start = Math.max((sequence - 1) * groupSize, 0);
+    if (!lineText) {
+      lineText = allLines.slice(start, start + reciteSize).join("\n");
+    }
+    if (!contextText) {
+      if (start === 0) {
+        contextText = "[Beginning]";
+      } else if (linesOfContext > 0) {
+        contextText = allLines.slice(Math.max(0, start - linesOfContext), start).join("\n");
+      }
+    }
+  } else if (!contextText && sequence === 1) {
+    contextText = "[Beginning]";
+  }
+
+  return {
+    line: lineText,
+    context: contextText,
+    title: normalizeLpcgText(
+      lpcg.title || card.title || card.poemTitle || card.poem_title
+    ),
+    author: normalizeLpcgText(
+      lpcg.author || card.author || card.poemAuthor || card.poem_author
+    ),
+    prompt: normalizeLpcgText(
+      lpcg.prompt || card.prompt || card.back
+    ),
+    sequence: sequence ? String(sequence) : "",
+  };
+}
+
+function applyLpcgToFront() {
+  if (!lpcgState.tokens.length) {
+    buildLpcgWordBank();
+  }
+  const autoNumber = $("#lpcgAutoNumber")?.checked ?? true;
+  const preserveLines = $("#lpcgPreserveLines")?.checked ?? true;
+  const hint = ($("#lpcgHint")?.value || "").trim();
+  let clozeIndex = 1;
+  const lines = lpcgState.tokens.map((lineTokens) => {
+    return lineTokens.map((token) => {
+      if (!token.isWord || !lpcgState.selected.has(token.id)) {
+        return token.text;
+      }
+      const idx = autoNumber ? clozeIndex++ : 1;
+      const hintSuffix = hint ? `::${hint}` : "";
+      return `{{c${idx}::${token.text}${hintSuffix}}}`;
+    }).join("");
+  });
+  const output = preserveLines ? lines.join("\n") : lines.join(" ");
+  const frontEl = $("#front");
+  if (frontEl) {
+    frontEl.value = output;
+    updateFrontDetection(output);
+    scheduleMarkdownPreviewUpdate({ force: true });
+    frontEl.focus();
+  }
+}
+
+function initLpcgControls() {
+  // For LPCG we now mimic the "Import Lyrics/Poetry" dialog:
+  // the poem is entered directly in #lpcgText, and notes are generated
+  // from the full text when the user clicks "Add to Anki".
+  //
+  // All of the old word-bank / apply-to-front controls have been removed.
+  applyLpcgDefaults();
+
+  const textEl = $("#lpcgText");
+  if (textEl) {
+    // Still debounce updates if you later want to add validation or
+    // live feedback, but no more tokenization/word bank.
+    let inputTimer = null;
+    textEl.addEventListener("input", () => {
+      if (inputTimer) clearTimeout(inputTimer);
+      inputTimer = setTimeout(() => {
+        // Placeholder: currently no-op; kept for easy extension.
+        // (We intentionally do NOT call buildLpcgWordBank here anymore.)
+      }, 250);
+    });
+  }
+}
+
 async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, title, fillSourceField, { syncMedia = false } = {}) {
   if (!card) throw new Error("Missing card");
   const cardType = (card.type || "basic").toLowerCase();
-  const effectiveModel = cardType === "cloze" ? "Cloze" : (modelName || "Basic");
+  const isLpcg1 = isLpcg1ModelName(modelName);
+  const effectiveModel = isLpcg1
+    ? (modelName || "Basic")
+    : (cardType === "cloze" ? (isClozeModelName(modelName) ? modelName : "Cloze") : (modelName || "Basic"));
   const fieldNames = await getModelFields(effectiveModel);
   const fields = Object.fromEntries(fieldNames.map((n) => [n, ""]));
 
@@ -6331,8 +7126,41 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
   const hasSourceLink = !!(sourceUrl && sourceLabel);
   const backLink = includeBackLink && hasSourceLink ? makeBackLinkHTML(sourceUrl, sourceLabel) : "";
 
-  if (cardType === "cloze") {
+  if (isLpcg1) {
+    const lpcgFields = buildLpcgFields(card);
+
+    // LPCG default fields: Line, Context, Title, Sequence, Prompt (+ Author)
+    if ("Line" in fields) {
+      fields.Line = convertLatexToAnki(lpcgFields.line || "");
+    }
+    if ("Context" in fields) {
+      fields.Context = convertLatexToAnki(lpcgFields.context || "");
+    }
+    if ("Title" in fields) {
+      fields.Title = convertLatexToAnki(lpcgFields.title || "");
+    }
+    if ("Author" in fields) {
+      // Optional Author field, added in LPCG 1.4
+      fields.Author = convertLatexToAnki(lpcgFields.author || "");
+    }
+    if ("Sequence" in fields) {
+      fields.Sequence = lpcgFields.sequence || "";
+    }
+    if ("Prompt" in fields) {
+      // When empty, the standard LPCG templates fall back to [...] or [...N]
+      fields.Prompt = convertLatexToAnki(lpcgFields.prompt || "");
+    }
+
+    // Optional extra metadata if the LPCG note type has these fields
+    if (fillSourceField && "Source" in fields && hasSourceLink) {
+      fields.Source = convertLatexToAnki(`[${sourceLabel}](${sourceUrl})`);
+    }
+    if ("Notes" in fields && sourceExcerpt) {
+      fields.Notes = sourceExcerpt;
+    }
+  } else if (cardType === "cloze") {
     if ("Text" in fields) fields.Text = front;
+    if ("Context" in fields && contextValue) fields.Context = contextValue;
     if ("Extra" in fields) {
       const parts = [];
       if (extraValue) parts.push(extraValue);
@@ -6406,7 +7234,46 @@ async function addToAnki() {
   const stickyBase = stickyActive ? (contextText || stickyContextState.value || "") : "";
   let finalStickyValue = "";
 
-  if (!front || !back) return status("Front and Back are required.");
+  const isLpcg = isLpcgMode();
+  const isLpcg1 = isLpcg1ModelName(modelName);
+  const lpcgText = isLpcg1 ? ($("#lpcgText")?.value || "").trim() : "";
+  const lpcgLines = isLpcg1 ? normalizeLpcgLineList(lpcgText) : [];
+  let lpcgNumbers = null;
+  const hasClozeDeletion = CLOZE_PATTERN.test(front);
+  const requiresBack = !isLpcg && !hasClozeDeletion && !isLpcg1;
+  if ((!front && !(isLpcg1 && lpcgLines.length)) || (!back && requiresBack)) {
+    if (!front) {
+      return status(isLpcg1 ? "Line or text is required." : "Front is required for cloze cards.");
+    }
+    return status("Front and Back are required.");
+  }
+  if (isLpcg1) {
+    const linesOfContext = parseLpcgPositiveInt($("#lpcgLinesOfContext")?.value);
+    if (!linesOfContext) {
+      return status("Lines of Context must be a positive integer.");
+    }
+    const linesToRecite = parseLpcgPositiveInt($("#lpcgLinesToRecite")?.value);
+    if (!linesToRecite) {
+      return status("Lines to Recite must be a positive integer.");
+    }
+    const linesInGroupsOf = parseLpcgPositiveInt($("#lpcgLinesInGroupsOf")?.value);
+    if (!linesInGroupsOf) {
+      return status("Lines in Groups of must be a positive integer.");
+    }
+    if (lpcgLines.length) {
+      if (linesToRecite > lpcgLines.length) {
+        return status(`Lines to Recite must be ≤ poem lines (${lpcgLines.length}).`);
+      }
+      if (linesInGroupsOf > lpcgLines.length) {
+        return status(`Lines in Groups of must be ≤ poem lines (${lpcgLines.length}).`);
+      }
+      const maxSequence = Math.floor((lpcgLines.length - linesToRecite) / linesInGroupsOf) + 1;
+      if (maxSequence < 1) {
+        return status("Poem does not have enough lines for the chosen settings.");
+      }
+    }
+    lpcgNumbers = { linesOfContext, linesToRecite, linesInGroupsOf };
+  }
   status("Adding…");
 
   // Page context
@@ -6425,21 +7292,23 @@ async function addToAnki() {
   const includeBackLink = $("#includeBackLink").checked;
   const fillSourceField = $("#fillSourceField").checked;
 
-  let cardType = "basic";
-  const hasClozeDeletion = CLOZE_PATTERN.test(front);
-  if (hasClozeDeletion) {
+  let cardType = isLpcg && !isLpcg1 ? "cloze" : "basic";
+  if (cardType !== "cloze" && hasClozeDeletion) {
     cardType = "cloze";
     status("Detected Cloze deletion...");
     setTimeout(() => status("Adding…"), 1200);
   }
+  if (cardType === "cloze" && !hasClozeDeletion && !isLpcg1) {
+    return status("Cloze cards require at least one deletion like {{c1::...}}.");
+  }
   const isClozeModelSelection = /cloze/i.test(modelName);
-  if (isClozeModelSelection && !hasClozeDeletion) {
+  if (isClozeModelSelection && cardType !== "cloze" && !isLpcg1) {
     return status("Cloze note type requires at least one deletion like {{c1::...}}.");
   }
 
   const card = {
     type: cardType,
-    front,
+    front: front || (lpcgLines[0] || ""),
     back,
     tags: typedTags.slice(),
   };
@@ -6448,6 +7317,42 @@ async function addToAnki() {
   if (contextText) card.context = contextText;
   card.source_url = source_url || undefined;
   if (source_label) card.source_label = source_label;
+  let lpcgPayload = null;
+  let lpcgTagPrompt = null;
+  if (isLpcg1) {
+    const lpcgTitle = ($("#lpcgTitle")?.value || "").trim();
+    const lpcgAuthor = ($("#lpcgAuthor")?.value || "").trim();
+    const lpcgPrompt = ($("#lpcgPrompt")?.value || "").trim();
+    const lpcgSequence = coerceLpcgNumber($("#lpcgSequence")?.value || "", null);
+    const lpcgLinesToRecite = lpcgNumbers?.linesToRecite ?? null;
+    const lpcgLinesOfContext = lpcgNumbers?.linesOfContext ?? null;
+    const lpcgLinesInGroupsOf = lpcgNumbers?.linesInGroupsOf ?? null;
+    const hasPoemText = lpcgLines.length > 0;
+    const lpcgContext = !hasPoemText ? contextText : "";
+    lpcgPayload = {
+      line: front,
+      context: lpcgContext,
+      title: lpcgTitle,
+      author: lpcgAuthor,
+      prompt: lpcgPrompt,
+      sequence: lpcgSequence,
+      linesToRecite: lpcgLinesToRecite,
+      linesOfContext: lpcgLinesOfContext,
+      linesInGroupsOf: lpcgLinesInGroupsOf,
+      text: lpcgText || undefined,
+    };
+    if (Object.values(lpcgPayload).some((value) => value !== null && value !== undefined && value !== "")) {
+      card.lpcg = lpcgPayload;
+    }
+    const lpcgTagFront = lpcgTitle ? `Title: ${lpcgTitle}` : "";
+    const lpcgTagBackParts = [];
+    if (lpcgAuthor) lpcgTagBackParts.push(`Author: ${lpcgAuthor}`);
+    if (lpcgText) lpcgTagBackParts.push(lpcgText);
+    const lpcgTagBack = lpcgTagBackParts.join("\n\n");
+    if (lpcgTagFront || lpcgTagBack) {
+      lpcgTagPrompt = { front: lpcgTagFront || front, back: lpcgTagBack || back };
+    }
+  }
 
   const wantAutoTag = $("#manualAutoTag") ? $("#manualAutoTag").checked : !!(manualPrefsCache?.autoTagManual);
   const wantAutoContext = $("#manualAutoContext") ? $("#manualAutoContext").checked : !!(manualPrefsCache?.autoContextManual);
@@ -6476,7 +7381,9 @@ async function addToAnki() {
   }
 
   if (wantAutoTag) {
-    const aiTags = await aiSuggestTags(front, back, url, title);
+    const tagFront = lpcgTagPrompt?.front ?? front;
+    const tagBack = lpcgTagPrompt?.back ?? back;
+    const aiTags = await aiSuggestTags(tagFront, tagBack, url, title);
     if (Array.isArray(aiTags) && aiTags.length) {
       const combined = [...new Set([...typedTags, ...aiTags])];
       card.tags = combined;
@@ -6497,7 +7404,131 @@ async function addToAnki() {
     card.id = `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
   }
 
+  const resetManualFields = async () => {
+    $("#front").value = "";
+    $("#back").value  = "";
+    $("#notes").value = "";
+    const contextEl = document.querySelector("#context");
+    if (contextEl) contextEl.value = stickyActive ? (finalStickyValue || stickyBase || "") : "";
+    if (stickyActive) stickyContextState.value = contextEl?.value || finalStickyValue || "";
+    const sourceEl = document.querySelector("#source");
+    if (sourceEl) {
+      sourceEl.value = "";
+      delete sourceEl.dataset.autoClipboard;
+    }
+    const tagsEl = document.querySelector("#tags");
+    if (tagsEl) tagsEl.value = ""; // ← important: prevent tag accumulation
+    const lpcgTextEl = document.querySelector("#lpcgText");
+    if (lpcgTextEl) lpcgTextEl.value = "";
+    lpcgState.tokens = [];
+    lpcgState.selected.clear();
+    const lpcgBank = document.querySelector("#lpcgWordBank");
+    if (lpcgBank) lpcgBank.innerHTML = "";
+    updateLpcgSelectionCount();
+    resetCopilotLocks();
+    cancelCopilotRequests();
+    await clearManualDraftStorage();
+  };
+
   try {
+    if (isLpcg && isLpcg1) {
+      const linesToRecite = coerceLpcgNumber(lpcgPayload?.linesToRecite ?? 1, 1);
+      const linesInGroupsOf = coerceLpcgNumber(lpcgPayload?.linesInGroupsOf ?? 1, 1);
+      const maxSequence = lpcgLines.length
+        ? Math.max(1, Math.floor((lpcgLines.length - linesToRecite) / linesInGroupsOf) + 1)
+        : 1;
+      const lpcgCards = [];
+      const forceSequenceLines = lpcgLines.length > 0;
+      for (let sequence = 1; sequence <= maxSequence; sequence += 1) {
+        const lpcgCard = {
+          ...card,
+          id: `${card.id}-lpcg-${sequence}`,
+          front: forceSequenceLines ? "" : card.front,
+          back: forceSequenceLines ? "" : card.back,
+          lpcg: {
+            ...(lpcgPayload || {}),
+            line: forceSequenceLines ? "" : lpcgPayload?.line,
+            sequence,
+            text: lpcgText || undefined,
+          },
+        };
+        const lpcgFields = buildLpcgFields(lpcgCard);
+        lpcgCard.front = lpcgFields.line || lpcgCard.front;
+        lpcgCard.context = lpcgFields.context ?? lpcgCard.context;
+        lpcgCard.back = lpcgFields.prompt || lpcgCard.back;
+        lpcgCards.push(lpcgCard);
+      }
+      const notePairs = [];
+      for (const lpcgCard of lpcgCards) {
+        const note = await cardToAnkiNote(
+          lpcgCard,
+          deckName,
+          modelName,
+          includeBackLink,
+          url,
+          title,
+          fillSourceField,
+          { syncMedia: true }
+        );
+        note.options = { allowDuplicate: false, duplicateScope: "deck" };
+        notePairs.push({ card: lpcgCard, note });
+      }
+      const notesPayload = notePairs.map((pair) => pair.note);
+      let addResult = [];
+      const failureMessages = [];
+      try {
+        addResult = await anki("addNotes", { notes: notesPayload }) || [];
+      } catch (e) {
+        if (!isMalformedJsonError(e)) throw e;
+        addResult = [];
+        for (const [idx, pair] of notePairs.entries()) {
+          try {
+            const noteId = await anki("addNote", { note: pair.note });
+            addResult.push(noteId);
+          } catch (err) {
+            addResult.push(null);
+            failureMessages[idx] = err?.message || String(err);
+          }
+        }
+      }
+
+      const added = [];
+      addResult.forEach((noteId, idx) => {
+        if (noteId) added.push({ noteId, card: notePairs[idx].card });
+        else if (!failureMessages[idx]) failureMessages[idx] = "AnkiConnect rejected a note.";
+      });
+
+      if (!added.length) {
+        const detail = failureMessages.filter(Boolean).length ? ` ${failureMessages.filter(Boolean).join(" ")}` : "";
+        status(`No LPCG1 notes were accepted by AnkiConnect.${detail}`);
+        return;
+      }
+
+      const total = notePairs.length;
+      const addedCount = added.length;
+      const failedCount = total - addedCount;
+      const failureDetails = failureMessages.filter(Boolean);
+      let message = `Added ${addedCount} of ${total} LPCG1 note${total === 1 ? "" : "s"} to ${deckName}.`;
+      if (failedCount > 0) {
+        message += ` ${failedCount} failed.`;
+        if (failureDetails.length) {
+          message += ` ${failureDetails.join(" ")}`;
+        }
+      }
+      status(message, failedCount === 0);
+
+      try {
+        await archiveUpsertCards(
+          added,
+          { url: source_url, title, sourceLabel: source_label, meta, context: card.context || "" }
+        );
+      } catch (e) {
+        console.warn("Archive upsert failed:", e);
+      }
+      await resetManualFields();
+      return;
+    }
+
     const note = await cardToAnkiNote(
       card,
       deckName,
@@ -6522,23 +7553,7 @@ async function addToAnki() {
       } catch (e) {
         console.warn("Archive upsert failed:", e);
       }
-      // Clear all authoring fields so the next card is fresh.
-      $("#front").value = "";
-      $("#back").value  = "";
-      $("#notes").value = "";
-      const contextEl = document.querySelector("#context");
-      if (contextEl) contextEl.value = stickyActive ? (finalStickyValue || stickyBase || "") : "";
-      if (stickyActive) stickyContextState.value = contextEl?.value || finalStickyValue || "";
-      const sourceEl = document.querySelector("#source");
-      if (sourceEl) {
-        sourceEl.value = "";
-        delete sourceEl.dataset.autoClipboard;
-      }
-      const tagsEl = document.querySelector("#tags");
-      if (tagsEl) tagsEl.value = ""; // ← important: prevent tag accumulation
-      resetCopilotLocks();
-      cancelCopilotRequests();
-      await clearManualDraftStorage();
+      await resetManualFields();
     } else {
       status("No result from AnkiConnect.");
     }
@@ -6772,6 +7787,14 @@ document.addEventListener('focusout', () => {
 function handleTriageShortcut(e) {
   if (e.defaultPrevented) return;
   const k = (e.key || "").toLowerCase();
+  const isUndoShortcut = k === "z" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+
+  if (isUndoShortcut && !isTypingTarget(e.target)) {
+    e.preventDefault();
+    undoLastTriageDecision();
+    return;
+  }
+
   if (k === "j" && !isTypingTarget(e.target)) {
     e.preventDefault();
     const jsonArea = document.querySelector("#jsonImport");
@@ -7470,11 +8493,38 @@ async function initPanel() {
       ensureOutboxPreflight({ force: true });
     });
     const modelSel = $("#model");
-    if (modelSel) modelSel.addEventListener("change", () => {
+    if (modelSel) modelSel.addEventListener("change", (event) => {
+      const modelName = modelSel.value || "";
+      if (modelName) {
+        chrome.storage.local.set({ [LAST_MODEL_NAME_KEY]: modelName }).catch(() => {});
+      }
       ensureOutboxPreflight({ force: true });
       updateModelFieldWarning();
-      updateClozeModelNotice(modelSel.value || "Basic");
+      updateCardTypeUI();
     });
+    const modelFieldWarning = $("#modelFieldWarning");
+    const modelFieldWarningActions = $("#modelFieldWarningActions");
+    const dismissModelFieldWarning = $("#dismissModelFieldWarning");
+    if (dismissModelFieldWarning && modelFieldWarning) {
+      dismissModelFieldWarning.addEventListener("click", () => {
+        setStorageFlag(sessionStorage, MODEL_FIELD_WARNING_DISMISSED_SESSION, true);
+        setStorageFlag(localStorage, MODEL_FIELD_WARNING_HIDDEN_PREF, !!hideModelFieldWarning?.checked);
+        modelFieldWarning.hidden = true;
+        modelFieldWarning.style.display = "none";
+        const warningTextEl = $("#modelFieldWarningText");
+        if (warningTextEl) warningTextEl.textContent = "";
+        if (modelFieldWarningActions) modelFieldWarningActions.hidden = true;
+        if (modelFieldWarningActions) modelFieldWarningActions.style.display = "none";
+      });
+    }
+    const hideModelFieldWarning = $("#hideModelFieldWarning");
+    if (hideModelFieldWarning && modelFieldWarning) {
+      hideModelFieldWarning.addEventListener("change", () => {
+        const checked = !!hideModelFieldWarning.checked;
+        setStorageFlag(localStorage, MODEL_FIELD_WARNING_HIDDEN_PREF, checked);
+      });
+    }
+    updateCardTypeUI();
     const includeBackLink = $("#includeBackLink");
     if (includeBackLink) includeBackLink.addEventListener("change", () => { ensureOutboxPreflight({ force: true }); });
     const fillSourceField = $("#fillSourceField");
@@ -7492,7 +8542,7 @@ async function initPanel() {
     const autoPreviewToggle = $("#mathjaxPreview");
     if (autoPreviewToggle) autoPreviewToggle.addEventListener("change", (e) => {
       const checked = !!e.target.checked;
-      saveManualPrefs({ autoPreview: checked }).catch(() => {});
+      saveManualPrefs({ autoPreview: checked, mathjaxPreview: checked }).catch(() => {});
       if (isPreviewMode()) {
         scheduleMarkdownPreviewUpdate({ force: true });
       }
@@ -7501,8 +8551,11 @@ async function initPanel() {
     bindStickyContextUI();
     await loadStickyContextFromStorage();
 
+    initLpcgControls();
     bindUnifiedEditorInputs();
     bindMarkdownPreviewInputs();
+    initInlineMathPreview();
+    initClozeNotice();
     bindClipboardImagePaste();
     initDebugPanel();
 

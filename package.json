@@ -1,6 +1,6 @@
 {
   "name": "ghostwriter",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "private": true,
   "scripts": {
     "build:full": "node scripts/build-release.js full",
@@ -8,9 +8,19 @@
     "build:release": "node scripts/build-release.js",
     "test:ui": "playwright test -c playwright.config.ts --grep @screenshots",
     "test:install": "playwright install --with-deps chromium",
-    "test:screenshots": "playwright test -c playwright.config.ts --grep @screenshots"
+    "test:screenshots": "playwright test -c playwright.config.ts --grep @screenshots",
+    "build:mathjax": "node ./node_modules/mathjax-full/components/bin/makeAll"
   },
   "devDependencies": {
-    "@playwright/test": "^1.48.0"
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.0",
+    "@playwright/test": "^1.48.0",
+    "babel-loader": "^10.0.0",
+    "mathjax-full": "^3.2.1",
+    "webpack": "^5.105.0",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "save-dev": "^0.0.1-security"
   }
 }

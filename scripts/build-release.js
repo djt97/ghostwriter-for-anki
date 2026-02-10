@@ -15,6 +15,11 @@ const COMMON_EXCLUDES = [
   '.github',
   'dist',
   'node_modules',
+  'mathjax-entry.js',
+  'webpack.config.js',
+  'stubs/mathjax-version.js',
+  'mathjax-config.js',
+  'libs/mathjax/tex-mml-chtml.js',
   'tests',
   'playwright.config.ts',
   'package.json',
@@ -156,6 +161,10 @@ async function prepareDist() {
   await fs.mkdir(DIST_DIR, { recursive: true });
 }
 
+function buildMathJaxBundle() {
+  execSync('npx webpack', { cwd: ROOT, stdio: 'inherit' });
+}
+
 async function zipVariant(variant, variantRoot) {
   const zipName = `ghostwriter-${variant}.zip`;
   const zipPath = path.join(DIST_DIR, zipName);
@@ -184,6 +193,7 @@ async function buildVariant(variant) {
 }
 
 async function main() {
+  buildMathJaxBundle();
   await prepareDist();
   for (const variant of variants) {
     await buildVariant(variant);

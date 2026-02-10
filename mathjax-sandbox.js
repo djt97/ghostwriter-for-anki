@@ -1,112 +1,145 @@
+// mathjax-sandbox.js
+// Runs inside mathjax-sandbox.html (iframe).
+// Receives content from the panel and renders it with MathJaxBundle (custom build).
+// It is intentionally tolerant: it understands BOTH the old
+// "preview-update" protocol and the newer "quickflash:previewUpdate".
+
 (function () {
   const root = document.getElementById('root');
-  if (!root) {
-    console.error('[mathjax-sandbox] Missing #root element');
-    return;
+  const PARENT_ORIGIN = '*'; // safe here because we only live in an extension iframe
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
-  // Markdown parser from markdown-it (loaded via <script> in mathjax-sandbox.html)
-  const md = window.markdownit({
-    html: true,
-    breaks: true,
-    linkify: true
-  });
+  function textToHtml(text) {
+    const raw = String(text || '').replace(/\r\n/g, '\n');
+    if (!raw.trim()) return '';
 
-  function postReady(target) {
+    // Paragraphs separated by blank lines; single newlines collapsed to spaces
+    const blocks = raw.split(/\n{2,}/);
+    return blocks
+      .map(block => {
+        const line = block.replace(/\n/g, ' ');
+        return '<p>' + escapeHtml(line) + '</p>';
+      })
+      .join('');
+  }
+
+  function setRootHtml(html) {
+    if (!root) return;
+    root.innerHTML = html || '';
+  }
+
+  function notify(type, extra) {
     try {
-      const resolvedTarget = target || window.parent;
-      if (resolvedTarget && typeof resolvedTarget.postMessage === 'function') {
-        resolvedTarget.postMessage({ type: 'quickflash:previewReady' }, '*');
-      }
+      window.parent.postMessage(
+        Object.assign({ type }, extra || {}),
+        PARENT_ORIGIN
+      );
     } catch (err) {
-      console.warn('[mathjax-sandbox] Failed to post ready message:', err);
+      // Swallow – failing to notify parent should not break preview
+      console.warn('[QuickFlash sandbox] notify failed', err);
     }
   }
 
-  postReady();
+  // Keep the same "serialize typesets" behavior to avoid races.
+  let pendingTypeset = Promise.resolve();
 
-  function whenMathJaxReady() {
-    if (!window.MathJax || !MathJax.startup || !MathJax.startup.promise) {
-      // Either MathJax isn’t loaded, or we’re not using the v3 startup API.
-      return Promise.resolve();
-    }
-    return MathJax.startup.promise;
-  }
+  function runMathJax(html) {
+    // Serialize updates so we don't mutate #root or re-typeset before the last
+    // render has settled (avoids race conditions).
+    pendingTypeset = pendingTypeset
+      .catch(function () {
+        return undefined;
+      })
+      .then(function () {
+        // Update DOM first
+        setRootHtml(html);
 
-  async function typesetRoot() {
-    if (!window.MathJax || typeof MathJax.typesetPromise !== 'function') {
-      return;
-    }
-    try {
-      await whenMathJaxReady();
-      await MathJax.typesetPromise([root]);
-    } catch (err) {
-      console.error('[mathjax-sandbox] MathJax typeset error:', err);
-    }
-  }
-
-  async function render(markdownText) {
-    const text = typeof markdownText === 'string' ? markdownText : '';
-
-    // 1) Markdown -> HTML
-    const html = md.render(text);
-    root.innerHTML = html;
-
-    // 2) Ask MathJax to re-typeset math in #root
-    await typesetRoot();
-  }
-
-  function applyThemeColor(color) {
-    if (typeof color !== 'string' || !color.trim()) {
-      return;
-    }
-    document.documentElement.style.color = color;
-  }
-
-  function getContentHeight() {
-    const rootHeight = root.scrollHeight || 0;
-    const bodyHeight = document.body ? document.body.scrollHeight : 0;
-    const docHeight = document.documentElement ? document.documentElement.scrollHeight : 0;
-    return Math.max(rootHeight, bodyHeight, docHeight);
-  }
-
-  window.addEventListener('message', function (event) {
-    const data = event.data || {};
-    if (data.type === 'quickflash:previewPing') {
-      postReady(event.source || window.parent);
-      return;
-    }
-    if (data.type === 'preview-theme') {
-      applyThemeColor(data.color);
-      return;
-    }
-    if (data.type === 'quickflash:previewRender') {
-      const requestId = data.id;
-      render(data.markdown).then(function () {
-        const height = getContentHeight();
-        const target = event.source || window.parent;
-        if (target && typeof target.postMessage === 'function') {
-          target.postMessage(
-            { type: 'quickflash:previewRendered', id: requestId, height },
-            '*'
-          );
+        // Ensure our custom bundle is ready
+        if (!window.MathJaxBundle || typeof MathJaxBundle.typeset !== 'function') {
+          const message = 'MathJax bundle not ready';
+          notify('quickflash:previewError', { error: message, reason: message });
+          return undefined;
         }
+
+        // MathJaxBundle.typeset() is our custom helper from mathjax-entry.js
+        // It does MJ.clear() + MJ.updateDocument() and returns a Promise.
+        return MathJaxBundle.typeset()
+          .then(function () {
+            notify('quickflash:previewRendered');
+          })
+          .catch(function (err) {
+            console.error('[QuickFlash sandbox] MathJax typeset error', err);
+            const message = String((err && err.message) || err || 'MathJax error');
+            notify('quickflash:previewError', {
+              error: message,
+              reason: message
+            });
+          });
       });
+  }
+
+  function handlePreviewPayload(data) {
+    // Newer protocol: HTML is pre-rendered in the panel.
+    if (typeof data.html === 'string') {
+      runMathJax(data.html);
       return;
     }
-    if (data.type !== 'preview-update') {
+
+    // Older protocol: we get raw text and must make HTML ourselves.
+    if (typeof data.text === 'string') {
+      const html = textToHtml(data.text);
+      runMathJax(html);
       return;
     }
-    applyThemeColor(data.color);
-    render(data.text).then(function () {
-      const height = getContentHeight();
-      const target = event.source || window.parent;
-      if (target && typeof target.postMessage === 'function') {
-        target.postMessage(
-          { type: 'quickflash:previewRendered', height },
-          '*'
-        );
-      }
-    });
-  });
+
+    // Nothing useful to render
+    runMathJax('');
+  }
+
+  function handleMessage(event) {
+    const data = event.data;
+    if (!data || typeof data !== 'object') return;
+
+    const type = data.type;
+
+    // Handshake: panel may ping us to see if we're alive.
+    if (type === 'quickflash:previewPing') {
+      notify('quickflash:previewReady');
+      return;
+    }
+
+    // New protocol
+    if (type === 'quickflash:previewUpdate') {
+      handlePreviewPayload(data);
+      return;
+    }
+
+    // Backwards compatibility: original protocol
+    if (type === 'preview-update') {
+      handlePreviewPayload(data);
+      return;
+    }
+  }
+
+  window.addEventListener('message', handleMessage);
+
+  // When our custom bundle is available, tell the panel we're ready.
+  function announceReady() {
+    notify('quickflash:previewReady');
+  }
+
+  // With defer scripts, MathJaxBundle should be defined by the time this runs,
+  // but we guard just in case.
+  if (window.MathJaxBundle && typeof MathJaxBundle.typeset === 'function') {
+    announceReady();
+  } else {
+    // Fallback: announce readiness after DOM is loaded.
+    window.addEventListener('DOMContentLoaded', announceReady, { once: true });
+  }
 })();

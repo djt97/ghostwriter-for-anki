@@ -1,5 +1,5 @@
 
-// options.js (v0.3.0)
+// options.js (v0.3.2)
 const $ = (sel) => document.querySelector(sel);
 const DEFAULT_SHORTCUT = "Meta+Shift+A";
 const DEFAULT_COPILOT_SHORTCUT = "Cmd+Shift+X";
@@ -99,6 +99,22 @@ function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
   if (value === "openai") return "openai";
   return "ultimate";
+}
+
+async function anki(action, params = {}) {
+  const response = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "quickflash:anki", action, params },
+      (res) => resolve(res)
+    );
+  });
+
+  if (response && response.ok) {
+    return response.result;
+  }
+
+  const err = response?.error || "AnkiConnect request failed.";
+  throw new Error(err);
 }
 
 // Read the per-provider config from stored options
@@ -588,7 +604,6 @@ async function save() {
 
     // Anki defaults
     defaultDeck: $("#defaultDeck").value.trim() || "All Decks",
-    defaultModel: $("#defaultModel").value.trim() || "Basic",
 
     ankiBaseUrl: $("#ankiBaseUrl").value.trim() || "http://127.0.0.1:8765",
 
@@ -681,7 +696,6 @@ async function load() {
 
   // Defaults / Anki
   document.querySelector("#defaultDeck").value  = opts.defaultDeck || "All Decks";
-  document.querySelector("#defaultModel").value = opts.defaultModel || "Basic";
   document.querySelector("#ankiBaseUrl").value  = opts.ankiBaseUrl || "http://127.0.0.1:8765";
 
   document.querySelector("#appendQuickflashTag").checked = opts.appendQuickflashTag !== false;

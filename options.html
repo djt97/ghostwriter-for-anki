@@ -117,8 +117,8 @@
         <div class="field">
           <label for="manualAutoPreview">Auto preview (manual editor)</label>
           <select id="manualAutoPreview">
+            <option value="false" selected>Off</option>
             <option value="true">On</option>
-            <option value="false">Off</option>
           </select>
           <p class="small">Update inline previews while typing in the manual editor.</p>
         </div>
@@ -322,6 +322,8 @@
             <p class="description">
               Treat the secondary fields (Context, Source, Notes/Extra, Hint) as configurable slots:
               you can rename them, show/hide them in the editor, and attach custom AI prompts per field.
+              These labels and visibility toggles only affect the extension UI — they do not rename Anki fields
+              or change Anki mappings.
             </p>
           </div>
         </summary>
@@ -333,7 +335,9 @@
               Keys are internal field ids (<code>context</code>, <code>extra</code>, <code>source_excerpt</code>,
               <code>hint</code>). Each object may define:
               <code>label</code> (string), <code>visible</code> (boolean),
-              and <code>aiPrompt</code> (string used by the Context auto-helper; other fields ignore it today).
+              and <code>aiPrompt</code> (string used by <code>context.aiPrompt</code> for Auto‑Context; other fields'
+              <code>aiPrompt</code> values are ignored today). Renaming a label does not change the underlying Anki field
+              mapping.
             </p>
           </div>
         </div>
@@ -350,10 +354,6 @@
         <div class="field">
           <label for="defaultDeck">Default deck</label>
           <input id="defaultDeck" type="text" placeholder="All Decks" />
-        </div>
-        <div class="field">
-          <label for="defaultModel">Default note type</label>
-          <input id="defaultModel" type="text" placeholder="Basic" />
         </div>
       </div>
       <div class="grid two">

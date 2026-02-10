@@ -313,8 +313,61 @@
     }
     .editor-status-wrap { display:flex; flex-direction:column; gap:2px; max-width: 100%; }
     .editor-status { font-weight:600; font-size:13px; max-width: 100%; overflow-wrap: anywhere; }
-    .model-warning { color: #b45309; margin-top: 4px; }
-    .model-info { color: #1f4a85; margin-top: 4px; }
+    .model-warning {
+      color: #b45309;
+      margin-top: 4px;
+      display: grid;
+      gap: 6px;
+    }
+    .ghostwriter-warning {
+      color: #1f4a85;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radii-sm);
+      padding: 6px 8px;
+    }
+    .ghostwriter-info {
+      margin-top: 6px;
+      display: grid;
+      gap: 6px;
+    }
+    .ghostwriter-info-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .ghostwriter-info-actions button { font-size: 12px; }
+    .model-warning-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .model-warning-actions button { font-size: 12px; }
+    .model-warning-actions label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .model-info {
+      color: #1f4a85;
+      margin-top: 4px;
+      display: grid;
+      gap: 6px;
+    }
+    .model-info[hidden] { display: none; }
+    .model-info-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .model-info-actions button { font-size: 12px; }
+    .model-info-actions label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
     .editor-nav-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
     .editor-nav-buttons[hidden] { display: none; }
     .editor-nav-buttons button { padding: 6px 8px; font-size: 12px; }
@@ -461,6 +514,9 @@
       padding: 8px;
       background: var(--surface-2);
     }
+    [hidden] {
+      display: none !important;
+    }
     .markdown-section[hidden] { display: none; }
     .markdown-render {
       font-size: 13px;
@@ -500,6 +556,19 @@
       border-radius: 10px;       /* match textarea rounding */
       background: var(--input-bg);
       box-shadow: var(--shadow-sm);
+    }
+    .markdown-section.inline-preview .preview-warning {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      color: var(--text);
+      background: color-mix(in oklab, var(--surface) 80%, var(--accent));
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-sm);
+      pointer-events: none;
     }
     .markdown-render > :first-child { margin-top: 0; }
     .markdown-render > :last-child { margin-bottom: 0; }
@@ -745,6 +814,73 @@
       box-shadow: var(--shadow-sm);
     }
 
+    .row.single {
+      grid-template-columns: 1fr;
+    }
+
+    .lpcg-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lpcg-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+    }
+
+    .lpcg-panel[hidden] {
+      display: none !important;
+    }
+
+    .lpcg-panel textarea {
+      min-height: 160px;
+    }
+
+    .lpcg-controls,
+    .lpcg-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .lpcg-hint-input {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .lpcg-word-bank {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--surface-2);
+      min-height: 100px;
+      line-height: 1.6;
+    }
+
+    .lpcg-line {
+      white-space: pre-wrap;
+    }
+
+    .lpcg-word {
+      display: inline-block;
+      border: 1px solid #b7b7b7;
+      border-radius: 6px;
+      padding: 2px 6px;
+      margin: 2px 2px 4px;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .lpcg-word.selected {
+      border-color: #1f6feb;
+      background: #1f6feb;
+      color: #fff;
+    }
+
     @media (max-width: 560px) {
       body { font-size: 16px; line-height: 1.5; }
       header h1 { font-size: 18px; }
@@ -875,7 +1011,7 @@
 </head>
 <body>
   <header>
-    <h1>Ghostwriter for Anki <span class="version">v0.3.0</span></h1>
+    <h1>Ghostwriter for Anki <span class="version">v0.3.2</span></h1>
     <div class="inline small">
       <a href="options.html" target="_blank">Options</a>
       <!-- LITE-REMOVE-START -->
@@ -906,11 +1042,28 @@
           <div>
             <div class="label">Note type</div>
             <select id="model"></select>
-            <div id="modelFieldWarning" class="small model-warning" role="status" aria-live="polite" hidden></div>
-            <div id="clozeModelNotice" class="small model-info" role="status" aria-live="polite" hidden>Ghostwriter for Anki detects cloze deletions automatically. You can write cloze cards in basic mode; when deletions are present we send them as Cloze.</div>
+            <div id="ghostwriterModelInfo" class="small ghostwriter-warning ghostwriter-info" role="status" aria-live="polite" hidden>
+              <div>Ghostwriter uses its own custom note type with additional fields like Source and Context. We strongly recommend using these note types.</div>
+              <div class="ghostwriter-info-actions">
+                <button type="button" id="ghostwriterModelInfoDismiss">Got it</button>
+              </div>
+            </div>
+            <div id="modelFieldWarning" class="small model-warning" role="status" aria-live="polite" hidden>
+              <span id="modelFieldWarningText"></span>
+              <div class="model-warning-actions" id="modelFieldWarningActions" hidden>
+                <button type="button" id="dismissModelFieldWarning">Dismiss</button>
+                <label><input type="checkbox" id="hideModelFieldWarning"> Don’t show again</label>
+              </div>
+            </div>
+            <div id="clozeModelNotice" class="small model-info" role="status" aria-live="polite" hidden>
+              <div>Ghostwriter for Anki detects cloze deletions automatically. You can write cloze cards in basic mode; when deletions are present we send them as Cloze.</div>
+              <div class="model-info-actions">
+                <button type="button" id="dismissClozeNotice">Dismiss</button>
+                <label><input type="checkbox" id="hideClozeNotice"> Don’t show again</label>
+              </div>
+            </div>
           </div>
         </div>
-
         <div class="editor-bar">
           <div class="editor-status-wrap">
             <div id="editorStatus" class="editor-status">New card</div>
@@ -934,72 +1087,157 @@
           </div>
         </details>
 
-        <div>
-          <div class="label front-label-row">
-            <span>Question (Front)</span>
-            <span id="frontDetection" class="front-detection" data-detected="basic" role="status" aria-live="polite">Detected: Basic</span>
-          </div>
-          <div class="qf-ghost-wrap">
-            <textarea id="front" placeholder="Type your question…"></textarea>
-            <div class="qf-ghost" data-field="front" aria-hidden="true">
-              <span class="mirror"></span><span class="ghost"></span>
-            </div>
-            <div class="markdown-section inline-preview" data-preview-block="front" hidden>
-              <iframe id="previewFront" class="markdown-render preview-frame" title="Front preview"></iframe>
+        <div id="lpcgPanel" class="card lpcg-panel" hidden>
+          <div>
+            <div class="label">Import Lyrics / Poetry (LPCG)</div>
+            <div class="small">
+              Paste a poem or lyrics below and choose how many lines of context and recitation you want.
+              Ghostwriter will generate LPCG notes using the standard fields
+              <code>Title</code>, <code>Author</code>, <code>Line</code>, <code>Context</code>, <code>Sequence</code>, and <code>Prompt</code>.
             </div>
           </div>
-          <div class="copilot-suggestion" data-field="front" hidden>
-            <div class="copilot-header">
-              <div class="copilot-meta">Copilot suggestion</div>
-              <div class="copilot-hint small"></div>
+
+          <div class="lpcg-grid">
+            <div>
+              <div class="label">Title</div>
+              <input id="lpcgTitle" type="text" placeholder="Required poem title" />
             </div>
-            <div class="copilot-text"></div>
-            <div class="copilot-actions">
-              <button type="button" class="copilot-accept" data-field="front">Accept</button>
-              <button type="button" class="copilot-refresh" data-field="front">Regenerate</button>
+            <div>
+              <div class="label">Author (optional)</div>
+              <input id="lpcgAuthor" type="text" placeholder="e.g. T. S. Eliot" />
+            </div>
+          </div>
+
+          <div class="lpcg-grid">
+            <div>
+              <div class="label">Lines of Context</div>
+              <input
+                id="lpcgLinesOfContext"
+                type="number"
+                min="1"
+                step="1"
+                value="2"
+                inputmode="numeric"
+              />
+              <div class="small">
+                Number of lines shown before the recitation line(s) on the question side
+                (LPCG default is 2).
+              </div>
+            </div>
+            <div>
+              <div class="label">Lines to Recite</div>
+              <input
+                id="lpcgLinesToRecite"
+                type="number"
+                min="1"
+                step="1"
+                value="1"
+                inputmode="numeric"
+              />
+              <div class="small">
+                Number of new lines revealed on the answer side (LPCG default is 1).
+              </div>
+            </div>
+            <div>
+              <div class="label">Lines in Groups of</div>
+              <input
+                id="lpcgLinesInGroupsOf"
+                type="number"
+                min="1"
+                step="1"
+                value="1"
+                inputmode="numeric"
+              />
+              <div class="small">
+                Optional: group short physical lines before applying the other settings
+                (usually leave at 1).
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="label">Poem</div>
+            <textarea
+              id="lpcgText"
+              placeholder="Paste lyrics or poetry here..."
+            ></textarea>
+            <div class="small">
+              Blank lines separate stanzas; lines starting with <code>#</code> are treated as comments,
+              matching LPCG’s poem editor behavior.
             </div>
           </div>
         </div>
 
-        <!-- Compact Copilot mini panel -->
-        <div id="copilotMini" class="copilot-mini">
-          <select id="editorTemplateSelect" class="small"></select>
-          <button type="button" id="editorGenerateBtn" title="Draft cards from Source">Gen</button>
-          <button type="button" id="copilotMiniGenerate" title="Generate Q &amp; A">Copilot</button>
-          <span id="sourceModePill" class="source-pill small" aria-live="polite">Source: Auto</span>
-          <button type="button" id="copilotMiniAccept" title="Accept both">Accept</button>
-          <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)">Reject</button>
-          <button type="button" id="copilotMiniClear" title="Clear Front &amp; Back">Clear</button>
-        </div>
-
-        <!-- Triage toolbar (mobile-friendly; shown when triage is active) -->
-        <div id="triageToolbar" class="triage-toolbar" hidden>
-          <button type="button" id="triageToolbarPrev" title="Previous (↑ / ←)">◀ Prev</button>
-          <button type="button" id="triageToolbarSkip" title="Reject (Esc)">Reject</button>
-          <button type="button" id="triageToolbarAccept" class="primary" title="Accept (A)">Accept</button>
-          <button type="button" id="triageToolbarNext" title="Next (↓ / →)">Next ▶</button>
-        </div>
-
-        <div>
-          <div class="label">Answer (Back)</div>
-          <div class="qf-ghost-wrap">
-            <textarea id="back" placeholder="Type the answer…"></textarea>
-            <div class="qf-ghost" data-field="back" aria-hidden="true">
-              <span class="mirror"></span><span class="ghost"></span>
+        <div id="standardFields">
+          <div>
+            <div class="label front-label-row">
+              <span>Question (Front)</span>
+              <span id="frontDetection" class="front-detection" data-detected="basic" role="status" aria-live="polite">Detected: Basic</span>
             </div>
-            <div class="markdown-section inline-preview" data-preview-block="back" hidden>
-              <iframe id="previewBack" class="markdown-render preview-frame" title="Back preview"></iframe>
+            <div class="qf-ghost-wrap">
+              <textarea id="front" placeholder="Type your question…"></textarea>
+              <div class="qf-ghost" data-field="front" aria-hidden="true">
+                <span class="mirror"></span><span class="ghost"></span>
+              </div>
+              <div class="markdown-section inline-preview" data-preview-block="front" hidden>
+                <iframe id="previewFront" class="markdown-render preview-frame" title="Front preview"></iframe>
+                <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
+              </div>
+            </div>
+            <div class="copilot-suggestion" data-field="front" hidden>
+              <div class="copilot-header">
+                <div class="copilot-meta">Copilot suggestion</div>
+                <div class="copilot-hint small"></div>
+              </div>
+              <div class="copilot-text"></div>
+              <div class="copilot-actions">
+                <button type="button" class="copilot-accept" data-field="front">Accept</button>
+                <button type="button" class="copilot-refresh" data-field="front">Regenerate</button>
+              </div>
             </div>
           </div>
-          <div class="copilot-suggestion" data-field="back" hidden>
-            <div class="copilot-header">
-              <div class="copilot-meta">Copilot suggestion</div>
-              <div class="copilot-hint small"></div>
+
+          <!-- Compact Copilot mini panel -->
+          <div id="copilotMini" class="copilot-mini">
+            <select id="editorTemplateSelect" class="small"></select>
+            <button type="button" id="editorGenerateBtn" title="Draft cards from Source">Gen</button>
+            <button type="button" id="copilotMiniGenerate" title="Generate Q &amp; A">Copilot</button>
+            <span id="sourceModePill" class="source-pill small" aria-live="polite">Source: Auto</span>
+            <button type="button" id="copilotMiniAccept" title="Accept both">Accept</button>
+            <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)">Reject</button>
+            <button type="button" id="copilotMiniClear" title="Clear Front &amp; Back">Clear</button>
+          </div>
+
+          <!-- Triage toolbar (mobile-friendly; shown when triage is active) -->
+          <div id="triageToolbar" class="triage-toolbar" hidden>
+            <button type="button" id="triageToolbarPrev" title="Previous (↑ / ←)">◀ Prev</button>
+            <button type="button" id="triageToolbarSkip" title="Reject (Esc)">Reject</button>
+            <button type="button" id="triageToolbarAccept" class="primary" title="Accept (A)">Accept</button>
+            <button type="button" id="triageToolbarNext" title="Next (↓ / →)">Next ▶</button>
+          </div>
+
+          <div>
+            <div class="label">Answer (Back)</div>
+            <div class="qf-ghost-wrap">
+              <textarea id="back" placeholder="Type the answer…"></textarea>
+              <div class="qf-ghost" data-field="back" aria-hidden="true">
+                <span class="mirror"></span><span class="ghost"></span>
+              </div>
+              <div class="markdown-section inline-preview" data-preview-block="back" hidden>
+                <iframe id="previewBack" class="markdown-render preview-frame" title="Back preview"></iframe>
+                <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
+              </div>
             </div>
-            <div class="copilot-text"></div>
-            <div class="copilot-actions">
-              <button type="button" class="copilot-accept" data-field="back">Accept</button>
-              <button type="button" class="copilot-refresh" data-field="back">Regenerate</button>
+            <div class="copilot-suggestion" data-field="back" hidden>
+              <div class="copilot-header">
+                <div class="copilot-meta">Copilot suggestion</div>
+                <div class="copilot-hint small"></div>
+              </div>
+              <div class="copilot-text"></div>
+              <div class="copilot-actions">
+                <button type="button" class="copilot-accept" data-field="back">Accept</button>
+                <button type="button" class="copilot-refresh" data-field="back">Regenerate</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1209,6 +1447,7 @@
   </div>
 
   <script src="prompts.js" defer></script>
+  <script src="libs/markdown-it.min.js" defer></script>
   <script src="panel.js" defer></script>
 </body>
 </html>
