@@ -41,6 +41,20 @@ Common shortcuts used in queue review:
 - **Send outbox to Anki** to create notes through AnkiConnect.
 - Use undo controls (if available in current UI state) for last sent batch.
 
+## Bulk generation with Custom GPTs
+
+You can generate large batches of flashcards using purpose-built GPTs, then import them into Ghostwriter for review:
+
+1. Open one of the Custom GPTs:
+   - **ChatGPT**: https://chatgpt.com/g/g-690faa9681448191b2700ca01abdeca6-flashcardgpt
+   - **Gemini**: https://gemini.google.com/gem/1E1OquFI0cH_ohhvADJQ61qKYdjJ55Jcq
+2. Paste your source material and let the GPT generate cards.
+3. Copy the JSON output.
+4. In Ghostwriter's triage mode, press `J` to open JSON import and paste the cards.
+5. Review, accept/reject, and send to Anki as usual.
+
+This is useful for processing long readings, lecture notes, or textbook chapters where you want many cards at once.
+
 ## Source and context behavior
 
 Ghostwriter can pull context from:

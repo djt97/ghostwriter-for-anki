@@ -13,6 +13,10 @@ Ghostwriter for Anki is a Chrome/Edge Manifest V3 extension that helps you creat
 - **Triage queue + Outbox workflow**
   - Review generated cards quickly (accept/reject).
   - Send accepted cards in batches to Anki.
+- **Bulk generation with Custom GPTs**
+  - Generate large batches via [FlashcardGPT (ChatGPT)](https://chatgpt.com/g/g-690faa9681448191b2700ca01abdeca6-flashcardgpt) or [Gemini Gem](https://gemini.google.com/gem/1E1OquFI0cH_ohhvADJQ61qKYdjJ55Jcq), then import into the triage queue with `J`.
+- **LaTeX/MathJax and Markdown preview**
+  - Render math and formatted text in cards before sending to Anki.
 - **Multiple AI providers**
   - Google Gemini
   - OpenAI-compatible APIs (including UltimateAI)

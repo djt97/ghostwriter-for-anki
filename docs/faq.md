@@ -29,6 +29,13 @@ Possible causes include high model latency, strict request interval settings, lo
 
 Yes. Use the Templates section in Options, including placeholders such as `{{TEXT}}` and `{{CONTEXT}}`.
 
+## How do I generate cards in bulk?
+
+Use one of the Custom GPTs to generate a batch of cards from long source material, then import the JSON output into Ghostwriter's triage queue by pressing `J`:
+
+- **ChatGPT**: https://chatgpt.com/g/g-690faa9681448191b2700ca01abdeca6-flashcardgpt
+- **Gemini**: https://gemini.google.com/gem/1E1OquFI0cH_ohhvADJQ61qKYdjJ55Jcq
+
 ## Is there automated UI testing?
 
 Yes. Playwright screenshot tests exist and can be run locally with `npm run test:ui`.
