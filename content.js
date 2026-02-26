@@ -541,9 +541,26 @@ if (window.__QUICKFLASH_INJECTED__) {
     } catch {}
 
     const ld = qf_readJSONLDSummary();
+
+    // --- DOM-based fallbacks for pages with minimal meta tags ---
+    // Distill.pub / transformer-circuits.pub: read <d-front-matter> JSON
+    let distill = null;
+    try {
+      const dfm = document.querySelector("d-front-matter script[type='text/json']");
+      if (dfm) distill = qf_safeParseJSON(dfm.textContent?.trim() || "");
+    } catch {}
+
+    const finalCitationTitle = citationTitle
+      || (distill?.title || "")
+      || "";
+    const finalAuthor = author
+      || (distill?.authors?.[0]?.author || "")
+      || "";
+    const finalSiteName = siteName || "";
+
     return {
-      ogTitle, siteName, twitterTitle, author,
-      citationTitle, citationJournal, citationConference, citationDOI,
+      ogTitle, siteName: finalSiteName, twitterTitle, author: finalAuthor,
+      citationTitle: finalCitationTitle, citationJournal, citationConference, citationDOI,
       twitterHandle,
       ld // compact LD summary
     };

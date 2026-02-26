@@ -4307,6 +4307,8 @@ function qf_hostBrand(host) {
     ["ssrn.com", "SSRN"],
     ["biorxiv.org", "bioRxiv"], ["medrxiv.org", "medRxiv"],
     ["pubmed.ncbi.nlm.nih.gov", "PubMed"],
+    ["transformer-circuits.pub", "Transformer Circuits"],
+    ["distill.pub", "Distill"],
     ["medium.com", "Medium"],
     ["substack.com", "Substack"],
   ]);
@@ -4336,7 +4338,7 @@ function qf_detectKind(url, meta = {}) {
   if (/(?:youtube\.com|youtu\.be)$/.test(host) || ldType === "videoobject") return "youtube";
   if (/(?:x|twitter)\.com$/i.test(host) || ldType === "socialmediaposting") return "x";
   if (ldType === "podcastepisode" || ldType === "podcastseries" || /podcast/i.test(meta?.siteName || "")) return "podcast";
-  if (ldType === "scholarlyarticle" || meta?.citationTitle || /(arxiv\.org|ssrn\.com|biorxiv\.org|medrxiv\.org|pubmed\.ncbi\.nlm\.nih\.gov)/i.test(host)) return "paper";
+  if (ldType === "scholarlyarticle" || meta?.citationTitle || /(arxiv\.org|ssrn\.com|biorxiv\.org|medrxiv\.org|pubmed\.ncbi\.nlm\.nih\.gov|transformer-circuits\.pub|distill\.pub)/i.test(host)) return "paper";
   if (ldType === "blogposting" || /medium\.com|substack\.com|wordpress|blogspot|hashnode|ghost|dev\.to/i.test(host)) return "blog";
   if (ldType === "article") return "article";
   return "generic";
@@ -7286,7 +7288,9 @@ async function addToAnki() {
     page = { ...(ctx || {}), ...(page || {}) };
   } catch {}
   const mode = await getSourceMode();
-  const source_url = (mode === 'clipboard' || page?.usingClipboard) ? '' : (page?.sourceUrl || page?.url || '');
+  const source_url = (mode === 'clipboard' || page?.usingClipboard)
+    ? (page?.url || '')               // clipboard: still use page URL, just skip text fragment
+    : (page?.sourceUrl || page?.url || '');  // selection: use text-fragment URL
   const url = source_url;
   const title = page?.title || "";
   const source_label = (page?.sourceLabel || page?.title || source_url || "").trim();
