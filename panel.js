@@ -6419,8 +6419,11 @@ function renderMarkdownToHtml(text) {
   let html = "";
   if (renderer) {
     html = renderer.render(masked);
+    // Strip wrapping <p>...</p> when output is a single paragraph,
+    // to avoid extra margin in Anki card display
+    html = html.replace(/^<p>([\s\S]*?)<\/p>\n?$/, '$1');
   } else {
-    html = `<p>${escapeHtml(masked).replace(/\n/g, "<br>")}</p>`;
+    html = escapeHtml(masked).replace(/\n/g, "<br>");
   }
   return restoreMathSegments(html, segments);
 }
@@ -8136,7 +8139,7 @@ async function updateCompactCopilotVisibility() {
   if (!miniNew && !miniOld) return;
 
   const opts = await getOptions();
-  const mode = opts.showMiniCopilotMode || 'auto';
+  const mode = opts.showMiniCopilotMode || 'off';
   copilot.showSourceModePill = opts.showSourceModePill !== false;
   const isPopover = /\bpopover\b/i.test(location.hash);
   const small = window.matchMedia('(max-width: 640px)').matches || isPopover;
