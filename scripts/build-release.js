@@ -13,6 +13,7 @@ const variants = selected ? [selected] : ALL_VARIANTS;
 const COMMON_EXCLUDES = [
   '.git',
   '.github',
+  '.claude',
   'dist',
   'node_modules',
   'mathjax-entry.js',
@@ -24,7 +25,12 @@ const COMMON_EXCLUDES = [
   'playwright.config.ts',
   'package.json',
   'package-lock.json',
-  'scripts'
+  'scripts',
+  'audit',
+  'explainer-video',
+  'docs',
+  'CLAUDE.md',
+  'LISTING.md'
 ];
 
 const LITE_REMOVALS = [

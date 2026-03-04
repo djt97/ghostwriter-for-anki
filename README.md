@@ -11,6 +11,7 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 - [Overview](./docs/overview.md)
 - [Installation](./docs/installation.md)
 - [Usage Guide](./docs/usage.md)
+- [Keyboard Shortcuts](./docs/SHORTCUTS.md)
 - [Configuration Reference](./docs/configuration.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 - [FAQ](./docs/faq.md)
@@ -21,11 +22,12 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 
 ## Quick Start
 
-1. Install AnkiConnect in desktop Anki (add-on ID `2055492159`).
-2. Load Ghostwriter as an unpacked extension in Chrome/Edge.
-3. Configure your AI provider in extension Options.
-4. Open Ghostwriter (`Ctrl/Cmd+Shift+F`) and start drafting cards.
-5. Send reviewed cards to Anki through Outbox.
+1. [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/ghostwriter-for-anki/aldemiobejkammdkfgpfnmeppnegfaoc).
+2. Install AnkiConnect in desktop Anki (add-on ID `2055492159`).
+3. Set a keyboard shortcut: `chrome://extensions/` → Keyboard shortcuts → "Open Ghostwriter for Anki Overlay".
+4. Configure your AI provider in extension Options.
+5. Open Ghostwriter and start drafting cards.
+6. Send reviewed cards to Anki through Outbox.
 
 ## Build commands
 
@@ -34,7 +36,7 @@ npm ci
 npm run build:release
 ```
 
-Release artifacts are generated in `dist/` as lite/full directories and zip bundles.
+Release zips are published on the [Releases](https://github.com/djt97/ghostwriter-for-anki/releases) page.
 
 ## Privacy and policy docs
 

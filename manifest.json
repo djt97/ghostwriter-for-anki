@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Ghostwriter for Anki",
   "description": "Create Anki flashcards with source + context; auto-tag with AI; send via AnkiConnect.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' blob: data: http://127.0.0.1:* http://localhost:* https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs.hf.co https://smart.ultimateai.org https://api.openai.com https://generativelanguage.googleapis.com",
     "sandbox": "sandbox allow-scripts allow-forms; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; object-src 'self'"

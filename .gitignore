@@ -11,7 +11,10 @@ tests/.pw-user/
 # Screenshot artifacts
 tests/screenshots/*.png
 
-# Build output
-/dist/full/
-/dist/lite/
-!/dist/ghostwriter-*.zip
+# Build output (use GitHub Releases for distribution zips)
+/dist/
+
+# Internal working files
+audit/
+explainer-video/
+CLAUDE.md
