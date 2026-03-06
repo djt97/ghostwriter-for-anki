@@ -406,6 +406,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   })();
 });
 
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const key = `sticky_context_${tabId}`;
+  chrome.storage.local.remove(key).catch(() => {});
+});
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
   if (info.menuItemId === "quickflash-open" || info.menuItemId === "quickflash-open-selection") {
@@ -461,25 +466,28 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === "quickflash:test:ping") {
-    sendResponse({ ok: true });
-    return;
-  }
+// ------------------ BACKGROUND BRIDGES ------------------
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  (async () => {
+    if (!message || typeof message !== "object") return;
 
-  if (msg?.type === "quickflash:test:openPanelTab") {
-    try {
-      chrome.tabs.create({ url: buildTabPanelUrl() }, (tab) => {
-        sendResponse({ ok: !!tab, tabId: tab?.id });
-      });
-    } catch (err) {
-      sendResponse({ ok: false, error: err?.message || String(err) });
+    if (message.type === "quickflash:test:ping") {
+      sendResponse({ ok: true });
+      return;
     }
-    return true;
-  }
 
-  if (msg?.type === "quickflash:closeSidePanel") {
-    (async () => {
+    if (message.type === "quickflash:test:openPanelTab") {
+      try {
+        chrome.tabs.create({ url: buildTabPanelUrl() }, (tab) => {
+          sendResponse({ ok: !!tab, tabId: tab?.id });
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+      return;
+    }
+
+    if (message.type === "quickflash:closeSidePanel") {
       try {
         const tabId = sender?.tab?.id ?? await resolveActiveTabId();
         if (typeof tabId !== "number") {
@@ -491,15 +499,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });
       }
-    })();
-    return true;
-  }
-});
-
-// ------------------ BACKGROUND BRIDGES ------------------
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  (async () => {
-    if (!message || typeof message !== "object") return;
+      return;
+    }
 
     if (message.type === "quickflash:openFullPanel") {
       try {
@@ -581,8 +582,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === "quickflash:getOptions") {
-      const { quickflash_options } = await chrome.storage.sync.get("quickflash_options");
-      sendResponse({ ok: true, options: quickflash_options || {} });
+      try {
+        const { quickflash_options } = await chrome.storage.sync.get("quickflash_options");
+        sendResponse({ ok: true, options: quickflash_options || {} });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
       return;
     }
 

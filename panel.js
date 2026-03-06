@@ -1,12 +1,15 @@
 
-// panel.js (v0.3.1)
-// - Source field mapping + optional back link
-// - Notes field mapping
-// - UltimateAI-only AI generation + AI auto-tagging after Add
+// panel.js — Ghostwriter for Anki
 // Only enable test mode when explicitly flagged, e.g. ?__qf_ci=1 or #__qf_ci
 const QF_TEST_MODE = /\b__qf_ci\b/i.test(location.search + location.hash);
 const PANEL_CONFIG = { enableDashboard: true };
 const $ = (sel) => document.querySelector(sel);
+
+// Populate version from manifest.json (single source of truth)
+try {
+  const versionEl = $("#app-version");
+  if (versionEl) versionEl.textContent = "v" + chrome.runtime.getManifest().version;
+} catch {}
 const status = (msg, good) => { const el = $("#status"); el.textContent = msg || ""; el.style.color = good ? "#0b5f17" : "#333"; };
 try {
   window.parent?.postMessage({ type: "quickflash:panelReady" }, "*");
@@ -1593,16 +1596,16 @@ const copilot = {
   pageCtx: null,
   prompts: { front: null, back: null, frontFromBack: null },
   _userPromptBuilder: null,
-  manualOnly: false,
-  triggerShortcut: "Cmd+Shift+X",
+  manualOnly: (window.GHOSTWRITER_DEFAULTS || {}).manualCopilotOnly !== false,
+  triggerShortcut: (window.GHOSTWRITER_DEFAULTS || {}).copilotShortcut || "Cmd+Shift+X",
   triggerShortcutSpec: null,
   // tuning (defaults; overridden by options)
-  frontWordCap: 20,
-  backWordCap: 16,
-  frontMaxTokens: 1024,
-  backMaxTokens: 1024,
-  minIntervalMs: 900,
-  timeoutMs: 30000,
+  frontWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontWordCap || 20,
+  backWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackWordCap || 16,
+  frontMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontMaxTokens || 1024,
+  backMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackMaxTokens || 1024,
+  minIntervalMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotMinIntervalMs || 1200,
+  timeoutMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotTimeoutMs || 30000,
   pauseUntil: 0,
   frontDebounceMs: 650,
   backDebounceMs: 450,
@@ -1653,6 +1656,25 @@ function renderPromptTemplate(template) {
   });
 }
 
+/**
+ * Clear copilot suggestion UI elements for a given field state.
+ * @param {Object} state - copilot field state object
+ * @param {Object} [opts]
+ * @param {boolean} [opts.removeClasses=false] - also remove "loading"/"error" CSS classes
+ * @param {string|null} [opts.mirrorValue=null] - if non-null, set mirrorEl.textContent to this value
+ */
+function clearSuggestionUI(state, { removeClasses = false, mirrorValue = null } = {}) {
+  if (state.suggestionEl) {
+    if (removeClasses) state.suggestionEl.classList.remove("loading", "error");
+    state.suggestionEl.hidden = true;
+  }
+  if (state.textEl) state.textEl.textContent = "";
+  if (state.hintEl) state.hintEl.textContent = "";
+  if (state.ghostEl) state.ghostEl.hidden = true;
+  if (state.ghostTextEl) state.ghostTextEl.textContent = "";
+  if (mirrorValue !== null && state.mirrorEl) state.mirrorEl.textContent = mirrorValue;
+}
+
 function resetCopilotLocks() {
   copilot.locks = { frontAccepted: false, backAccepted: false, allSuspended: false };
   copilot._lastAt = 0;
@@ -1660,15 +1682,7 @@ function resetCopilotLocks() {
   for (const st of copilot.fields.values()) {
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
     if (st.controller) { st.controller.abort(); st.controller = null; }
-    if (st.suggestionEl) {
-      st.suggestionEl.classList.remove("loading", "error");
-      st.suggestionEl.hidden = true;
-    }
-    if (st.textEl) st.textEl.textContent = "";
-    if (st.hintEl) st.hintEl.textContent = "";
-    if (st.ghostEl) st.ghostEl.hidden = true;
-    if (st.ghostTextEl) st.ghostTextEl.textContent = "";
-    if (st.mirrorEl && st.textarea) st.mirrorEl.textContent = st.textarea.value;
+    clearSuggestionUI(st, { removeClasses: true, mirrorValue: st.textarea?.value || "" });
     st.suggestion = "";
     st.lastValue = "";
   }
@@ -2056,15 +2070,7 @@ function cancelCopilotRequests() {
   for (const state of copilot.fields.values()) {
     if (state.timer) { clearTimeout(state.timer); state.timer = null; }
     if (state.controller) { state.controller.abort(); state.controller = null; }
-    if (state.suggestionEl) {
-      state.suggestionEl.classList.remove("loading", "error");
-      state.suggestionEl.hidden = true;
-    }
-    if (state.textEl) state.textEl.textContent = "";
-    if (state.hintEl) state.hintEl.textContent = "";
-    if (state.ghostEl) state.ghostEl.hidden = true;
-    if (state.ghostTextEl) state.ghostTextEl.textContent = "";
-    if (state.mirrorEl) state.mirrorEl.textContent = state.textarea?.value || "";
+    clearSuggestionUI(state, { removeClasses: true, mirrorValue: state.textarea?.value || "" });
     state.suggestion = "";
     state.lastValue = "";
   }
@@ -2557,12 +2563,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
 
   // Respect any active server‑side backoff.
   if (Date.now() < (copilot.pauseUntil || 0)) {
-    if (backState.suggestionEl) backState.suggestionEl.hidden = true;
-    if (backState.textEl) backState.textEl.textContent = "";
-    if (backState.hintEl) backState.hintEl.textContent = "";
-    if (backState.ghostEl) backState.ghostEl.hidden = true;
-    if (backState.ghostTextEl) backState.ghostTextEl.textContent = "";
-    if (backState.mirrorEl) backState.mirrorEl.textContent = existingBack;
+    clearSuggestionUI(backState, { mirrorValue: existingBack });
     backState.suggestion = "";
     return;
   }
@@ -2625,12 +2626,8 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     suggestion = stripFrontFromBack(suggestion, frontForStrip);
 
     if (!suggestion) {
-      if (backState.suggestionEl) backState.suggestionEl.hidden = true;
+      clearSuggestionUI(backState, { mirrorValue: existingBack });
       backState.suggestion = "";
-      if (backState.hintEl) backState.hintEl.textContent = "";
-      if (backState.ghostEl) backState.ghostEl.hidden = true;
-      if (backState.ghostTextEl) backState.ghostTextEl.textContent = "";
-      if (backState.mirrorEl) backState.mirrorEl.textContent = existingBack;
       return;
     }
 
@@ -2649,25 +2646,12 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   } catch (e) {
     if (e?.name === "AbortError") {
       backState.suggestion = "";
-      if (backState.suggestionEl) {
-        backState.suggestionEl.classList.remove("loading", "error");
-        backState.suggestionEl.hidden = true;
-      }
-      if (backState.textEl) backState.textEl.textContent = "";
-      if (backState.hintEl) backState.hintEl.textContent = "";
-      if (backState.ghostEl) backState.ghostEl.hidden = true;
-      if (backState.ghostTextEl) backState.ghostTextEl.textContent = "";
-      if (backState.mirrorEl) backState.mirrorEl.textContent = existingBack;
+      clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
       setCopilotStatus("Copilot timed out.", true);
       return;
     }
     if (String(e?.message || e).includes("rate-paused")) {
-      if (backState.suggestionEl) backState.suggestionEl.hidden = true;
-      if (backState.textEl) backState.textEl.textContent = "";
-      if (backState.hintEl) backState.hintEl.textContent = "";
-      if (backState.ghostEl) backState.ghostEl.hidden = true;
-      if (backState.ghostTextEl) backState.ghostTextEl.textContent = "";
-      if (backState.mirrorEl) backState.mirrorEl.textContent = existingBack;
+      clearSuggestionUI(backState, { mirrorValue: existingBack });
       backState.suggestion = "";
       return;
     }
@@ -2837,23 +2821,13 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   const len = trimmed.replace(/\s+/g, "").length;
   const minChars = state.fieldId === "front" ? copilot.frontMinChars : copilot.backMinChars;
   if (Date.now() < copilot.pauseUntil) {
-    if (state.suggestionEl) state.suggestionEl.hidden = true;
-    if (state.textEl) state.textEl.textContent = "";
-    if (state.hintEl) state.hintEl.textContent = "";
-    if (state.ghostEl) state.ghostEl.hidden = true;
-    if (state.ghostTextEl) state.ghostTextEl.textContent = "";
-    if (state.mirrorEl) state.mirrorEl.textContent = value;
+    clearSuggestionUI(state, { mirrorValue: value });
     state.suggestion = "";
     return;
   }
   if (!force && len < minChars) {
     state.suggestion = "";
-    if (state.suggestionEl) state.suggestionEl.hidden = true;
-    if (state.textEl) state.textEl.textContent = "";
-    if (state.hintEl) state.hintEl.textContent = "";
-    if (state.ghostEl) state.ghostEl.hidden = true;
-    if (state.ghostTextEl) state.ghostTextEl.textContent = "";
-    if (state.mirrorEl) state.mirrorEl.textContent = value;
+    clearSuggestionUI(state, { mirrorValue: value });
     return;
   }
   if (!force && trimmed === state.lastValue) return;
@@ -2976,25 +2950,12 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   } catch (e) {
     if (e?.name === "AbortError") {
       state.suggestion = "";
-      if (state.suggestionEl) {
-        state.suggestionEl.classList.remove("loading", "error");
-        state.suggestionEl.hidden = true;
-      }
-      if (state.textEl) state.textEl.textContent = "";
-      if (state.hintEl) state.hintEl.textContent = "";
-      if (state.ghostEl) state.ghostEl.hidden = true;
-      if (state.ghostTextEl) state.ghostTextEl.textContent = "";
-      if (state.mirrorEl) state.mirrorEl.textContent = value;
+      clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
       setCopilotStatus("Copilot timed out.", true);
       return;
     }
     if (String(e?.message || e).includes("rate-paused")) {
-      if (state.suggestionEl) state.suggestionEl.hidden = true;
-      if (state.textEl) state.textEl.textContent = "";
-      if (state.hintEl) state.hintEl.textContent = "";
-      if (state.ghostEl) state.ghostEl.hidden = true;
-      if (state.ghostTextEl) state.ghostTextEl.textContent = "";
-      if (state.mirrorEl) state.mirrorEl.textContent = value;
+      clearSuggestionUI(state, { mirrorValue: value });
       state.suggestion = "";
       return;
     }
@@ -3006,16 +2967,8 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
         : (2500 + Math.floor(Math.random() * 500));
       copilot.pauseUntil = Date.now() + backoff;
       setCopilotStatus("Temporarily throttled by provider; pausing suggestions…", true);
-      if (state?.suggestionEl) {
-        state.suggestionEl.classList.remove("loading");
-        state.suggestionEl.hidden = true;
-      }
-      if (state?.textEl) state.textEl.textContent = "";
-      if (state?.hintEl) state.hintEl.textContent = "";
-      if (state?.ghostEl) state.ghostEl.hidden = true;
-      if (state?.ghostTextEl) state.ghostTextEl.textContent = "";
-      if (state?.mirrorEl) state.mirrorEl.textContent = value;
-      state && (state.suggestion = "");
+      clearSuggestionUI(state, { mirrorValue: value });
+      if (state) state.suggestion = "";
       return;
     }
     if (state.suggestionEl) {
@@ -3229,16 +3182,17 @@ async function initCopilot() {
       frontFromBack: storedFrontFromBack || basePromptDefaults.frontFromBack || null,
     };
     copilot.showSourceModePill = opts.showSourceModePill !== false;
-    copilot.manualOnly = !!opts.manualCopilotOnly;
+    const D = window.GHOSTWRITER_DEFAULTS || {};
+    copilot.manualOnly = opts.manualCopilotOnly ?? D.manualCopilotOnly ?? true;
     const shortcut = typeof opts.copilotShortcut === "string" ? opts.copilotShortcut.trim() : "";
-    copilot.triggerShortcut = shortcut || "Cmd+Shift+X";
+    copilot.triggerShortcut = shortcut || D.copilotShortcut || "Cmd+Shift+X";
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut) || parseShortcutSpec("Cmd+Shift+X");
-    copilot.frontWordCap   = Number.isFinite(+opts.copilotFrontWordCap) ? +opts.copilotFrontWordCap : 20;
-    copilot.backWordCap    = Number.isFinite(+opts.copilotBackWordCap)  ? +opts.copilotBackWordCap  : 16;
-    copilot.frontMaxTokens = Number.isFinite(+opts.copilotFrontMaxTokens) ? +opts.copilotFrontMaxTokens : 1024;
-    copilot.backMaxTokens  = Number.isFinite(+opts.copilotBackMaxTokens) ? +opts.copilotBackMaxTokens : 1024;
-    copilot.minIntervalMs  = Number.isFinite(+opts.copilotMinIntervalMs) ? +opts.copilotMinIntervalMs : 900;
-    copilot.timeoutMs      = Number.isFinite(+opts.copilotTimeoutMs) ? +opts.copilotTimeoutMs : 30000;
+    copilot.frontWordCap   = Number.isFinite(+opts.copilotFrontWordCap) ? +opts.copilotFrontWordCap : (D.copilotFrontWordCap || 20);
+    copilot.backWordCap    = Number.isFinite(+opts.copilotBackWordCap)  ? +opts.copilotBackWordCap  : (D.copilotBackWordCap || 16);
+    copilot.frontMaxTokens = Number.isFinite(+opts.copilotFrontMaxTokens) ? +opts.copilotFrontMaxTokens : (D.copilotFrontMaxTokens || 1024);
+    copilot.backMaxTokens  = Number.isFinite(+opts.copilotBackMaxTokens) ? +opts.copilotBackMaxTokens : (D.copilotBackMaxTokens || 1024);
+    copilot.minIntervalMs  = Number.isFinite(+opts.copilotMinIntervalMs) ? +opts.copilotMinIntervalMs : (D.copilotMinIntervalMs || 1200);
+    copilot.timeoutMs      = Number.isFinite(+opts.copilotTimeoutMs) ? +opts.copilotTimeoutMs : (D.copilotTimeoutMs || 30000);
   } catch (e) {
     console.warn("Copilot init failed", e);
     copilot.apiConfigured = false;
@@ -3287,7 +3241,7 @@ async function initCopilot() {
           back: nextBack || basePromptDefaults.back || null,
           frontFromBack: nextFrontFromBack || basePromptDefaults.frontFromBack || null,
         };
-        copilot.manualOnly = !!next.manualCopilotOnly;
+        copilot.manualOnly = next.manualCopilotOnly !== false;
         const nextShortcut = typeof next.copilotShortcut === "string" ? next.copilotShortcut.trim() : "";
         copilot.triggerShortcut = nextShortcut || "Cmd+Shift+X";
         copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut) || parseShortcutSpec("Cmd+Shift+X");
@@ -6030,7 +5984,7 @@ async function refreshMetaAndDefaults() {
   const autoContextCheckbox = $("#manualAutoContext");
   if (autoContextCheckbox) {
     const pref = manualPrefs.autoContextManual;
-    const value = pref !== undefined ? !!pref : !!(opts.manualAutoContext ?? false);
+    const value = pref !== undefined ? !!pref : !!(opts.manualAutoContext ?? (window.GHOSTWRITER_DEFAULTS || {}).manualAutoContext ?? true);
     autoContextCheckbox.checked = value;
     manualPrefsCache = { ...(manualPrefsCache || {}), autoContextManual: value };
   }
@@ -6351,6 +6305,10 @@ Avoid echoing the front/back text; avoid generic paraphrases.`;
 
 function makeBackLinkHTML(url, title) {
   if (!url) return "";
+  try {
+    const protocol = new URL(url).protocol;
+    if (!["http:", "https:"].includes(protocol)) return "";
+  } catch { return ""; }
   const safeTitle = (title || url).replace(/[<>]/g, "");
   const href = url.replace(/"/g, "&quot;");
   return `<div class="quickflash-source" style="margin-top:8px;font-size:12px;color:#666">Source: <a href="${href}" target="_blank" rel="noopener noreferrer">${safeTitle}</a></div>`;
@@ -6362,7 +6320,7 @@ function getMarkdownRenderer() {
   if (markdownRendererState.instance) return markdownRendererState.instance;
   if (typeof window.markdownit !== "function") return null;
   markdownRendererState.instance = window.markdownit({
-    html: true,
+    html: false,
     linkify: true,
     breaks: true
   });
@@ -7115,7 +7073,7 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
   // Always append the global “ghostwriter” tag if enabled
   try {
     opts = await getOptions();
-    if (opts.appendQuickflashTag) {
+    if (opts.appendQuickflashTag !== false) {
       const t = (opts.quickflashTagName || "ghostwriter").trim();
       if (t) uniqueTags.push(t.replace(/\s+/g, "_")); // normalize spaces for Anki tags
     }

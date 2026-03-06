@@ -6,7 +6,9 @@
 
 (function () {
   const root = document.getElementById('root');
-  const PARENT_ORIGIN = '*'; // safe here because we only live in an extension iframe
+  const PARENT_ORIGIN = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
+    ? new URL(chrome.runtime.getURL('')).origin
+    : '*';
 
   function escapeHtml(str) {
     return String(str)

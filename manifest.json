@@ -50,6 +50,7 @@
       "resources": [
         "panel.html",
         "panel.js",
+        "defaults.js",
         "prompts.js",
         "mathjax-sandbox.html",
         "mathjax-sandbox.js",

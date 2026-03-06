@@ -755,23 +755,25 @@ if (window.__QUICKFLASH_INJECTED__) {
     return undefined;
   });
 
+  const QF_TEST_MODE = /\b__qf_ci\b/i.test(location.search + location.hash);
+
   window.addEventListener('message', (event) => {
     const type = event?.data?.type;
     if (!type) return;
 
-    if (type === 'quickflash:test:openPopover') {
+    if (QF_TEST_MODE && type === 'quickflash:test:openPopover') {
       try {
         openPopover();
       } catch {
         // ignore test hook issues in production
       }
-    } else if (type === 'quickflash:test:openPanelTab') {
+    } else if (QF_TEST_MODE && type === 'quickflash:test:openPanelTab') {
       try {
         chrome.runtime.sendMessage({ type: 'quickflash:test:openPanelTab' });
       } catch {
         // ignore - diagnostic only
       }
-    } else if (type === 'quickflash:test:ping') {
+    } else if (QF_TEST_MODE && type === 'quickflash:test:ping') {
       try {
         window.postMessage({ type: 'quickflash:test:pong' }, '*');
       } catch {
