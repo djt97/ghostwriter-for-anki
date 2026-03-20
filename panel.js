@@ -7217,11 +7217,17 @@ async function sendOutboxToAnki() {
     }
 
     let addResult = [];
+    let usedIndividualFallback = false;
     try {
       addResult = await anki("addNotes", { notes: allowedPairs.map((p) => p.note) }) || [];
     } catch (e) {
-      // Fallback for Android service: send notes individually when bulk JSON fails to parse.
-      if (!isMalformedJsonError(e)) throw e;
+      // Fallback: send notes individually when bulk request fails.
+      // This handles both Android JSON parse issues and network errors
+      // where some notes may have been added before the failure.
+      if (!isMalformedJsonError(e) && !isExtensionContextInvalidated(e)) {
+        console.warn("Bulk addNotes failed; falling back to individual sends.", e?.message);
+      }
+      usedIndividualFallback = true;
       addResult = [];
       for (const pair of allowedPairs) {
         try {
@@ -7229,13 +7235,18 @@ async function sendOutboxToAnki() {
           addResult.push(noteId);
         } catch (err) {
           addResult.push(null);
-          console.warn("Failed to add note individually", err);
+          console.warn("Failed to add note individually:", pair.card.front?.slice(0, 50), err?.message);
         }
       }
     }
     const added = [];
+    const failed = [];
     addResult.forEach((noteId, idx) => {
-      if (noteId) added.push({ noteId, card: allowedPairs[idx].card });
+      if (noteId) {
+        added.push({ noteId, card: allowedPairs[idx].card });
+      } else {
+        failed.push(allowedPairs[idx].card);
+      }
     });
     if (!added.length) {
       status("Anki did not accept any notes from the outbox.");
@@ -7262,7 +7273,10 @@ async function sendOutboxToAnki() {
     const sentCount = outbox.lastSend.noteIds.length;
     let message = `Sent ${sentCount} note${sentCount === 1 ? "" : "s"} to Anki.`;
     if (skipped > 0) message += ` Skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}.`;
-    status(message, true);
+    if (failed.length > 0) {
+      message += ` ${failed.length} failed (kept in outbox).`;
+    }
+    status(message, failed.length === 0);
     persistOutboxState();
     persistTriageState();
     // Optional: keep manual authoring area clean after bulk send
