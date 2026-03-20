@@ -71,6 +71,34 @@ const PROVIDER_DEFAULTS = {
     model: "gemini-2.5-flash-lite",
     keyPlaceholder: "Gemini API key",
   },
+  claude: {
+    baseUrl: "https://api.anthropic.com",
+    model: "claude-sonnet-4-6",
+    keyPlaceholder: "Anthropic API key",
+  },
+};
+const KNOWN_MODELS = {
+  gemini: [
+    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
+    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+    { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
+  ],
+  openai: [
+    { id: "gpt-4o-mini", label: "GPT-4o Mini" },
+    { id: "gpt-4o", label: "GPT-4o" },
+    { id: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
+    { id: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+    { id: "o4-mini", label: "o4-mini" },
+  ],
+  ultimate: [
+    { id: "gpt-4o-mini", label: "GPT-4o Mini" },
+    { id: "gpt-4o", label: "GPT-4o" },
+  ],
+  claude: [
+    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  ],
 };
 const OPTIONS_KEY = "quickflash_options";
 const PERMISSION_JUSTIFICATIONS = {
@@ -98,6 +126,7 @@ function applyOptionsViewMode(mode) {
 function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
   if (value === "openai") return "openai";
+  if (value === "claude") return "claude";
   return "ultimate";
 }
 
@@ -132,6 +161,10 @@ function getProviderConfigFromOpts(opts, providerOverride) {
     cfg.apiKey = opts.openaiKey || "";
     // fallback to ultimateModel for older saves
     cfg.model = opts.openaiModel || opts.ultimateModel || PROVIDER_DEFAULTS.openai.model;
+  } else if (provider === "claude") {
+    cfg.baseUrl = opts.claudeBaseUrl || PROVIDER_DEFAULTS.claude.baseUrl;
+    cfg.apiKey = opts.claudeKey || "";
+    cfg.model = opts.claudeModel || PROVIDER_DEFAULTS.claude.model;
   } else {
     // UltimateAI (open-source / hosted)
     cfg.baseUrl = opts.ultimateBaseUrl || PROVIDER_DEFAULTS.ultimate.baseUrl;
@@ -176,6 +209,10 @@ function writeProviderConfigToData(data, base, provider, ui) {
     data.openaiBaseUrl = baseUrl || base.openaiBaseUrl || PROVIDER_DEFAULTS.openai.baseUrl;
     data.openaiKey = apiKey;
     data.openaiModel = model || base.openaiModel || base.ultimateModel || PROVIDER_DEFAULTS.openai.model;
+  } else if (p === "claude") {
+    data.claudeBaseUrl = baseUrl || base.claudeBaseUrl || PROVIDER_DEFAULTS.claude.baseUrl;
+    data.claudeKey = apiKey;
+    data.claudeModel = model || base.claudeModel || PROVIDER_DEFAULTS.claude.model;
   } else {
     // ultimate
     data.ultimateBaseUrl = baseUrl || base.ultimateBaseUrl || PROVIDER_DEFAULTS.ultimate.baseUrl;
@@ -205,7 +242,8 @@ function applyProviderChoiceUI(provider, optsOverride) {
 
   const baseInput = document.querySelector("#providerBaseUrl");
   const keyInput = document.querySelector("#providerApiKey");
-  const modelInput = document.querySelector("#providerModel");
+  const modelSelect = document.querySelector("#providerModelSelect");
+  const modelCustom = document.querySelector("#providerModelCustom");
   const modelHelp = document.querySelector("#providerModelHelp");
   const streamField = document.querySelector("#providerStreamField");
   const streamSelect = document.querySelector("#providerStreamFront");
@@ -221,8 +259,28 @@ function applyProviderChoiceUI(provider, optsOverride) {
     keyInput.placeholder = (PROVIDER_DEFAULTS[p] || {}).keyPlaceholder || fallback;
   }
 
-  if (modelInput) {
-    modelInput.value = cfg.model;
+  if (modelSelect) {
+    const models = KNOWN_MODELS[p] || KNOWN_MODELS.ultimate;
+    modelSelect.innerHTML = "";
+    for (const m of models) {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label;
+      modelSelect.appendChild(opt);
+    }
+    const customOpt = document.createElement("option");
+    customOpt.value = "__custom__";
+    customOpt.textContent = "Custom\u2026";
+    modelSelect.appendChild(customOpt);
+
+    const isKnown = models.some((m) => m.id === cfg.model);
+    if (isKnown) {
+      modelSelect.value = cfg.model;
+      if (modelCustom) { modelCustom.hidden = true; modelCustom.value = ""; }
+    } else {
+      modelSelect.value = "__custom__";
+      if (modelCustom) { modelCustom.hidden = false; modelCustom.value = cfg.model; }
+    }
   }
 
   if (modelHelp) {
@@ -230,6 +288,8 @@ function applyProviderChoiceUI(provider, optsOverride) {
       modelHelp.textContent = "Used when Google Gemini is selected.";
     } else if (p === "openai") {
       modelHelp.textContent = "Used for direct OpenAI calls.";
+    } else if (p === "claude") {
+      modelHelp.textContent = "Used for Anthropic Claude API calls.";
     } else {
       modelHelp.textContent = "Used for UltimateAI (OpenAI-compatible) calls.";
     }
@@ -555,7 +615,9 @@ async function save() {
 
   const providerBaseUrl = document.querySelector("#providerBaseUrl")?.value.trim() || "";
   const providerApiKey  = document.querySelector("#providerApiKey")?.value.trim() || "";
-  const providerModel   = document.querySelector("#providerModel")?.value.trim() || "";
+  const modelSelectVal = document.querySelector("#providerModelSelect")?.value || "";
+  const modelCustomVal = document.querySelector("#providerModelCustom")?.value.trim() || "";
+  const providerModel = modelSelectVal === "__custom__" ? modelCustomVal : modelSelectVal;
   const providerStreamFront = document.querySelector("#providerStreamFront")?.value === "true";
 
   // Parse custom editor field config (optional)
@@ -1102,6 +1164,20 @@ document.addEventListener("DOMContentLoaded", () => {
   if (providerSelect) {
     providerSelect.addEventListener("change", () => {
       applyProviderChoiceUI(providerSelect.value);
+    });
+  }
+
+  const modelSelect = document.querySelector("#providerModelSelect");
+  const modelCustom = document.querySelector("#providerModelCustom");
+  if (modelSelect && modelCustom) {
+    modelSelect.addEventListener("change", () => {
+      if (modelSelect.value === "__custom__") {
+        modelCustom.hidden = false;
+        modelCustom.focus();
+      } else {
+        modelCustom.hidden = true;
+        modelCustom.value = "";
+      }
     });
   }
 });

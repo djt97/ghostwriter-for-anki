@@ -58,6 +58,7 @@
             <option value="ultimate">UltimateAI</option>
             <option value="openai">OpenAI</option>
             <option value="gemini">Google Gemini</option>
+            <option value="claude">Anthropic Claude</option>
           </select>
         </div>
       </div>
@@ -73,10 +74,11 @@
           <input id="providerApiKey" type="password" placeholder="API key" />
         </div>
         <div class="field">
-          <label for="providerModel">Default model</label>
-          <input id="providerModel" type="text" placeholder="gpt-4o-mini" />
+          <label for="providerModelSelect">Default model</label>
+          <select id="providerModelSelect"></select>
+          <input id="providerModelCustom" type="text" placeholder="Enter custom model ID" hidden />
           <p id="providerModelHelp" class="small">
-            Used for UltimateAI and direct OpenAI calls.
+            Select a model or choose "Custom" to enter a model ID manually.
           </p>
         </div>
         <div class="field" id="providerStreamField">

@@ -579,6 +579,7 @@ function applyFieldVisibilityPrefs(opts = {}) {
 function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
   if (value === "openai") return "openai";
+  if (value === "claude") return "claude";
   return "ultimate";
 }
 
@@ -1198,6 +1199,57 @@ function parseJSONLoose(text) {
     }
     return v;
   }
+}
+
+// ------- Anthropic Claude (Messages API) -------
+async function claudeCompletion(prompt, options = {}) {
+  const opts = await getOptions();
+  const baseUrl = (opts.claudeBaseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
+  const apiKey = opts.claudeKey || "";
+  const model = options.model || opts.claudeModel || "claude-sonnet-4-6";
+  if (!apiKey) throw new Error("Anthropic API key missing. Set it in Options.");
+
+  const systemPrompt = options.system || getCopilotSystemPrompt("front");
+  const endpoint = `${baseUrl}/v1/messages`;
+  const maxTokens = options.maxTokens || 1024;
+
+  const payload = {
+    model,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  recordDebugRequest({ provider: "claude", model, endpoint, prompt, system: systemPrompt });
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+  });
+
+  if (res.status === 429) {
+    const retryAfter = res.headers.get("retry-after");
+    const waitMs = retryAfter ? (Number(retryAfter) || 5) * 1000 : 5000;
+    copilot.pauseUntil = Date.now() + waitMs;
+    throw new Error(`Claude rate limited. Retry in ${Math.ceil(waitMs / 1000)}s.`);
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Claude API error ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const out = (data?.content?.[0]?.text || "").trim();
+  recordDebugResponse(out);
+  return out;
 }
 
 const modelFieldsCache = new Map();
@@ -2002,6 +2054,10 @@ async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
       if (parentSignal?.aborted) return "";
       return await geminiFrontNonStream(prompt, sys, local, existingText, capWords);
     }
+    if (provider === "claude") {
+      if (parentSignal?.aborted) return "";
+      return await claudeFrontCall(prompt, sys, local, existingText, capWords);
+    }
     return await openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal);
   } finally {
     cleanup();
@@ -2053,6 +2109,30 @@ async function openAIBackCall(prompt, sys, signal, existingText, capWords) {
   return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
 }
 
+async function claudeFrontCall(prompt, sys, local, existingText, capWords) {
+  const raw = await claudeCompletion(prompt, {
+    maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
+    system: sys,
+    signal: local.signal,
+  }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
+  return finalizeFrontQuestion(
+    normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords })
+  );
+}
+
+async function claudeBackCall(prompt, sys, signal, existingText, capWords) {
+  const raw = await claudeCompletion(prompt, {
+    maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
+    system: sys,
+    signal,
+  }).catch((err) => {
+    if (err?.name === "AbortError") return "";
+    throw err;
+  });
+  if (signal.aborted) return "";
+  return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
+}
+
 async function callBackLLM(prompt, sys, ctrl, existingText) {
   const opts = await getOptions();
   const provider = opts.llmProvider || "ultimate";
@@ -2060,6 +2140,9 @@ async function callBackLLM(prompt, sys, ctrl, existingText) {
   console.debug("[Copilot] provider:", provider, "mode:back");
   if (provider === "gemini") {
     return geminiBackCall(prompt, sys, ctrl.signal, existingText, capWords);
+  }
+  if (provider === "claude") {
+    return claudeBackCall(prompt, sys, ctrl.signal, existingText, capWords);
   }
   return openAIBackCall(prompt, sys, ctrl.signal, existingText, capWords);
 }

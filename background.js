@@ -11,6 +11,7 @@ function normalizeSourceMode(mode) {
 function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
   if (value === "openai") return "openai";
+  if (value === "claude") return "claude";
   return "ultimate";
 }
 

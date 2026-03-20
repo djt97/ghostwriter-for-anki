@@ -86,8 +86,12 @@ describe('background.js pure functions', () => {
       assert.equal(normalizeProvider('ultimate'), 'ultimate');
     });
 
+    it('returns "claude" for "claude"', () => {
+      assert.equal(normalizeProvider('claude'), 'claude');
+    });
+
     it('returns "ultimate" for unknown providers', () => {
-      assert.equal(normalizeProvider('claude'), 'ultimate');
+      assert.equal(normalizeProvider('mistral'), 'ultimate');
       assert.equal(normalizeProvider(''), 'ultimate');
       assert.equal(normalizeProvider(undefined), 'ultimate');
     });
