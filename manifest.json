@@ -50,6 +50,8 @@
       "resources": [
         "panel.html",
         "panel.js",
+        "panel-markdown.js",
+        "panel-ai-templates.js",
         "defaults.js",
         "prompts.js",
         "mathjax-sandbox.html",
