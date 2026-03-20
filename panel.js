@@ -2182,256 +2182,226 @@ function finalizeFrontQuestion(text) {
   return s; // leave as-is
 }
 
+// --- Provider strategy helpers for LLM calls ---
+
+function updateSuggestionUI(state, text) {
+  if (state.textEl) state.textEl.textContent = text;
+  if (state.ghostEl && state.ghostTextEl) {
+    state.ghostTextEl.textContent = text;
+    state.ghostEl.hidden = !text;
+  }
+}
+
+function makeLinkedAbort(parentSignal) {
+  const local = new AbortController();
+  const abortFromParent = () => local.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) local.abort();
+    else parentSignal.addEventListener?.("abort", abortFromParent, { once: true });
+  }
+  const cleanup = () => parentSignal?.removeEventListener?.("abort", abortFromParent);
+  return { local, cleanup };
+}
+
+async function geminiFrontStream(prompt, sys, local, state, existingText, capWords) {
+  let acc = "";
+  let anyVisible = false;
+  try {
+    await geminiCompletionStream(prompt, {
+      maxTokens: Math.max(8, Math.min(capWords + 2, 24)),
+      temperature: 0.2,
+      stop: undefined,
+      system: sys,
+      signal: local.signal,
+      onStart: () => { copilot._skipRateLimit = true; },
+      onDelta: (chunk) => {
+        acc += chunk;
+        const live = normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords });
+        anyVisible = anyVisible || !!live;
+        updateSuggestionUI(state, live);
+        if (live.split(/\s+/).filter(Boolean).length >= capWords && !local.signal.aborted) {
+          try { local.abort(); } catch {}
+        }
+      },
+      onDone: () => {
+        const live = finalizeFrontQuestion(
+          normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords })
+        );
+        updateSuggestionUI(state, live);
+      },
+    });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      const current = finalizeFrontQuestion((state.textEl?.textContent || "").trim());
+      updateSuggestionUI(state, current);
+      return current;
+    }
+    console.warn("Gemini stream failed; falling back to non-stream.", err);
+  }
+
+  const liveNow = finalizeFrontQuestion((state.textEl?.textContent || "").trim());
+  updateSuggestionUI(state, liveNow);
+  if (liveNow) return liveNow;
+
+  if (!anyVisible) {
+    return geminiFrontNonStream(prompt, sys, local, existingText, capWords);
+  }
+  return "";
+}
+
+async function geminiFrontNonStream(prompt, sys, local, existingText, capWords) {
+  const raw = await geminiCompletion(prompt, {
+    maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
+    temperature: 0.2,
+    stop: undefined,
+    system: sys,
+    signal: local.signal,
+  }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
+  let single = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
+  if (!single) {
+    showLiteFallbackToast("Used lite fallback");
+    const rawLite = await geminiCompletion(prompt, {
+      model: "gemini-2.5-flash-lite",
+      maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
+      temperature: 0.2,
+      stop: undefined,
+      system: sys,
+      signal: local.signal,
+    }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
+    single = normalizeCopilotSuggestion(rawLite || "", existingText, { role: "front", maxWords: capWords });
+  }
+  return finalizeFrontQuestion(single);
+}
+
+async function openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal) {
+  let suggestion = "";
+  let partial = "";
+  let abortedByEarlyStop = false;
+  const timeoutMs = Math.max(1000, copilot.timeoutMs || 30000);
+  const deadline = Date.now() + timeoutMs;
+  const hardTimer = setTimeout(() => {
+    if (!local.signal.aborted) {
+      abortedByEarlyStop = true;
+      try { local.abort(); } catch {}
+    }
+  }, timeoutMs);
+  try {
+    await ultimateCompletionStream(prompt, {
+      maxTokens: Math.max(8, Math.min(copilot.frontMaxTokens || 1024, capWords * 2)),
+      temperature: 0.2,
+      stop: undefined,
+      signal: local.signal,
+      system: sys,
+      onStart: () => { copilot._skipRateLimit = true; },
+      onDelta: (chunk) => {
+        partial += chunk;
+        const live = normalizeCopilotSuggestion(partial, existingText, { role: "front", maxWords: capWords });
+        suggestion = live;
+        updateSuggestionUI(state, live);
+        const reachedCap = live.split(/\s+/).filter(Boolean).length >= capWords;
+        if ((reachedCap || Date.now() > deadline) && !local.signal.aborted) {
+          abortedByEarlyStop = true;
+          try { local.abort(); } catch {}
+        }
+      },
+    });
+  } catch (err) {
+    if (!(err?.name === "AbortError" && abortedByEarlyStop)) throw err;
+  } finally {
+    clearTimeout(hardTimer);
+  }
+  if (parentSignal?.aborted && !abortedByEarlyStop) return "";
+  if (!suggestion && !abortedByEarlyStop && !parentSignal?.aborted) {
+    const raw = await ultimateCompletion(prompt, {
+      maxTokens: Math.max(10, (copilot.frontMaxTokens || 1024)),
+      temperature: 0.2,
+      stop: undefined,
+      signal: local.signal,
+      system: sys,
+    }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
+    if (parentSignal?.aborted) return "";
+    suggestion = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
+  }
+  return finalizeFrontQuestion(suggestion);
+}
+
 async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
   const opts = await getOptions();
   const provider = opts.llmProvider || "ultimate";
   const capWords = copilot.frontWordCap;
   const parentSignal = ctrl?.signal;
-  const local = new AbortController();
-  const abortFromParent = () => local.abort();
-  if (parentSignal) {
-    if (parentSignal.aborted) {
-      local.abort();
-    } else {
-      parentSignal.addEventListener?.("abort", abortFromParent, { once: true });
-    }
-  }
-  const cleanup = () => parentSignal?.removeEventListener?.("abort", abortFromParent);
+  const { local, cleanup } = makeLinkedAbort(parentSignal);
 
   try {
     console.debug("[Copilot] provider:", provider, "mode:front", "stream:", opts.geminiStreamFront === true);
     if (provider === "gemini" && opts.geminiStreamFront === true) {
-      {
-        let acc = "";
-        let anyVisible = false;  // <- track visible tokens, not just "got a delta"
-        try {
-          await geminiCompletionStream(prompt, {
-            maxTokens: Math.max(8, Math.min(capWords + 2, 24)),
-            temperature: 0.2,
-            stop: undefined,
-            system: sys,
-            signal: local.signal,
-            onStart: () => { copilot._skipRateLimit = true; },
-            onDelta: (chunk) => {
-              acc += chunk;
-              const live = normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords });
-              anyVisible = anyVisible || !!live;
-              if (state.textEl) state.textEl.textContent = live;
-              if (state.ghostEl && state.ghostTextEl) {
-                state.ghostTextEl.textContent = live;
-                state.ghostEl.hidden = !live;
-              }
-              // Early stop once we hit the word cap to save tokens / rate limits
-              const reachedCap = live.split(/\s+/).filter(Boolean).length >= capWords;
-              if (reachedCap && !local.signal.aborted) {
-                try { local.abort(); } catch {}
-              }
-            },
-            onDone: () => {
-              let live = normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords });
-              // finalize punctuation for front (see helper added below)
-              live = finalizeFrontQuestion(live);
-              if (state.textEl) state.textEl.textContent = live;
-              if (state.ghostEl && state.ghostTextEl) {
-                state.ghostTextEl.textContent = live;
-                state.ghostEl.hidden = !live;
-              }
-            },
-          });
-        } catch (err) {
-          if (err?.name === "AbortError") {
-            const currentRaw = (state.textEl?.textContent || "").trim();
-            const current = finalizeFrontQuestion(currentRaw);
-            if (state.textEl && current !== state.textEl.textContent) {
-              state.textEl.textContent = current;
-            }
-            if (state.ghostEl && state.ghostTextEl) {
-              state.ghostTextEl.textContent = current;
-              state.ghostEl.hidden = !current;
-            }
-            return current;
-          }
-          console.warn("Gemini stream failed; falling back to non-stream.", err);
-        }
-
-        // Prefer streamed content if anything visible landed
-        const liveNowRaw = (state.textEl?.textContent || "").trim();
-        const liveNow = finalizeFrontQuestion(liveNowRaw);
-        if (state.textEl && liveNow !== state.textEl.textContent) {
-          state.textEl.textContent = liveNow;
-        }
-        if (state.ghostEl && state.ghostTextEl) {
-          state.ghostTextEl.textContent = liveNow;
-          state.ghostEl.hidden = !liveNow;
-        }
-        if (liveNow) return liveNow;
-
-        // If streaming ran but produced no visible text, do a single non-stream call
-        if (!anyVisible) {
-          const raw = await geminiCompletion(prompt, {
-            maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
-            temperature: 0.2,
-            stop: undefined,
-            system: sys,
-            signal: local.signal,
-          }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
-          if (parentSignal?.aborted) return "";
-          let single = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
-          if (!single) {
-            showLiteFallbackToast("Used lite fallback");
-            const rawLite = await geminiCompletion(prompt, {
-              model: "gemini-2.5-flash-lite",
-              maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
-              temperature: 0.2,
-              stop: undefined,
-              system: sys,
-              signal: local.signal,
-            }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
-            single = normalizeCopilotSuggestion(rawLite || "", existingText, { role: "front", maxWords: capWords });
-          }
-          single = finalizeFrontQuestion(single);
-          return single;
-        }
-      }
+      const result = await geminiFrontStream(prompt, sys, local, state, existingText, capWords);
+      if (result) return result;
     }
-
     if (provider === "gemini") {
-      const raw = await geminiCompletion(prompt, {
-        maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
-        temperature: 0.2,
-        stop: undefined,
-        system: sys,
-        signal: local.signal,
-      }).catch((err) => {
-        if (err?.name === "AbortError") return "";
-        throw err;
-      });
       if (parentSignal?.aborted) return "";
-      let single = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
-      single = finalizeFrontQuestion(single);
-      return single;
+      return await geminiFrontNonStream(prompt, sys, local, existingText, capWords);
     }
-
-    let suggestion = "";
-    let partial = "";
-    let abortedByEarlyStop = false;
-    const timeoutMs = Math.max(1000, copilot.timeoutMs || 30000);
-    const deadline = Date.now() + timeoutMs;
-    const hardTimer = setTimeout(() => {
-      if (!local.signal.aborted) {
-        abortedByEarlyStop = true;
-        try { local.abort(); } catch {}
-      }
-    }, timeoutMs);
-    try {
-      await ultimateCompletionStream(prompt, {
-        // honor the UI setting; allow enough room for smaller models
-        maxTokens: Math.max(8, Math.min(copilot.frontMaxTokens || 1024, capWords * 2)),
-        temperature: 0.2,
-        stop: undefined,
-        signal: local.signal,
-        system: sys,
-        onStart: () => { copilot._skipRateLimit = true; },
-        onDelta: (chunk) => {
-          partial += chunk;
-          const live = normalizeCopilotSuggestion(partial, existingText, {
-            role: "front",
-            maxWords: capWords,
-          });
-          suggestion = live;
-          if (state.textEl) state.textEl.textContent = live;
-          if (state.ghostEl && state.ghostTextEl) {
-            state.ghostTextEl.textContent = live;
-            state.ghostEl.hidden = !live;
-          }
-          const reachedCap = live.split(/\s+/).filter(Boolean).length >= capWords;
-          const overBudget = Date.now() > deadline;
-          if ((reachedCap || overBudget) && !local.signal.aborted) {
-            abortedByEarlyStop = true;
-            try { local.abort(); } catch {}
-          }
-        },
-      });
-    } catch (err) {
-      if (!(err?.name === "AbortError" && abortedByEarlyStop)) throw err;
-    } finally {
-      clearTimeout(hardTimer);
-    }
-    if (parentSignal?.aborted && !abortedByEarlyStop) return "";
-    if (!suggestion && !abortedByEarlyStop && !(parentSignal?.aborted)) {
-      const raw = await ultimateCompletion(prompt, {
-        maxTokens: Math.max(10, (copilot.frontMaxTokens || 1024)),
-        temperature: 0.2,
-        stop: undefined,
-        signal: local.signal,
-        system: sys,
-      }).catch((err) => {
-        if (err?.name === "AbortError") return "";
-        throw err;
-      });
-      if (parentSignal?.aborted) return "";
-      suggestion = normalizeCopilotSuggestion(raw || "", existingText, {
-        role: "front",
-        maxWords: capWords,
-      });
-    }
-    suggestion = finalizeFrontQuestion(suggestion);
-    return suggestion;
+    return await openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal);
   } finally {
     cleanup();
   }
+}
+
+async function geminiBackCall(prompt, sys, signal, existingText, capWords) {
+  let raw = await geminiCompletion(prompt, {
+    maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
+    temperature: 0.3,
+    stop: undefined,
+    system: sys,
+    signal,
+  }).catch((err) => {
+    if (err?.name === "AbortError") return "";
+    throw err;
+  });
+  if (signal.aborted) return "";
+  if (!raw) {
+    showLiteFallbackToast("Used lite fallback");
+    raw = await geminiCompletion(prompt, {
+      model: "gemini-2.5-flash-lite",
+      maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
+      temperature: 0.3,
+      stop: undefined,
+      system: sys,
+      signal,
+    }).catch((err) => {
+      if (err?.name === "AbortError") return "";
+      throw err;
+    });
+    if (signal.aborted) return "";
+  }
+  return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
+}
+
+async function openAIBackCall(prompt, sys, signal, existingText, capWords) {
+  const raw = await ultimateCompletion(prompt, {
+    maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
+    temperature: 0.3,
+    stop: undefined,
+    system: sys,
+    signal,
+  }).catch((err) => {
+    if (err?.name === "AbortError") return "";
+    throw err;
+  });
+  if (signal.aborted) return "";
+  return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
 }
 
 async function callBackLLM(prompt, sys, ctrl, existingText) {
   const opts = await getOptions();
   const provider = opts.llmProvider || "ultimate";
   const capWords = copilot.backWordCap;
-
   console.debug("[Copilot] provider:", provider, "mode:back");
   if (provider === "gemini") {
-    let raw = await geminiCompletion(prompt, {
-      maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
-      temperature: 0.3,
-      // No hard stops; let prompt + cap shape length
-      stop: undefined,
-      system: sys,
-      signal: ctrl.signal,
-    }).catch((err) => {
-      if (err?.name === "AbortError" || ctrl.signal.aborted) return "";
-      throw err;
-    });
-    if (ctrl.signal.aborted) return "";
-    if (!raw) {
-      showLiteFallbackToast("Used lite fallback");
-      raw = await geminiCompletion(prompt, {
-        model: "gemini-2.5-flash-lite",
-        maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
-        temperature: 0.3,
-        stop: undefined,
-        system: sys,
-        signal: ctrl.signal,
-      }).catch((err) => {
-        if (err?.name === "AbortError" || ctrl.signal.aborted) return "";
-        throw err;
-      });
-      if (ctrl.signal.aborted) return "";
-    }
-    return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
+    return geminiBackCall(prompt, sys, ctrl.signal, existingText, capWords);
   }
-
-  const raw = await ultimateCompletion(prompt, {
-    maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
-    temperature: 0.3,
-    // Gentle guards only (let the model finish the short phrase)
-    stop: undefined,
-    system: sys,
-    signal: ctrl.signal,
-  }).catch((err) => {
-    if (err?.name === "AbortError" || ctrl.signal.aborted) return "";
-    throw err;
-  });
-  if (ctrl.signal.aborted) return "";
-  return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
+  return openAIBackCall(prompt, sys, ctrl.signal, existingText, capWords);
 }
 
 function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {

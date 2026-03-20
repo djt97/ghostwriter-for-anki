@@ -45,33 +45,11 @@ async function cycleSourceModeSetting() {
   }
 }
 
-function chromeCall(fn, args = []) {
-  // Works whether the API is callback-based or Promise-based.
-  return new Promise((resolve, reject) => {
-    try {
-      // If the function supports callbacks, pass one and read lastError.
-      fn(...args, (...cbArgs) => {
-        const err = chrome.runtime.lastError;
-        if (err) reject(new Error(err.message || String(err)));
-        else resolve(cbArgs.length > 1 ? cbArgs : cbArgs[0]);
-      });
-    } catch (e) {
-      // If the API was promise-based and we passed a callback, the call above can throw.
-      // Fallback: call again without a callback and await the returned Promise.
-      try {
-        const maybePromise = fn(...args);
-        Promise.resolve(maybePromise).then(resolve, reject);
-      } catch (e2) {
-        reject(e2);
-      }
-    }
-  });
-}
 
 async function configureSidePanelBehavior(openOnClick = false) {
   if (supportsSidePanel() && chrome.sidePanel.setPanelBehavior) {
     try {
-      await chromeCall(chrome.sidePanel.setPanelBehavior, [{ openPanelOnActionClick: openOnClick }]);
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: openOnClick });
     } catch (err) {
       console.warn("setPanelBehavior failed:", err?.message || err);
     }
@@ -84,7 +62,7 @@ async function enableSidePanelForTab(tabId) {
 
   try {
     if (chrome.sidePanel.setOptions) {
-      await chromeCall(chrome.sidePanel.setOptions, [{ tabId, path: "panel.html", enabled: true }]);
+      await chrome.sidePanel.setOptions({ tabId, path: "panel.html", enabled: true });
     }
   } catch (e) {
     console.warn("setOptions error:", e?.message || e);
@@ -96,7 +74,7 @@ async function openSidePanelForTab(tabId) {
   await enableSidePanelForTab(tabId);
 
   try {
-    await chromeCall(chrome.sidePanel.open, [{ tabId }]);
+    await chrome.sidePanel.open({ tabId });
     console.info("sidePanel.open succeeded", { tabId });
   } catch (e) {
     console.warn("sidePanel.open error:", e?.message || e, { tabId });
@@ -110,7 +88,7 @@ async function closeSidePanelForTab(tabId) {
 
   try {
     if (chrome.sidePanel.setOptions) {
-      await chromeCall(chrome.sidePanel.setOptions, [{ tabId, enabled: false }]);
+      await chrome.sidePanel.setOptions({ tabId, enabled: false });
       return true;
     }
   } catch (e) {
@@ -125,7 +103,7 @@ async function getSidePanelEnabled(tabId) {
   if (typeof tabId !== "number") return null;
 
   try {
-    const opts = await chromeCall(chrome.sidePanel.getOptions, [{ tabId }]);
+    const opts = await chrome.sidePanel.getOptions({ tabId });
     return typeof opts?.enabled === "boolean" ? opts.enabled : null;
   } catch (e) {
     console.warn("getOptions error:", e?.message || e);
