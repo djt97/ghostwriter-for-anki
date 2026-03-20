@@ -253,11 +253,7 @@ async function loadPreviewMode() {
 const STICKY_CONTEXT_PREFIX = "sticky_context_";
 const stickyContextState = { enabled: false, tabId: null, value: "" };
 
-function showPreview() {
-  // Legacy stub: preview is now handled by the MathJax sandbox + postMessage.
-  // We keep this to avoid ReferenceError in older code paths.
-  return isPreviewMode();
-}
+
 
 function buildSimpleAITemplatePrompt(kind) {
   return `Return ONLY valid JSON. Never include explanations or backticks.
@@ -609,19 +605,6 @@ function isLikelyMobileDevice() {
     const hasTouch = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
     const narrow = window.innerWidth && window.innerWidth <= 800;
     return (isMobileUA && hasTouch) || (hasTouch && narrow);
-  } catch {
-    return false;
-  }
-}
-
-function isMobileViewport() {
-  try {
-    const html = document.documentElement;
-    if (html?.dataset?.editorView === "mobile") return true;
-    const ua = (navigator.userAgent || "").toLowerCase();
-    const isTouch = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0);
-    const isMobileUA = /android|iphone|ipad|ipod/.test(ua);
-    return isMobileUA && isTouch;
   } catch {
     return false;
   }
@@ -7891,39 +7874,6 @@ async function detectBestTemplate(sourceText, templates = []) {
   const picked = typeof response?.id === "string" ? response.id.trim() : "";
   if (!picked) throw new Error("AI did not return a template id.");
   return picked;
-}
-
-async function aiMagicGenerate() {
-  const templateSelect = $("#editorTemplateSelect");
-  if (!templateSelect) return;
-  const { sourceText } = await getAiSourceContext();
-  if (!sourceText) {
-    status("No source text (type, select text, or enable clipboard-as-Source).");
-    return;
-  }
-  const templates = Array.from(templateSelect.options || []).map((opt) => ({
-    id: opt.value,
-    name: (opt.textContent || "").trim() || opt.value,
-  })).filter((tpl) => tpl.id);
-  if (!templates.length) {
-    status("No templates available.");
-    return;
-  }
-  status("Finding best template…");
-  let pickedId;
-  try {
-    pickedId = await detectBestTemplate(sourceText, templates);
-  } catch (e) {
-    status(`Template detection failed: ${e.message}`);
-    return;
-  }
-  const match = templates.find((tpl) => tpl.id === pickedId);
-  if (!match) {
-    status("AI returned an unknown template; please pick one manually.");
-    return;
-  }
-  templateSelect.value = match.id;
-  await aiGenerate();
 }
 
 async function handleEditorGenerateClick() {
