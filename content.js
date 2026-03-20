@@ -143,7 +143,7 @@ if (window.__QUICKFLASH_INJECTED__) {
       }
       .overlay-surface {
         position: relative;
-        /* Use % sizing so we match the overlay’s actual box instead of 100vw/100vh,
+        /* Use % sizing so we match the overlay's actual box instead of 100vw/100vh,
            which can be wider than the visible viewport on Edge Android. */
         width: 100%;
         max-width: 460px;
@@ -234,14 +234,14 @@ if (window.__QUICKFLASH_INJECTED__) {
       }
       @media (max-width: 520px) {
         .overlay {
-          /* Full-screen surface on mobile; no side padding so there’s
+          /* Full-screen surface on mobile; no side padding so there's
              nothing to overhang or scroll horizontally. */
           padding: 0;
           align-items: stretch;
           justify-content: center;
         }
         .overlay-surface {
-          /* Truly edge-to-edge on mobile; no 100vw/100vh so we don’t
+          /* Truly edge-to-edge on mobile; no 100vw/100vh so we don't
              overshoot the visible viewport on Edge Android. */
           width: 100%;
           max-width: none;
@@ -627,7 +627,7 @@ if (window.__QUICKFLASH_INJECTED__) {
 
   function gatherPageContext() {
     const selectionObj = window.getSelection?.();
-    const selection = selectionObj?.toString() || ‘’;
+    const selection = selectionObj?.toString() || '';
     const rawUrl = getCanonicalUrl();
     const headingText = getNearestHeadingForSelection();
     const sourceLabel = headingText || document.title || (rawUrl ? new URL(rawUrl).hostname : "");
@@ -637,7 +637,7 @@ if (window.__QUICKFLASH_INJECTED__) {
       context: {
         selection,
         url: rawUrl,
-        title: document.title || ‘’,
+        title: document.title || '',
         meta: qf_scrapePageMeta(),
         sourceUrl,
         sourceLabel,
@@ -649,22 +649,22 @@ if (window.__QUICKFLASH_INJECTED__) {
     const state = ensurePopover();
     const { overlay, frame } = state;
     if (!overlay) {
-      popoverState.lastOpenFailureReason = ‘overlayMissingOrBlocked’;
+      popoverState.lastOpenFailureReason = 'overlayMissingOrBlocked';
       return false;
     }
 
     await refreshOverlaySize();
 
-    overlay.dataset.visible = ‘true’;
-    overlay.style.display = ‘flex’;
-    overlay.setAttribute(‘aria-hidden’, ‘false’);
+    overlay.dataset.visible = 'true';
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
     popoverState.isOpen = true;
-    document.documentElement.setAttribute(‘data-qf-overlay’, ‘open’);
-    document.addEventListener(‘keydown’, onKeydown, true);
+    document.documentElement.setAttribute('data-qf-overlay', 'open');
+    document.addEventListener('keydown', onKeydown, true);
 
     const panelReady = await waitForPanelReady(frame);
     if (!panelReady) {
-      popoverState.lastOpenFailureReason = ‘panelReadyTimeoutOrBlockedIframe’;
+      popoverState.lastOpenFailureReason = 'panelReadyTimeoutOrBlockedIframe';
       closePopover();
       return false;
     }
@@ -674,13 +674,13 @@ if (window.__QUICKFLASH_INJECTED__) {
       await chrome.storage.local.set({ quickflash_lastDraft: context });
       frame?.contentWindow?.postMessage(
         {
-          type: ‘quickflash:context’,
+          type: 'quickflash:context',
           payload: context,
           pasteNow: !!options?.pasteSelection,
         },
         EXT_ORIGIN
       );
-      // Clear selection so Edge’s native text-selection mini menu disappears
+      // Clear selection so Edge's native text-selection mini menu disappears
       // once the overlay is visible (especially on Android).
       try {
         let editorViewMode;
@@ -696,27 +696,27 @@ if (window.__QUICKFLASH_INJECTED__) {
       // ignore storage or messaging issues during CI
     }
 
-    popoverState.lastOpenFailureReason = ‘’;
+    popoverState.lastOpenFailureReason = '';
     return true;
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || typeof message !== ‘object’) {
+    if (!message || typeof message !== 'object') {
       return undefined;
     }
 
-    if (message.type === ‘quickflash:getContext’) {
+    if (message.type === 'quickflash:getContext') {
       try {
         const { context } = gatherPageContext();
         sendResponse(context);
       } catch {
         sendResponse({
-          selection: ‘’,
+          selection: '',
           url: location.href,
-          title: document.title || ‘’,
+          title: document.title || '',
           meta: qf_scrapePageMeta(),
-          sourceUrl: buildTextFragmentUrl(location.href, ‘’, document.title || ‘’),
-          sourceLabel: document.title || ‘’,
+          sourceUrl: buildTextFragmentUrl(location.href, '', document.title || ''),
+          sourceLabel: document.title || '',
         });
       }
       return true;
