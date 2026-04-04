@@ -615,9 +615,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === "ghostwriter:requestHostPermission") {
+      const ALLOWED_ORIGINS = [
+        "https://api.openai.com/*",
+        "https://smart.ultimateai.org/*",
+        "https://generativelanguage.googleapis.com/*",
+        "https://api.anthropic.com/*",
+      ];
       const { origins } = message;
       try {
-        const granted = await chrome.permissions.request({ origins });
+        const safeOrigins = (origins || []).filter((o) => ALLOWED_ORIGINS.includes(o));
+        if (!safeOrigins.length) {
+          sendResponse({ ok: false, error: "No valid origins requested." });
+          return;
+        }
+        const granted = await chrome.permissions.request({ origins: safeOrigins });
         sendResponse({ ok: true, granted });
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });

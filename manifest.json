@@ -53,8 +53,6 @@
       "resources": [
         "panel.html",
         "panel.js",
-        "review.html",
-        "review.js",
         "panel-markdown.js",
         "panel-ai-templates.js",
         "defaults.js",

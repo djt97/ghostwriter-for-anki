@@ -583,6 +583,27 @@ function normalizeProvider(value) {
   return "ultimate";
 }
 
+const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton.workers.dev/v1";
+const FREE_TIER_LIMIT = 10;
+const FREE_TIER_KEY = "ghostwriter_free_tier";
+
+async function getFreeTierState() {
+  try {
+    const got = await chrome.storage.local.get(FREE_TIER_KEY);
+    const state = got?.[FREE_TIER_KEY] || {};
+    return { installId: state.installId || "", used: state.used || 0, remaining: Math.max(0, FREE_TIER_LIMIT - (state.used || 0)) };
+  } catch { return { installId: "", used: 0, remaining: 0 }; }
+}
+
+async function incrementFreeTierUsage() {
+  try {
+    const got = await chrome.storage.local.get(FREE_TIER_KEY);
+    const state = got?.[FREE_TIER_KEY] || {};
+    state.used = (state.used || 0) + 1;
+    await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+  } catch {}
+}
+
 function getOpenAIProviderConfig(opts, overrideProvider) {
   const provider = normalizeProvider(overrideProvider || opts?.llmProvider || "ultimate");
   if (provider === "openai") {
@@ -600,6 +621,17 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
     apiKey: opts.ultimateKey || "",
     model: opts.ultimateModel || "gpt-4o-mini",
   };
+}
+
+async function getOpenAIProviderConfigWithFreeTier(opts, overrideProvider) {
+  const config = getOpenAIProviderConfig(opts, overrideProvider);
+  if (!config.apiKey) {
+    const ft = await getFreeTierState();
+    if (ft.remaining > 0 && ft.installId) {
+      return { ...config, provider: "free-tier", baseUrl: FREE_TIER_PROXY_URL, apiKey: `ft-${ft.installId}`, _freeTier: true };
+    }
+  }
+  return config;
 }
 
 async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, extra = {}) {
@@ -638,12 +670,12 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     return parsed;
   }
 
-  // OpenAI-compatible path (UltimateAI / OpenAI)
-  const { provider: providerName, baseUrl, apiKey, model: defaultModel } = getOpenAIProviderConfig(optsAll);
+  // OpenAI-compatible path (UltimateAI / OpenAI / free-tier proxy)
+  const providerConfig = await getOpenAIProviderConfigWithFreeTier(optsAll);
+  const { provider: providerName, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const model   = mdl || defaultModel;
   if (!apiKey) {
-    const label = providerName === "openai" ? "OpenAI" : "UltimateAI";
-    throw new Error(`${label} API key missing. Set it in Options.`);
+    throw new Error("No API key configured and free suggestions used up. Add an API key in Settings for unlimited suggestions.");
   }
   const endpoint = `${baseUrl}/chat/completions`;
   const sysMsg = opts.system || "You are a precise assistant. Return ONLY valid JSON.";
@@ -688,6 +720,7 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     throw err;
   }
   const content = data?.choices?.[0]?.message?.content || "";
+  if (_freeTier) incrementFreeTierUsage();
   recordDebugResponse(content);
   const parsed = parseJSONLoose(content);
   if (parsed === null) throw new Error("Could not parse JSON from AI response.");
@@ -702,11 +735,11 @@ async function ultimateCompletion(prompt, options = {}) {
   const { model, maxTokens = 96, temperature = 0.4, stop, signal, system } = options;
   const hasStop = Object.prototype.hasOwnProperty.call(options, "stop");
   const opts   = await getOptions();
-  const { provider, baseUrl, apiKey, model: defaultModel } = getOpenAIProviderConfig(opts);
+  const providerConfig = await getOpenAIProviderConfigWithFreeTier(opts);
+  const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const mdl     = model || defaultModel;
   if (!apiKey) {
-    const label = provider === "openai" ? "OpenAI" : "UltimateAI";
-    throw new Error(`${label} API key missing. Set it in Options.`);
+    throw new Error("No API key configured and free suggestions used up. Add an API key in Settings.");
   }
   const endpoint = `${baseUrl}/chat/completions`;
   const systemPrompt = system || getCopilotSystemPrompt("front");
@@ -766,6 +799,7 @@ async function ultimateCompletion(prompt, options = {}) {
   if (!out && data?.choices?.[0]?.finish_reason === "length") {
     throw new Error(`Max tokens reached (${maxTokens}). Open Options to increase the limit.`);
   }
+  if (_freeTier) incrementFreeTierUsage();
   recordDebugResponse(out);
   return out;
 }
@@ -1646,7 +1680,10 @@ async function seedCopilotPageContext() {
 }
 
 // Listen for overlay push (content.js posts this to the panel iframe)
+const EXTENSION_ORIGIN = (() => { try { return new URL(chrome.runtime.getURL("")).origin; } catch { return location.origin; } })();
 window.addEventListener("message", async (event) => {
+  // Only accept messages from the extension origin or same-origin (side panel)
+  if (event.origin !== EXTENSION_ORIGIN && event.origin !== location.origin) return;
   if (event?.data?.type === "quickflash:context") {
     const incomingSelection = (event.data.payload?.selection || "").trim();
     if (incomingSelection) clearClipboardSource({ notify: true });
@@ -2864,6 +2901,8 @@ async function initCopilot() {
       copilot.apiConfigured = !!opts.geminiKey;
     } else if (copilot.provider === "openai") {
       copilot.apiConfigured = !!(opts.openaiKey || opts.ultimateKey);
+    } else if (copilot.provider === "claude") {
+      copilot.apiConfigured = !!opts.claudeKey;
     } else {
       copilot.apiConfigured = !!opts.ultimateKey;
     }
@@ -2935,6 +2974,8 @@ async function initCopilot() {
           copilot.apiConfigured = !!next.geminiKey;
         } else if (copilot.provider === "openai") {
           copilot.apiConfigured = !!(next.openaiKey || next.ultimateKey);
+        } else if (copilot.provider === "claude") {
+          copilot.apiConfigured = !!next.claudeKey;
         } else {
           copilot.apiConfigured = !!next.ultimateKey;
         }

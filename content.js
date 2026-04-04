@@ -494,7 +494,7 @@ if (window.__QUICKFLASH_INJECTED__) {
       pageUrl: context.url || '',
       sourceUrl: context.sourceUrl || '',
       capturedAt: new Date().toISOString(),
-      status: 'saved',
+      _status: 'pending',
       meta: context.meta || null,
     };
 

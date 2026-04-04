@@ -69,6 +69,23 @@ async function loadDecks() {
   }
 }
 
+async function loadModels() {
+  try {
+    const names = await ankiRequest("modelNames");
+    state.models = names || [];
+  } catch {
+    state.models = ["Basic"];
+  }
+}
+
+function getBestModel(item) {
+  // Prefer Ghostwriter note types, then item's original model, then Basic
+  const gwModels = (state.models || []).filter((m) => /ghostwriter/i.test(m));
+  if (gwModels.length) return gwModels[0];
+  if (item.modelName && state.models?.includes(item.modelName)) return item.modelName;
+  return state.models?.[0] || "Basic";
+}
+
 // --- Load items ---
 async function loadItems() {
   const got = await chrome.storage.local.get([SAVED_KEY, OUTBOX_KEY]);
@@ -135,7 +152,11 @@ function render() {
   sourceText.textContent = item.highlight || "(no highlight)";
   sourceTitle.textContent = item.pageTitle || "";
   if (item.pageUrl) {
-    sourceUrl.textContent = new URL(item.pageUrl).hostname;
+    try {
+      sourceUrl.textContent = new URL(item.pageUrl).hostname;
+    } catch {
+      sourceUrl.textContent = item.pageUrl;
+    }
     sourceUrl.href = item.pageUrl;
     sourceUrl.hidden = false;
   } else {
@@ -283,6 +304,7 @@ async function sendToAnki() {
   for (const item of accepted) {
     try {
       const deck = item.deck || cardDeck.value || "Default";
+      const modelName = getBestModel(item);
       const fields = {
         Front: item.front || "",
         Back: item.back || "",
@@ -295,7 +317,7 @@ async function sendToAnki() {
       await ankiRequest("addNote", {
         note: {
           deckName: deck,
-          modelName: "Basic",
+          modelName,
           fields,
           tags,
           options: { allowDuplicate: false },
@@ -332,9 +354,14 @@ async function persistItems() {
     .filter((i) => i._source === "outbox")
     .map(({ _source, ...rest }) => rest);
 
+  // Preserve existing lastSend data so panel.js undo still works
+  const existing = await chrome.storage.local.get(OUTBOX_KEY);
+  const existingOutbox = existing?.[OUTBOX_KEY] || {};
+  const lastSend = existingOutbox.lastSend || { noteIds: [], cards: [] };
+
   await chrome.storage.local.set({
     [SAVED_KEY]: saved,
-    [OUTBOX_KEY]: { cards: outbox },
+    [OUTBOX_KEY]: { cards: outbox, lastSend },
   });
 }
 
@@ -405,6 +432,7 @@ cardDeck.addEventListener("change", saveCurrentFields);
 // --- Init ---
 (async () => {
   await loadDecks();
+  await loadModels();
   await loadItems();
   render();
 })();

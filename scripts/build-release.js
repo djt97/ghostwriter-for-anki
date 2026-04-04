@@ -28,7 +28,11 @@ const EXCLUDES = [
   'docs',
   'CLAUDE.md',
   'LISTING.md',
-  'GHOSTWRITER_V2_PLAN.md'
+  'GHOSTWRITER_V2_PLAN.md',
+  'README.md',
+  'PRIVACY_POLICY.md',
+  'privacy.md',
+  'licences'
 ];
 
 function normalizePath(value) {
