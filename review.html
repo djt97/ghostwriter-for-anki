@@ -14,6 +14,7 @@
       --accent: #2563eb;
       --accent-hover: #1d4ed8;
       --danger: #dc2626;
+      --danger-bg: #fef2f2;
       --success: #059669;
       --success-bg: #ecfdf5;
       --radius: 8px;
@@ -28,6 +29,7 @@
         --accent: #3b82f6;
         --accent-hover: #2563eb;
         --danger: #ef4444;
+        --danger-bg: #3b1318;
         --success: #10b981;
         --success-bg: #064e3b;
       }
@@ -140,7 +142,7 @@
     .field-group input:focus {
       outline: none;
       border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
     }
     .field-group select {
       padding: 6px 8px;
@@ -163,6 +165,7 @@
       padding: 16px 24px;
       border-top: 1px solid var(--border);
       background: var(--surface);
+      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
       position: sticky;
       bottom: 0;
     }
@@ -194,7 +197,7 @@
     button:hover { background: var(--bg); }
     button:focus-visible {
       outline: none;
-      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
     }
     button.primary {
       background: var(--accent);
@@ -206,7 +209,7 @@
       color: var(--danger);
       border-color: var(--danger);
     }
-    button.danger:hover { background: #fef2f2; }
+    button.danger:hover { background: var(--danger-bg); }
     button:disabled {
       opacity: 0.4;
       cursor: not-allowed;

@@ -420,6 +420,20 @@ if (window.__QUICKFLASH_INJECTED__) {
         }
         .capture-btn-save:hover { background: #475569; }
       }
+      .save-toast {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        padding: 8px 16px;
+        background: #059669;
+        color: #fff;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        z-index: 2147483002;
+        pointer-events: auto;
+        animation: captureIn 0.12s ease-out;
+      }
     `;
 
     const popover = document.createElement('div');
@@ -523,7 +537,7 @@ if (window.__QUICKFLASH_INJECTED__) {
     if (!popover) return;
 
     const msg = document.createElement('div');
-    msg.style.cssText = 'position:fixed;top:16px;right:16px;padding:8px 16px;background:#059669;color:#fff;border-radius:8px;font-size:13px;font-weight:500;z-index:2147483002;pointer-events:auto;animation:captureIn 0.12s ease-out;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;';
+    msg.className = 'save-toast';
     msg.textContent = 'Saved for later';
     state.shadow.appendChild(msg);
     setTimeout(() => { msg.remove(); }, 2000);
