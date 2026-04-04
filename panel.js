@@ -2,7 +2,7 @@
 // panel.js — Ghostwriter for Anki
 // Only enable test mode when explicitly flagged, e.g. ?__qf_ci=1 or #__qf_ci
 const QF_TEST_MODE = /\b__qf_ci\b/i.test(location.search + location.hash);
-const PANEL_CONFIG = { enableDashboard: true };
+const PANEL_CONFIG = {};
 const $ = (sel) => document.querySelector(sel);
 
 // Populate version from manifest.json (single source of truth)
@@ -2865,7 +2865,16 @@ async function initCopilot() {
     } else if (copilot.provider === "openai") {
       copilot.apiConfigured = !!(opts.openaiKey || opts.ultimateKey);
     } else {
-    copilot.apiConfigured = !!opts.ultimateKey;
+      copilot.apiConfigured = !!opts.ultimateKey;
+    }
+    // Free-tier: even without an API key, copilot can work via proxy
+    if (!copilot.apiConfigured) {
+      try {
+        const ft = await chrome.storage.local.get("ghostwriter_free_tier");
+        const ftState = ft?.ghostwriter_free_tier || {};
+        const remaining = Math.max(0, 10 - (ftState.used || 0));
+        if (remaining > 0) copilot.apiConfigured = true;
+      } catch {}
     }
     copilot.enabled = opts.autoCompleteAI !== false;
     copilot.autoFillBack = opts.autoFillBackAI !== false; // defaults to true if missing
@@ -2928,6 +2937,16 @@ async function initCopilot() {
           copilot.apiConfigured = !!(next.openaiKey || next.ultimateKey);
         } else {
           copilot.apiConfigured = !!next.ultimateKey;
+        }
+        // Free-tier fallback
+        if (!copilot.apiConfigured) {
+          try {
+            chrome.storage.local.get("ghostwriter_free_tier").then((ft) => {
+              const ftState = ft?.ghostwriter_free_tier || {};
+              const remaining = Math.max(0, 10 - (ftState.used || 0));
+              if (remaining > 0) copilot.apiConfigured = true;
+            });
+          } catch {}
         }
         const nextFront = (next.copilotFrontSystemPrompt || "").trim();
         const nextBack = (next.copilotBackSystemPrompt || "").trim();
@@ -3137,13 +3156,13 @@ function updateTriageUI() {
     if (!hasQueue) {
       editorStatusEl.textContent = "New card";
     } else if (pending === 0) {
-      editorStatusEl.textContent = "Triage complete";
+      editorStatusEl.textContent = "Review complete";
     } else if (!triageState.active) {
       editorStatusEl.textContent = "Editing – triage paused";
     } else if (!triageOn) {
-      editorStatusEl.textContent = "Editing – triage paused";
+      editorStatusEl.textContent = "Editing – review paused";
     } else if (triageOn) {
-      editorStatusEl.textContent = "Triage mode – shortcuts on";
+      editorStatusEl.textContent = "Review mode – shortcuts on";
     } else {
       editorStatusEl.textContent = "Editing this card – triage paused";
     }
@@ -3154,7 +3173,7 @@ function updateTriageUI() {
     metaText = `Pending ${pending} | Accepted ${triage.accepted.length} | Rejected ${triage.skipped.length} | Card ${index + 1}/${total}`;
     if (flagged) metaText += ` | Outbox dup flagged ${flagged}`;
   } else if (total && pending === 0) {
-    metaText = `Triage complete · Accepted ${triage.accepted.length} · Rejected ${triage.skipped.length}`;
+    metaText = `Review complete · Accepted ${triage.accepted.length} · Rejected ${triage.skipped.length}`;
     if (flagged) metaText += ` · Outbox dup flagged ${flagged}`;
   }
   if (triageMetaEl) triageMetaEl.textContent = metaText;
@@ -3374,7 +3393,7 @@ function updateOutboxMeta() {
   const forced = outbox.cards.filter((c) => c.allowDuplicate).length;
   const undoable = (outbox.lastSend?.noteIds?.length || 0) + (outbox.lastSend?.cards?.length || 0);
   if (meta) {
-    let text = `Outbox: ${staged} card${staged === 1 ? "" : "s"}`;
+    let text = `${staged} card${staged === 1 ? "" : "s"} ready`;
     const bits = [];
     if (flagged) bits.push(`${flagged} dup flagged`);
     if (forced) bits.push(`${forced} force add`);
@@ -3382,17 +3401,17 @@ function updateOutboxMeta() {
     if (undoable) text += ` | Undoable: ${undoable}`;
     if (triage.cards.length) {
       const pending = triage.cards.filter((c) => !c._status).length;
-      let triageHint = "";
+      let reviewHint = "";
       if (pending > 0 && triageActive && triageState.active) {
-        triageHint = `Triage: ${pending} pending of ${triage.cards.length}`;
+        reviewHint = `Reviewing: ${pending} pending of ${triage.cards.length}`;
       } else if (pending > 0) {
-        triageHint = `Triage paused – ${pending} card${pending === 1 ? "" : "s"} waiting`;
+        reviewHint = `Paused – ${pending} card${pending === 1 ? "" : "s"} waiting`;
       } else {
         const accepted = triage.accepted.length;
         const skipped = triage.skipped.length;
-        triageHint = `Triage complete – accepted ${accepted}, rejected ${skipped}`;
+        reviewHint = `Review complete – accepted ${accepted}, rejected ${skipped}`;
       }
-      text += ` | ${triageHint}`;
+      text += ` | ${reviewHint}`;
     }
     meta.textContent = text;
   }
@@ -3423,23 +3442,23 @@ function maybeCompleteTriage({ showPrompt = true } = {}) {
     const staged = outbox.cards.length;
     if (staged > 0) {
       status(
-        `Triage complete: accepted ${acceptedCount} card${acceptedCount === 1 ? "" : "s"}, rejected ${skippedCount}. ` +
-        `Review below, then click "Send outbox to Anki" when ready.`,
+        `Review complete: accepted ${acceptedCount} card${acceptedCount === 1 ? "" : "s"}, rejected ${skippedCount}. ` +
+        `Click "Send to Anki" when ready.`,
         true
       );
     } else {
       status(
-        `Triage complete: accepted ${acceptedCount} card${acceptedCount === 1 ? "" : "s"}, rejected ${skippedCount}.`,
+        `Review complete: accepted ${acceptedCount} card${acceptedCount === 1 ? "" : "s"}, rejected ${skippedCount}.`,
         true
       );
     }
   } else if (skippedCount > 0) {
     status(
-      `Triage complete: all ${skippedCount} card${skippedCount === 1 ? "" : "s"} rejected.`,
+      `Review complete: all ${skippedCount} card${skippedCount === 1 ? "" : "s"} rejected.`,
       true
     );
   } else {
-    status("Triage complete: no cards to send.", true);
+    status("Review complete: no cards to send.", true);
   }
 }
 
@@ -4241,7 +4260,7 @@ function renderOutboxList() {
   if (!outbox.cards.length) {
     const empty = document.createElement("div");
     empty.className = "small";
-    empty.textContent = "Outbox is empty.";
+    empty.textContent = "No cards queued.";
     list.appendChild(empty);
     return;
   }
@@ -5414,13 +5433,13 @@ function pushTriageUndo(action) {
 function undoLastTriageDecision() {
   const action = triageUndoStack.pop();
   if (!action) {
-    status("No triage action to undo.");
+    status("Nothing to undo.");
     return;
   }
 
   const restoredCard = cloneCard(action.card);
   if (!restoredCard) {
-    status("Could not restore the previous triage action.");
+    status("Could not restore the previous action.");
     return;
   }
 
@@ -5448,7 +5467,7 @@ function undoLastTriageDecision() {
   updateOutboxMeta();
   persistTriageState();
   persistOutboxState();
-  status("Undid last triage action.", true);
+  status("Undid last action.", true);
 }
 
 function focusNextPending(fromIndex) {
@@ -5601,53 +5620,16 @@ async function acceptAllPending() {
   updateOutboxMeta();
   persistOutboxState();
   persistTriageState();
-  if (added) status(`Queued ${added} card${added === 1 ? "" : "s"} from triage.`, true);
+  if (added) status(`Queued ${added} card${added === 1 ? "" : "s"}.`, true);
   renderEditor();
   // If everything is now accepted, drop back to manual editor (no extra prompt).
   maybeCompleteTriage({ showPrompt: false });
 }
 
-function parseImportedJSON() {
-  const text = ($("#jsonImport")?.value || "").trim();
-  if (!text) {
-    status("Paste JSON to import cards.");
-    return;
-  }
-  const parsed = parseJSONLoose(text);
-  if (parsed === null) {
-    status("Could not parse JSON. Ensure it is valid.");
-    return;
-  }
-  resetTriage();
-  const { cards, deck, fingerprints } = normalizeImportedCards(parsed);
-  if (!cards.length) {
-    status("No cards found in JSON.");
-    return;
-  }
-  triage.cards = cards;
-  triage.deck = deck || null;
-  if (triage.deck) {
-    const sel = $("#deck");
-    if (sel && [...sel.options].some((o) => o.value === triage.deck)) {
-      sel.value = triage.deck;
-    }
-  }
-  triage.fingerprints = fingerprints;
-  triage.i = 0;
-  renderEditor();
-  status(`Parsed ${cards.length} card${cards.length === 1 ? "" : "s"}.`, true);
-}
-
-function clearImportedJSON() {
-  const area = $("#jsonImport");
-  if (area) area.value = "";
-  resetTriage();
-  status("Cleared import input.");
-}
 
 function clearTriageOnly() {
   resetTriage();
-  status("Triage reset.");
+  status("Queue reset.");
 }
 
 // ------- UI init -------
@@ -7119,7 +7101,7 @@ async function addToAnki() {
     const result = await anki("addNote", { note });
     if (result) {
       status(`Added note ${result} to ${deckName}.`, true);
-      // Persist to local archive so the dashboard can see it
+      // Persist to local archive (card metadata for future analysis)
       try {
         await archiveUpsertCards(
           [{ noteId: result, card }],
@@ -7140,12 +7122,12 @@ async function addToAnki() {
 // ------- Outbox -> Anki -------
 async function sendOutboxToAnki() {
   if (!outbox.cards.length) {
-    status("Outbox is empty.");
+    status("No cards to send.");
     return;
   }
   closeActiveModal();
 
-  status("Sending outbox…");
+  status("Sending cards…");
 
   try {
     const deckName = $("#deck").value || "All Decks";
@@ -7249,7 +7231,7 @@ async function sendOutboxToAnki() {
       }
     });
     if (!added.length) {
-      status("Anki did not accept any notes from the outbox.");
+      status("Anki did not accept any notes.");
       showOutboxSendFailureModal("No notes were accepted by AnkiConnect.");
       return;
     }
@@ -7274,7 +7256,7 @@ async function sendOutboxToAnki() {
     let message = `Sent ${sentCount} note${sentCount === 1 ? "" : "s"} to Anki.`;
     if (skipped > 0) message += ` Skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}.`;
     if (failed.length > 0) {
-      message += ` ${failed.length} failed (kept in outbox).`;
+      message += ` ${failed.length} failed (kept in queue).`;
     }
     status(message, failed.length === 0);
     persistOutboxState();
@@ -7283,7 +7265,7 @@ async function sendOutboxToAnki() {
     const tagsEl = document.querySelector("#tags");
     if (tagsEl) tagsEl.value = "";
   } catch (e) {
-    status(`Failed to send outbox: ${e.message}`);
+    status(`Failed to send: ${e.message}`);
     showOutboxSendFailureModal(e.message);
   }
 }
@@ -7787,28 +7769,13 @@ async function initPanel() {
     });
     const sendOutboxBtn = $("#sendOutbox");
     if (sendOutboxBtn) sendOutboxBtn.addEventListener("click", (e) => { e.preventDefault(); sendOutboxToAnki(); });
-    const dashboardBtnContainer = $("#dashboardButtonContainer");
-    if (PANEL_CONFIG.enableDashboard && dashboardBtnContainer) {
-      const dashboardBtn = document.createElement("button");
-      dashboardBtn.id = "openDashboard";
-      dashboardBtn.type = "button";
-      dashboardBtn.textContent = "Graph Dashboard";
-      dashboardBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        try {
-          chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
-        } catch (err) {
-          console.warn("Could not open dashboard", err);
-        }
-      });
-      dashboardBtnContainer.appendChild(dashboardBtn);
-    }
     const undoSendBtn = $("#undoLastSend");
     if (undoSendBtn) undoSendBtn.addEventListener("click", (e) => { e.preventDefault(); undoLastSend(); });
-    const parseBtn = $("#parseJson");
-    if (parseBtn) parseBtn.addEventListener("click", (e) => { e.preventDefault(); parseImportedJSON(); });
-    const clearBtn = $("#clearJson");
-    if (clearBtn) clearBtn.addEventListener("click", (e) => { e.preventDefault(); clearImportedJSON(); });
+    const reviewQueueBtn = $("#openReviewQueue");
+    if (reviewQueueBtn) reviewQueueBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      chrome.runtime.sendMessage({ type: "ghostwriter:openReviewQueue" });
+    });
     const miniGen    = document.querySelector("#copilotMiniGenerate");
     const miniAccept = document.querySelector("#copilotMiniAccept");
     const miniReject = document.querySelector("#copilotMiniReject");
@@ -8026,7 +7993,7 @@ async function initPanel() {
         persistOutboxState();
         renderOutboxList();
         updateOutboxMeta();
-        status("Outbox cleared.");
+        status("Queue cleared.");
         hideClearOutboxAction();
       });
     }

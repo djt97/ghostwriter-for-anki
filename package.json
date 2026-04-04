@@ -3,8 +3,6 @@
   "version": "0.3.3",
   "private": true,
   "scripts": {
-    "build:full": "node scripts/build-release.js full",
-    "build:lite": "node scripts/build-release.js lite",
     "build:release": "node scripts/build-release.js",
     "test": "node --test tests/unit/*.test.js",
     "lint": "eslint .",

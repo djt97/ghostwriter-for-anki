@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Ghostwriter for Anki",
-  "description": "Create Anki flashcards with source + context; auto-tag with AI; send via AnkiConnect.",
+  "description": "Write better Anki cards faster. Highlight text, write with inline suggestions, review and send to Anki.",
   "version": "0.3.3",
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' blob: data: http://127.0.0.1:* http://localhost:* https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs.hf.co https://smart.ultimateai.org https://api.openai.com https://generativelanguage.googleapis.com https://api.anthropic.com",
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' blob: data: http://127.0.0.1:* http://localhost:* https://smart.ultimateai.org https://api.openai.com https://generativelanguage.googleapis.com https://api.anthropic.com https://ghostwriter-proxy.djthornton.workers.dev",
     "sandbox": "sandbox allow-scripts allow-forms; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; object-src 'self'"
   },
   "action": {
@@ -29,18 +29,20 @@
     "tabs",
     "contextMenus",
     "sidePanel",
+    "notifications"
+  ],
+  "optional_permissions": [
     "clipboardRead"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",
-    "http://localhost/*",
+    "http://localhost/*"
+  ],
+  "optional_host_permissions": [
     "https://api.openai.com/*",
     "https://smart.ultimateai.org/*",
     "https://generativelanguage.googleapis.com/*",
-    "https://api.anthropic.com/*",
-    "https://huggingface.co/*",
-    "https://cdn-lfs.huggingface.co/*",
-    "https://cdn-lfs.hf.co/*"
+    "https://api.anthropic.com/*"
   ],
   "web_accessible_resources": [
     {
@@ -51,6 +53,8 @@
       "resources": [
         "panel.html",
         "panel.js",
+        "review.html",
+        "review.js",
         "panel-markdown.js",
         "panel-ai-templates.js",
         "defaults.js",

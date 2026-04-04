@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ghostwriter — Review Queue</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #fff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --text-secondary: #64748b;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --danger: #dc2626;
+      --success: #059669;
+      --success-bg: #ecfdf5;
+      --radius: 8px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --surface: #1e293b;
+        --border: #334155;
+        --text: #f1f5f9;
+        --text-secondary: #94a3b8;
+        --accent: #3b82f6;
+        --accent-hover: #2563eb;
+        --danger: #ef4444;
+        --success: #10b981;
+        --success-bg: #064e3b;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+    header .meta {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .empty-state {
+      text-align: center;
+      padding: 80px 24px;
+      color: var(--text-secondary);
+    }
+    .empty-state h2 {
+      font-size: 20px;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .empty-state p { font-size: 14px; }
+    .review-container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .card-review {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 720px) {
+      .card-review { grid-template-columns: 1fr; }
+    }
+    .source-panel h3, .card-panel h3 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .source-text {
+      font-size: 14px;
+      line-height: 1.6;
+      padding: 12px;
+      background: var(--bg);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .source-meta {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .source-meta a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .source-meta a:hover { text-decoration: underline; }
+    .field-group {
+      margin-bottom: 12px;
+    }
+    .field-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .field-group textarea,
+    .field-group input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--bg);
+      color: var(--text);
+      resize: vertical;
+    }
+    .field-group textarea { min-height: 60px; }
+    .field-group textarea:focus,
+    .field-group input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+    }
+    .field-group select {
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .draft-origin {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      font-style: italic;
+    }
+    .actions-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      bottom: 0;
+    }
+    .actions-bar .nav-group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .actions-bar .send-group {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .send-count {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    button {
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      background: var(--surface);
+      color: var(--text);
+      transition: background 0.1s;
+    }
+    button:hover { background: var(--bg); }
+    button:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+    }
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    button.primary:hover { background: var(--accent-hover); }
+    button.danger {
+      color: var(--danger);
+      border-color: var(--danger);
+    }
+    button.danger:hover { background: #fef2f2; }
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .shortcuts-hint {
+      font-size: 11px;
+      color: var(--text-secondary);
+      padding: 8px 24px;
+      text-align: center;
+    }
+    .shortcuts-hint kbd {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 11px;
+      font-family: inherit;
+    }
+    .accepted-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      background: var(--success-bg);
+      color: var(--success);
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .status-bar {
+      padding: 8px 24px;
+      font-size: 13px;
+      text-align: center;
+      color: var(--success);
+      background: var(--success-bg);
+      display: none;
+    }
+    .status-bar.visible { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Review Queue</h1>
+    <div class="meta" id="headerMeta"></div>
+  </header>
+
+  <div id="statusBar" class="status-bar"></div>
+
+  <div id="emptyState" class="empty-state" hidden>
+    <h2>No cards to review</h2>
+    <p>Highlight text on any page and click "Save for later" to queue cards here.</p>
+  </div>
+
+  <div class="review-container" id="reviewContainer" hidden>
+    <div class="card-review" id="cardReview">
+      <div class="source-panel">
+        <h3>Source</h3>
+        <div class="source-text" id="sourceText"></div>
+        <div class="source-meta">
+          <div id="sourceTitle"></div>
+          <div><a id="sourceUrl" href="#" target="_blank"></a></div>
+          <div id="sourceCaptured"></div>
+        </div>
+      </div>
+      <div class="card-panel">
+        <h3>Card</h3>
+        <div id="draftOrigin" class="draft-origin"></div>
+        <div class="field-group">
+          <label for="cardFront">Front</label>
+          <textarea id="cardFront" rows="3" placeholder="Question..."></textarea>
+        </div>
+        <div class="field-group">
+          <label for="cardBack">Back</label>
+          <textarea id="cardBack" rows="3" placeholder="Answer..."></textarea>
+        </div>
+        <div class="field-group">
+          <label for="cardContext">Context</label>
+          <input type="text" id="cardContext" placeholder="e.g. Chapter 3, lecture notes">
+        </div>
+        <div class="field-group">
+          <label for="cardTags">Tags</label>
+          <input type="text" id="cardTags" placeholder="Space-separated tags">
+        </div>
+        <div class="field-group">
+          <label for="cardDeck">Deck</label>
+          <select id="cardDeck"></select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="shortcuts-hint" id="shortcutsHint" hidden>
+    <kbd>A</kbd> Accept &nbsp; <kbd>S</kbd> Skip &nbsp; <kbd>D</kbd> Delete &nbsp; <kbd>E</kbd> Edit front &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> Navigate &nbsp; <kbd>Enter</kbd> Send all
+  </div>
+
+  <div class="actions-bar" id="actionsBar" hidden>
+    <div class="nav-group">
+      <button id="btnPrev" title="Previous (←)">← Prev</button>
+      <button id="btnAccept" class="primary" title="Accept (A)">Accept</button>
+      <button id="btnSkip" title="Skip (S)">Skip</button>
+      <button id="btnDelete" class="danger" title="Delete (D)">Delete</button>
+      <button id="btnNext" title="Next (→)">Next →</button>
+    </div>
+    <div class="send-group">
+      <span class="send-count" id="sendCount"></span>
+      <button id="btnSend" class="primary" title="Send to Anki (Enter)" disabled>Send to Anki</button>
+    </div>
+  </div>
+
+  <script src="review.js"></script>
+</body>
+</html>

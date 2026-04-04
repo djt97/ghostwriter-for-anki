@@ -326,6 +326,209 @@ if (window.__QUICKFLASH_INJECTED__) {
     return popoverState;
   }
 
+  // --- Capture Popover (v2: "Write card" / "Save for later") ---
+  const capturePopoverState = { host: null, shadow: null, popover: null, visible: false };
+
+  function getSelectionRect() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return null;
+    return rect;
+  }
+
+  function ensureCapturePopover() {
+    if (capturePopoverState.popover && capturePopoverState.host && document.contains(capturePopoverState.host)) {
+      return capturePopoverState;
+    }
+
+    const host = document.createElement('div');
+    host.id = 'ghostwriter-capture-host';
+    host.style.all = 'initial';
+    host.style.position = 'fixed';
+    host.style.inset = '0';
+    host.style.pointerEvents = 'none';
+    host.style.zIndex = '2147483001';
+
+    const shadow = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = `
+      :host { all: initial; }
+      *, *::before, *::after {
+        box-sizing: border-box;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      }
+      .capture-popover {
+        position: fixed;
+        display: none;
+        flex-direction: row;
+        align-items: center;
+        gap: 4px;
+        padding: 6px 8px;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12), 0 1px 4px rgba(15, 23, 42, 0.08);
+        pointer-events: auto;
+        z-index: 2147483001;
+        animation: captureIn 0.12s ease-out;
+      }
+      .capture-popover[data-visible="true"] {
+        display: flex;
+      }
+      @keyframes captureIn {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .capture-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 6px 12px;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.1s;
+      }
+      .capture-btn-write {
+        background: #2563eb;
+        color: #fff;
+      }
+      .capture-btn-write:hover { background: #1d4ed8; }
+      .capture-btn-save {
+        background: #f1f5f9;
+        color: #334155;
+      }
+      .capture-btn-save:hover { background: #e2e8f0; }
+      @media (prefers-color-scheme: dark) {
+        .capture-popover {
+          background: #1e293b;
+          border-color: #334155;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+        .capture-btn-write {
+          background: #3b82f6;
+        }
+        .capture-btn-write:hover { background: #2563eb; }
+        .capture-btn-save {
+          background: #334155;
+          color: #e2e8f0;
+        }
+        .capture-btn-save:hover { background: #475569; }
+      }
+    `;
+
+    const popover = document.createElement('div');
+    popover.className = 'capture-popover';
+    popover.dataset.visible = 'false';
+
+    const writeBtn = document.createElement('button');
+    writeBtn.className = 'capture-btn capture-btn-write';
+    writeBtn.textContent = 'Write card';
+    writeBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideCapturePopover();
+      openPopover({ pasteSelection: true });
+    });
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'capture-btn capture-btn-save';
+    saveBtn.textContent = 'Save for later';
+    saveBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      saveForLater();
+    });
+
+    popover.append(writeBtn, saveBtn);
+    shadow.append(style, popover);
+    (document.body || document.documentElement).appendChild(host);
+
+    capturePopoverState.host = host;
+    capturePopoverState.shadow = shadow;
+    capturePopoverState.popover = popover;
+
+    // Close on click outside
+    document.addEventListener('mousedown', (evt) => {
+      if (capturePopoverState.visible && !host.contains(evt.target)) {
+        hideCapturePopover();
+      }
+    }, true);
+
+    return capturePopoverState;
+  }
+
+  function showCapturePopover(rect) {
+    const state = ensureCapturePopover();
+    const { popover } = state;
+    if (!popover) return;
+
+    // Position below the selection, centered
+    const top = Math.min(rect.bottom + 8, window.innerHeight - 50);
+    const left = Math.max(8, Math.min(rect.left + rect.width / 2 - 100, window.innerWidth - 220));
+
+    popover.style.top = `${top}px`;
+    popover.style.left = `${left}px`;
+    popover.dataset.visible = 'true';
+    capturePopoverState.visible = true;
+  }
+
+  function hideCapturePopover() {
+    const { popover } = capturePopoverState;
+    if (!popover) return;
+    popover.dataset.visible = 'false';
+    capturePopoverState.visible = false;
+  }
+
+  async function saveForLater() {
+    const { context } = gatherPageContext();
+    const item = {
+      id: crypto.randomUUID(),
+      highlight: context.selection || '',
+      pageTitle: context.title || '',
+      pageUrl: context.url || '',
+      sourceUrl: context.sourceUrl || '',
+      capturedAt: new Date().toISOString(),
+      status: 'saved',
+      meta: context.meta || null,
+    };
+
+    try {
+      const SAVE_KEY = 'ghostwriter_saved_items';
+      const got = await chrome.storage.local.get(SAVE_KEY);
+      const items = got?.[SAVE_KEY] || [];
+      items.push(item);
+      await chrome.storage.local.set({ [SAVE_KEY]: items });
+
+      // Update badge
+      chrome.runtime.sendMessage({ type: 'ghostwriter:updateBadge', count: items.length });
+    } catch (err) {
+      console.warn('Failed to save for later:', err);
+    }
+
+    hideCapturePopover();
+
+    // Brief visual confirmation
+    showSaveConfirmation();
+  }
+
+  function showSaveConfirmation() {
+    const state = ensureCapturePopover();
+    const { popover } = state;
+    if (!popover) return;
+
+    const msg = document.createElement('div');
+    msg.style.cssText = 'position:fixed;top:16px;right:16px;padding:8px 16px;background:#059669;color:#fff;border-radius:8px;font-size:13px;font-weight:500;z-index:2147483002;pointer-events:auto;animation:captureIn 0.12s ease-out;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;';
+    msg.textContent = 'Saved for later';
+    state.shadow.appendChild(msg);
+    setTimeout(() => { msg.remove(); }, 2000);
+  }
+
   function hideOverlay() {
     const { overlay } = popoverState;
     if (!overlay) return;
@@ -725,6 +928,14 @@ if (window.__QUICKFLASH_INJECTED__) {
     if (message.type === 'quickflash:showOverlay') {
       (async () => {
         try {
+          // v2: if text is selected, show the capture popover instead
+          const selRect = getSelectionRect();
+          if (selRect && !message?.options?.skipCapturePopover) {
+            showCapturePopover(selRect);
+            sendResponse({ ok: true, capturePopover: true });
+            return;
+          }
+
           const opened = await openPopover(message?.options);
           if (opened === false) {
             sendResponse({
@@ -743,6 +954,12 @@ if (window.__QUICKFLASH_INJECTED__) {
 
     if (message.type === 'quickflash:closeOverlay') {
       closePopover();
+      sendResponse?.({ ok: true });
+      return true;
+    }
+
+    if (message.type === 'quickflash:saveForLater') {
+      saveForLater();
       sendResponse?.({ ok: true });
       return true;
     }

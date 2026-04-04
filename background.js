@@ -2,6 +2,29 @@
 
 const supportsSidePanel = () => Boolean(chrome.sidePanel && (chrome.sidePanel.open || chrome.sidePanel.setOptions)); // keep
 const SOURCE_MODE_KEY = "quickflash_source_mode_v1";
+
+// Free-tier proxy: subsidized first 10 copilot suggestions
+const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton.workers.dev/v1";
+const FREE_TIER_LIMIT = 10;
+const FREE_TIER_KEY = "ghostwriter_free_tier";
+
+async function getFreeTierState() {
+  const got = await chrome.storage.local.get(FREE_TIER_KEY);
+  const state = got?.[FREE_TIER_KEY] || {};
+  if (!state.installId) {
+    state.installId = crypto.randomUUID();
+    state.used = 0;
+    await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+  }
+  return { ...state, remaining: Math.max(0, FREE_TIER_LIMIT - (state.used || 0)) };
+}
+
+async function incrementFreeTierUsage() {
+  const got = await chrome.storage.local.get(FREE_TIER_KEY);
+  const state = got?.[FREE_TIER_KEY] || {};
+  state.used = (state.used || 0) + 1;
+  await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+}
 const PANEL_PAGE_URL = chrome.runtime.getURL("panel.html");
 
 function normalizeSourceMode(mode) {
@@ -195,7 +218,7 @@ function openOrActivatePanelTab() {
   });
 }
 
-async function showOverlay({ tabId, windowId, pasteSelection } = {}) {
+async function showOverlay({ tabId, windowId, pasteSelection, skipCapturePopover } = {}) {
   const id = await resolveActiveTabId({ tabId, windowId });
   if (typeof id !== "number") return false;
 
@@ -219,7 +242,7 @@ async function showOverlay({ tabId, windowId, pasteSelection } = {}) {
   try {
     const res = await chrome.tabs.sendMessage(id, {
       type: "quickflash:showOverlay",
-      options: { pasteSelection: !!pasteSelection },
+      options: { pasteSelection: !!pasteSelection, skipCapturePopover: !!skipCapturePopover },
     });
     if (!res?.ok) {
       const reason = res?.reason || "unknown";
@@ -345,9 +368,9 @@ async function storeArchiveBackup({ trigger = "update", prev = "" } = {}) {
 
 chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
   configureSidePanelBehavior(true);
-  chrome.contextMenus.create({ id: "quickflash-open", title: "Ghostwriter for Anki: Open panel", contexts: ["all"] });
-  chrome.contextMenus.create({ id: "quickflash-open-selection", title: "Ghostwriter for Anki: Open panel", contexts: ["selection"] });
-  chrome.contextMenus.create({ id: "quickflash-add-selection", title: "Ghostwriter for Anki: Add selection as Q→A", contexts: ["selection"] });
+  chrome.contextMenus.create({ id: "quickflash-open", title: "Ghostwriter for Anki", contexts: ["all"] });
+  chrome.contextMenus.create({ id: "quickflash-write-card", title: "Write card with Ghostwriter", contexts: ["selection"] });
+  chrome.contextMenus.create({ id: "quickflash-save-for-later", title: "Save for later", contexts: ["selection"] });
 
   try {
     if (reason === "update") {
@@ -355,10 +378,23 @@ chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
     }
     await chrome.storage.local.set({ [LAST_VER_KEY]: chrome.runtime.getManifest().version });
   } catch {}
+  refreshBadge();
 });
+
+const SAVED_ITEMS_KEY = "ghostwriter_saved_items";
+
+async function refreshBadge() {
+  try {
+    const got = await chrome.storage.local.get(SAVED_ITEMS_KEY);
+    const items = got?.[SAVED_ITEMS_KEY] || [];
+    chrome.action.setBadgeText({ text: items.length > 0 ? String(items.length) : "" });
+    chrome.action.setBadgeBackgroundColor({ color: "#2563eb" });
+  } catch {}
+}
 
 chrome.runtime.onStartup?.addListener(async () => {
   configureSidePanelBehavior(true);
+  refreshBadge();
   try {
     const current = chrome.runtime.getManifest().version;
     const got = await chrome.storage.local.get(LAST_VER_KEY);
@@ -369,6 +405,15 @@ chrome.runtime.onStartup?.addListener(async () => {
     }
   } catch {}
 });
+
+// Open review queue when nudge notification is clicked
+try {
+  chrome.notifications?.onClicked?.addListener((notificationId) => {
+    if (notificationId.startsWith("ghostwriter-nudge")) {
+      chrome.tabs.create({ url: chrome.runtime.getURL("review.html") });
+    }
+  });
+} catch {}
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   (async () => {
@@ -392,20 +437,29 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
-  if (info.menuItemId === "quickflash-open" || info.menuItemId === "quickflash-open-selection") {
+  if (info.menuItemId === "quickflash-open") {
     await openPanel({ tabId: tab.id, windowId: tab.windowId });
     return;
   }
-  if (info.menuItemId === "quickflash-add-selection") {
+  if (info.menuItemId === "quickflash-write-card") {
+    // Skip capture popover, go straight to full panel with selection
     const ctx = await requestPageContext(tab.id);
     if (ctx) {
-      try {
-        await chrome.storage.local.set({ quickflash_lastDraft: ctx });
-      } catch (err) {
-        console.warn("Failed to persist selection draft", err);
-      }
+      try { await chrome.storage.local.set({ quickflash_lastDraft: ctx }); } catch {}
     }
-    await openPanel({ tabId: tab.id, windowId: tab.windowId });
+    await showOverlay({ tabId: tab.id, windowId: tab.windowId, pasteSelection: true, skipCapturePopover: true });
+    return;
+  }
+  if (info.menuItemId === "quickflash-save-for-later") {
+    // Send save-for-later message to content script
+    const injected = await ensureContentScript(tab.id);
+    if (!injected) return;
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: "quickflash:saveForLater" });
+    } catch (err) {
+      console.warn("Save for later failed:", err?.message || err);
+    }
+    return;
   }
 });
 
@@ -560,6 +614,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message.type === "ghostwriter:requestHostPermission") {
+      const { origins } = message;
+      try {
+        const granted = await chrome.permissions.request({ origins });
+        sendResponse({ ok: true, granted });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+      return;
+    }
+
     if (message.type === "quickflash:getOptions") {
       try {
         const { quickflash_options } = await chrome.storage.sync.get("quickflash_options");
@@ -570,6 +635,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message.type === "ghostwriter:openReviewQueue") {
+      try {
+        const reviewUrl = chrome.runtime.getURL("review.html");
+        const [existing] = await chrome.tabs.query({ url: `${reviewUrl}*` });
+        if (existing) {
+          await chrome.tabs.update(existing.id, { active: true });
+        } else {
+          await chrome.tabs.create({ url: reviewUrl });
+        }
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+      return;
+    }
+
+    if (message.type === "ghostwriter:updateBadge") {
+      const count = message.count || 0;
+      try {
+        chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
+        chrome.action.setBadgeBackgroundColor({ color: count >= 10 ? "#dc2626" : "#2563eb" });
+        // Nudge at milestones
+        if (count === 5) {
+          chrome.notifications?.create?.("ghostwriter-nudge-5", {
+            type: "basic",
+            iconUrl: "icons/icon128.png",
+            title: "Ghostwriter for Anki",
+            message: "You have 5 saved highlights. Ready to review them?",
+          });
+        } else if (count === 10) {
+          chrome.notifications?.create?.("ghostwriter-nudge-10", {
+            type: "basic",
+            iconUrl: "icons/icon128.png",
+            title: "Ghostwriter for Anki",
+            message: "10 highlights saved! Time to turn them into cards.",
+          });
+        }
+      } catch {}
+      sendResponse({ ok: true });
+      return;
+    }
+
     if (message.type === "quickflash:ultimateChatJSON") {
       const { prompt, model } = message;
       try {
@@ -577,13 +684,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const opts = quickflash_options || {};
         const { provider, baseUrl, apiKey, model: defaultModel } = getOpenAIProviderConfig(opts);
         const mdl = model || defaultModel;
+
+        let effectiveBaseUrl = baseUrl;
+        let effectiveApiKey = apiKey;
+        let usingFreeTier = false;
+
         if (!apiKey) {
-          const label = provider === "openai" ? "OpenAI" : "UltimateAI";
-          throw new Error(`Missing ${label} API key (Options).`);
+          // Check free-tier quota
+          const ftState = await getFreeTierState();
+          if (ftState.remaining > 0) {
+            effectiveBaseUrl = FREE_TIER_PROXY_URL;
+            effectiveApiKey = `ft-${ftState.installId}`;
+            usingFreeTier = true;
+          } else {
+            throw new Error("Free suggestions used up. Add an API key in Settings for unlimited suggestions, or continue writing manually.");
+          }
         }
-        const r = await fetch(`${baseUrl}/chat/completions`, {
+
+        const r = await fetch(`${effectiveBaseUrl}/chat/completions`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${effectiveApiKey}` },
           body: JSON.stringify({
             model: mdl,
             temperature: 0.2,
@@ -595,7 +715,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         const data = await r.json();
         const content = data?.choices?.[0]?.message?.content || "";
-        sendResponse({ ok: true, result: content });
+
+        if (usingFreeTier) {
+          await incrementFreeTierUsage();
+        }
+
+        sendResponse({ ok: true, result: content, freeTier: usingFreeTier });
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });
       }

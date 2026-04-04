@@ -1,51 +1,72 @@
-# Ghostwriter for Anki – Store Listing
+# Ghostwriter for Anki — Store Listing
 
-## Chrome Web Store Description
+## Title
 
-Ghostwriter for Anki is an AI-assisted flashcard creator. It combines a fast flashcard editor with LLM "Copilot" suggestions and a triage workflow so you can generate lots of cards quickly—without sending anything to your deck until you've reviewed it.
+Ghostwriter for Anki — Write Better Cards Faster
 
-Key features
-- Unified editor + Triage Mode: type cards manually, or paste/source text and switch into review mode.
-- AI Copilot while you type: ghost-text suggestions you can accept with Tab for the Front/Back.
-- Smart Gen from web pages: highlight text on a page and generate cards; the AI can pick an appropriate template automatically.
-- LaTeX / MathJax preview: render math in your cards before sending them to Anki.
-- Markdown rendering: write card content in markdown and preview it live.
-- Bulk generation with Custom GPTs: use our ChatGPT or Gemini GPTs to generate cards in bulk, then import them into Ghostwriter's triage queue with J.
-  - ChatGPT: https://chatgpt.com/g/g-690faa9681448191b2700ca01abdeca6-flashcardgpt
-  - Gemini: https://gemini.google.com/gem/1E1OquFI0cH_ohhvADJQ61qKYdjJ55Jcq
-- Triage queue: review AI-generated cards quickly with keyboard shortcuts (Accept / Reject / Navigate) before they go anywhere.
-- Outbox + undo: accepted cards sit in an Outbox where you can edit them or undo the last batch sent to Anki.
-- Knowledge graph and semantic similarity dashboard (Full build).
+## Short Description (132 char max)
 
-Works with Anki (via AnkiConnect)
-- Requires the AnkiConnect add-on in desktop Anki (ID 2055492159) and Anki running while you send cards.
+Turn highlights into draft cards, then finish them with inline ghost-text suggestions as you type.
 
-AI providers
-- Bring your own API key and choose a provider in Options (supports Google Gemini, OpenAI, and UltimateAI). Keys are stored locally in your browser—never sent anywhere except your chosen provider.
+## Full Description
+
+Ghostwriter helps you write your own Anki cards faster from the things you read online.
+
+Highlight a passage, open the editor, and start typing. Ghostwriter suggests completions as ghost text while you write. Press Tab to accept what helps. Ignore what doesn't.
+
+This is not auto-generation. You stay in control of the card.
+
+**How it works**
+- Highlight text on any page — choose "Write card" or "Save for later"
+- Write with inline ghost-text suggestions (Tab to accept)
+- Queue cards while you read — review them later in one batch
+- Edit and approve before anything reaches your deck
+- Send approved cards to Anki
+
+**No setup required to start.** Your first suggestions are free. Add your own API key later for unlimited use.
+
+**Works with Anki** via the AnkiConnect add-on. Desktop Anki must be running to send cards.
+
+Best for students, language learners, and serious Anki users who already know that good cards come from good judgment.
+
+---
+
+## What NOT to mention in the listing
+
+- Knowledge graph / semantic similarity / embeddings
+- Multiple AI providers (keep in Settings)
+- Custom GPTs / Gemini Gems
+- "Triage" / "Outbox" / "LLM" / "Copilot" (just say "suggestions")
+- Build variants (lite/full)
+- WASM / internal architecture
 
 ---
 
 ## Network Access Summary
+
 The extension communicates only with the domains below, based on user configuration and features used:
 
-- `http://127.0.0.1:*`, `http://localhost:*` — Local AnkiConnect endpoint for creating flashcards in the user’s desktop Anki instance.
-- `https://api.openai.com` — OpenAI API requests when the user selects the OpenAI provider.
-- `https://smart.ultimateai.org` — UltimateAI OpenAI-compatible API requests when the user selects the UltimateAI provider.
-- `https://generativelanguage.googleapis.com` — Google Gemini API requests when the user selects the Gemini provider.
-- `https://huggingface.co` — Retrieves model manifests and metadata when downloading the optional local embedding model.
-- `https://cdn-lfs.huggingface.co` — Downloads model weight files stored on Hugging Face LFS for the optional local embedding model.
-- `https://cdn-lfs.hf.co` — Alternate Hugging Face LFS CDN endpoint used during model weight downloads for the optional local embedding model.
-
-## Model Assets Hosting Note
-The embedding model is currently fetched from Hugging Face on first use to avoid bundling large model assets into the extension package. We are evaluating hosting these assets directly inside the extension when size constraints allow, to eliminate external model downloads.
+- `http://127.0.0.1:*`, `http://localhost:*` — Local AnkiConnect endpoint for creating flashcards in the user's desktop Anki instance.
+- `https://ghostwriter-proxy.djthornton.workers.dev` — Free-tier suggestion proxy for first-time users (no API key required).
+- `https://api.openai.com` — OpenAI API requests when the user selects the OpenAI provider in Settings.
+- `https://smart.ultimateai.org` — UltimateAI API requests when the user selects the UltimateAI provider in Settings.
+- `https://generativelanguage.googleapis.com` — Google Gemini API requests when the user selects the Gemini provider in Settings.
+- `https://api.anthropic.com` — Anthropic Claude API requests when the user selects the Claude provider in Settings.
 
 ## Permissions Justification
-- Clipboard read: used only when the user enables clipboard-as-Source or when no page selection is available, to populate the Source text.
-- Active tab + scripting: used to inject the content script only after the user invokes the extension, so selection/context can be captured on demand.
-- Tabs: used to read the active tab’s selection/context and open the dashboard or side panel in the correct tab.
-- Host permissions: limited to the specific API endpoints (OpenAI, UltimateAI, Gemini), Hugging Face model download hosts, and local AnkiConnect (localhost/127.0.0.1) required for user-configured features.
+
+- **Storage**: saves card queue, settings, and API keys locally in browser storage.
+- **Active tab + Scripting**: injects the content script after the user invokes the extension, to capture text selection and page context.
+- **Tabs**: reads the active tab's selection/context and manages the review queue tab.
+- **Context menus**: adds "Write card" and "Save for later" to the right-click menu.
+- **Side panel**: provides the card editor as a side panel alongside web pages.
+- **Notifications**: gentle nudges when saved highlights accumulate (at 5 and 10 items).
+- **Clipboard read** (optional): used only when the user enables clipboard-as-source mode. Requested at runtime, not on install.
+- **AI API hosts** (optional): requested at runtime only when the user configures a specific AI provider in Settings.
+- **AnkiConnect hosts** (required): local-only access to send cards to the user's Anki installation.
 
 ## Privacy Policy
+
 Settings and API keys are stored locally in browser storage, and may sync via `chrome.storage.sync` if you enable browser sync.
 
 Read the privacy policy: [PRIVACY_POLICY.md](PRIVACY_POLICY.md).

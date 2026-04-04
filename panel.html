@@ -1014,9 +1014,6 @@
     <h1>Ghostwriter for Anki <span class="version" id="app-version"></span></h1>
     <div class="inline small">
       <a href="options.html" target="_blank">Options</a>
-      <!-- LITE-REMOVE-START -->
-      <span id="dashboardButtonContainer"></span>
-      <!-- LITE-REMOVE-END -->
     </div>
   </header>
 
@@ -1025,7 +1022,7 @@
     <div id="triageHint" class="triage-hint" hidden>
       <div class="triage-hint-body">
         <div>
-          <strong>Triage tips</strong>
+          <strong>Review tips</strong>
           <div>On mobile: swipe <b>right</b> to accept, swipe <b>left</b> to reject. You can also use the toolbar buttons.</div>
         </div>
         <button type="button" id="triageHintDismiss">Got it</button>
@@ -1075,7 +1072,7 @@
           </div>
         </div>
 
-        <details class="quick-options-shell" open>
+        <details class="quick-options-shell">
           <summary>Quick options</summary>
           <div class="quick-options">
             <label class="inline"><input id="fillSourceField" type="checkbox" checked /> Fill <b>Source</b> field (if it exists)</label>
@@ -1292,14 +1289,6 @@
       </div>
     </details>
 
-    <details>
-      <summary>Import cards (JSON)</summary>
-      <textarea id="jsonImport" placeholder="Paste JSON from FlashcardGPT here…"></textarea>
-      <div class="btns">
-        <button type="button" id="parseJson">Parse cards</button>
-        <button type="button" id="clearJson">Clear</button>
-      </div>
-    </details>
 
     <details id="debugPanel" class="card-entry" hidden>
       <summary>Debugging</summary>
@@ -1335,20 +1324,22 @@
     </details>
 
     <details open>
-      <summary>Queue &amp; outbox</summary>
-      <div class="small" id="outboxMeta"></div>
-      <div id="outboxList"></div>
-      <div class="btns">
-        <button id="sendOutbox" class="primary">Send outbox to Anki</button>
-        <button id="undoLastSend">Undo last send</button>
+      <summary>Ready to Send</summary>
+      <div class="btns" style="margin-bottom:8px;">
+        <button type="button" id="openReviewQueue">Open Review Queue</button>
       </div>
-      <div class="btns">
-        <button type="button" id="triageAcceptAll" class="primary">Queue all remaining</button>
-        <button type="button" id="triageClear">Reset triage</button>
-        <button type="button" id="clearOutbox" class="subtle-btn" hidden>Clear outbox</button>
-        <button type="button" id="triageResume" hidden>Resume triage</button>
+      <div class=”small” id=”outboxMeta”></div>
+      <div id=”outboxList”></div>
+      <div class=”btns”>
+        <button id=”sendOutbox” class=”primary”>Send to Anki</button>
+        <button id=”undoLastSend”>Undo last send</button>
       </div>
-      <div class="small outbox-hint">Tip: right-click or ⌘-click “Reset triage” to reveal the outbox clear action.</div>
+      <div class=”btns”>
+        <button type=”button” id=”triageAcceptAll” class=”primary”>Queue all remaining</button>
+        <button type=”button” id=”triageClear”>Reset</button>
+        <button type=”button” id=”clearOutbox” class=”subtle-btn” hidden>Clear queue</button>
+        <button type=”button” id=”triageResume” hidden>Resume review</button>
+      </div>
     </details>
 
     <div class="btns">
@@ -1394,11 +1385,11 @@
             <code id="shortcutAdd">Custom</code>
           </li>
           <li>
-            <span>Triage accept / reject</span>
+            <span>Accept / reject</span>
             <code>A / R (or Esc)</code>
           </li>
           <li>
-            <span>Triage next / previous</span>
+            <span>Next / previous card</span>
             <code>Arrow keys</code>
           </li>
           <li>
