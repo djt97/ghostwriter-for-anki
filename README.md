@@ -1,6 +1,6 @@
 # Ghostwriter for Anki (Chrome/Edge, Manifest V3)
 
-**Current Version:** `0.3.2`
+**Current Version:** `0.3.3`
 
 Ghostwriter for Anki is an AI-assisted flashcard creation extension for Chrome/Edge that integrates with Anki via AnkiConnect.
 

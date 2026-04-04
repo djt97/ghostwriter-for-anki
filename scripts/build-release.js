@@ -30,8 +30,6 @@ const EXCLUDES = [
   'LISTING.md',
   'GHOSTWRITER_V2_PLAN.md',
   'README.md',
-  'PRIVACY_POLICY.md',
-  'privacy.md',
   'licences'
 ];
 

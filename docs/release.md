@@ -6,37 +6,24 @@ Releases are generated via Node script:
 
 - `scripts/build-release.js`
 
-This script builds MathJax assets, copies project files into `dist/`, creates full/lite variants, and zips each variant.
+This script builds MathJax assets, copies project files into `dist/ghostwriter/`, and creates a single zip.
 
 ## Commands
 
 ```bash
-npm run build:full
-npm run build:lite
 npm run build:release
 ```
 
-## Dist outputs
+## Dist output
 
-- `dist/full` and `dist/ghostwriter-full.zip`
-- `dist/lite` and `dist/ghostwriter-lite.zip`
-
-## Lite variant transformation
-
-For lite output, the release script:
-
-- Removes dashboard and embedding assets
-- Strips vendor model/runtime files
-- Updates manifest `web_accessible_resources`
-- Removes model-hosting connect-src entries from CSP
-- Disables dashboard flag in `panel.js`
-- Removes lite-excluded HTML blocks in `panel.html`
+- `dist/ghostwriter/` — unpacked extension
+- `dist/ghostwriter.zip` — packaged for Chrome Web Store upload
 
 ## Release checklist
 
-1. Bump extension version in `manifest.json`.
+1. Bump extension version in `manifest.json` and `package.json`.
 2. Update changelog/release notes in `README.md` if needed.
 3. Run `npm run build:release`.
-4. Smoke-test both `dist/full` and `dist/lite` unpacked builds.
-5. Ensure `licences/` notices are included in distributed zips.
-6. Publish zip artifacts.
+4. Smoke-test the `dist/ghostwriter/` unpacked build in Chrome.
+5. Verify `privacy.md` and `PRIVACY_POLICY.md` are included in the build.
+6. Publish `dist/ghostwriter.zip` to Chrome Web Store.
