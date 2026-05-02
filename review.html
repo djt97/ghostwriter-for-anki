@@ -3,317 +3,687 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ghostwriter — Review Queue</title>
+  <title>Ghostwriter - Review Queue</title>
   <style>
     :root {
-      --bg: #f8fafc;
-      --surface: #fff;
-      --border: #e2e8f0;
-      --text: #0f172a;
-      --text-secondary: #64748b;
-      --accent: #2563eb;
-      --accent-hover: #1d4ed8;
-      --danger: #dc2626;
-      --danger-bg: #fef2f2;
-      --success: #059669;
-      --success-bg: #ecfdf5;
+      --bg: #f6f7fb;
+      --surface: #ffffff;
+      --surface-soft: #f9fafc;
+      --line: #dde3ee;
+      --line-strong: #c6cfdd;
+      --text: #17202e;
+      --muted: #667386;
+      --accent: #1f6f78;
+      --accent-hover: #175861;
+      --accent-soft: #e6f2f3;
+      --danger: #b43d3d;
+      --danger-soft: #fff0f0;
+      --success: #16724f;
+      --success-soft: #eaf7f0;
+      --shadow: 0 18px 46px rgba(23, 32, 46, 0.08);
+      --shadow-tight: 0 8px 22px rgba(23, 32, 46, 0.1);
       --radius: 8px;
     }
+
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #0f172a;
-        --surface: #1e293b;
-        --border: #334155;
-        --text: #f1f5f9;
-        --text-secondary: #94a3b8;
-        --accent: #3b82f6;
-        --accent-hover: #2563eb;
-        --danger: #ef4444;
-        --danger-bg: #3b1318;
-        --success: #10b981;
-        --success-bg: #064e3b;
+        --bg: #151923;
+        --surface: #202633;
+        --surface-soft: #191f2a;
+        --line: #343d4d;
+        --line-strong: #4a5568;
+        --text: #eef2f8;
+        --muted: #a3afc0;
+        --accent: #67b7bf;
+        --accent-hover: #84c7ce;
+        --accent-soft: #18343a;
+        --danger: #ff8b8b;
+        --danger-soft: #3a2023;
+        --success: #69c693;
+        --success-soft: #173629;
+        --shadow: 0 18px 46px rgba(0, 0, 0, 0.22);
+        --shadow-tight: 0 8px 22px rgba(0, 0, 0, 0.24);
       }
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    * { box-sizing: border-box; }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    html,
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-      background: var(--bg);
+      margin: 0;
+      min-height: 100%;
+      background: linear-gradient(180deg, var(--surface-soft) 0%, var(--bg) 100%);
       color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
       line-height: 1.5;
     }
+
+    body {
+      min-height: 100dvh;
+      overflow-x: hidden;
+    }
+
+    button,
+    input,
+    select,
+    summary,
+    textarea {
+      font: inherit;
+    }
+
+    .review-shell {
+      min-height: 100dvh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 16px;
       padding: 16px 24px;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 88%, transparent);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
     }
+
     header h1 {
-      font-size: 18px;
-      font-weight: 600;
+      margin: 0;
+      font-size: 16px;
+      font-weight: 650;
     }
+
     header .meta {
+      margin-top: 2px;
       font-size: 13px;
-      color: var(--text-secondary);
+      color: var(--muted);
     }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .review-menu {
+      position: relative;
+    }
+
+    .review-menu summary {
+      list-style: none;
+      cursor: pointer;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(23, 32, 46, 0.04);
+    }
+
+    .review-menu summary::-webkit-details-marker { display: none; }
+
+    .review-menu[open] summary {
+      border-color: var(--line-strong);
+      box-shadow: var(--shadow-tight);
+    }
+
+    .review-menu-panel {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 8px);
+      width: min(320px, calc(100vw - 32px));
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      z-index: 30;
+    }
+
     .empty-state {
+      align-self: center;
+      justify-self: center;
+      width: min(520px, calc(100% - 32px));
       text-align: center;
-      padding: 80px 24px;
-      color: var(--text-secondary);
+      padding: 40px 24px;
+      color: var(--muted);
     }
+
     .empty-state h2 {
-      font-size: 20px;
-      margin-bottom: 8px;
+      margin: 0 0 8px;
+      font-size: 22px;
       color: var(--text);
     }
-    .empty-state p { font-size: 14px; }
+
+    .empty-state p { margin: 0; }
+
     .review-container {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 24px;
-    }
-    .card-review {
+      min-height: 0;
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 24px;
-      margin-bottom: 16px;
+      place-items: center;
+      padding: 28px 24px 140px;
     }
-    @media (max-width: 720px) {
-      .card-review { grid-template-columns: 1fr; }
+
+    .card-review {
+      width: min(980px, 100%);
+      display: grid;
+      gap: 14px;
     }
-    .source-panel h3, .card-panel h3 {
+
+    .review-kicker {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
       font-size: 13px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: var(--text-secondary);
-      margin-bottom: 12px;
     }
-    .source-text {
-      font-size: 14px;
-      line-height: 1.6;
-      padding: 12px;
-      background: var(--bg);
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      white-space: pre-wrap;
-      max-height: 300px;
-      overflow-y: auto;
+
+    .draft-origin {
+      min-height: 20px;
     }
-    .source-meta {
-      margin-top: 8px;
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
       font-size: 12px;
-      color: var(--text-secondary);
+      font-weight: 700;
     }
+
+    .status-pill[data-status="accepted"] {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .status-pill[data-status="skipped"],
+    .status-pill[data-status="deleted"] {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .card-panel {
+      display: grid;
+      gap: 14px;
+    }
+
+    .card-face {
+      display: grid;
+      gap: 8px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 1px 2px rgba(23, 32, 46, 0.04);
+    }
+
+    .face-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .card-face textarea {
+      width: 100%;
+      min-height: 118px;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      resize: vertical;
+      background: transparent;
+      color: var(--text);
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .front-face textarea {
+      min-height: 136px;
+      font-size: 1.35rem;
+      font-weight: 650;
+    }
+
+    .back-face textarea {
+      min-height: 136px;
+      font-size: 1.18rem;
+    }
+
+    .card-face:focus-within {
+      border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
+
+    .review-drawers {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .meta-drawer {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface) 78%, transparent);
+    }
+
+    .meta-drawer summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 12px 14px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .meta-drawer summary::-webkit-details-marker { display: none; }
+
+    .meta-drawer[open] summary {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .drawer-body {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+    }
+
+    .drawer-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .field-group {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .field-group label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .field-group input[type="text"],
+    .field-group select {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .field-group input:focus,
+    .field-group select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+    }
+
+    .source-text {
+      max-height: 190px;
+      overflow: auto;
+      white-space: pre-wrap;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 12px;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .source-meta {
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     .source-meta a {
       color: var(--accent);
       text-decoration: none;
+      overflow-wrap: anywhere;
     }
+
     .source-meta a:hover { text-decoration: underline; }
-    .field-group {
-      margin-bottom: 12px;
-    }
-    .field-group label {
-      display: block;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-secondary);
-      margin-bottom: 4px;
-    }
-    .field-group textarea,
-    .field-group input[type="text"] {
-      width: 100%;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-size: 14px;
-      font-family: inherit;
-      background: var(--bg);
-      color: var(--text);
-      resize: vertical;
-    }
-    .field-group textarea { min-height: 60px; }
-    .field-group textarea:focus,
-    .field-group input:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-    }
-    .field-group select {
-      padding: 6px 8px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
+
+    .status-bar {
+      position: fixed;
+      left: 50%;
+      top: 72px;
+      transform: translateX(-50%);
+      max-width: min(560px, calc(100vw - 32px));
+      padding: 10px 14px;
+      border: 1px solid color-mix(in srgb, var(--success) 22%, var(--line));
+      border-radius: var(--radius);
+      background: var(--success-soft);
+      color: var(--success);
+      box-shadow: var(--shadow-tight);
       font-size: 13px;
-      background: var(--bg);
-      color: var(--text);
+      text-align: center;
+      display: none;
+      z-index: 40;
     }
-    .draft-origin {
-      font-size: 11px;
-      color: var(--text-secondary);
-      margin-bottom: 8px;
-      font-style: italic;
-    }
+
+    .status-bar.visible { display: block; }
+
     .actions-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 24px;
-      border-top: 1px solid var(--border);
-      background: var(--surface);
-      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
-      position: sticky;
+      position: fixed;
+      left: 0;
+      right: 0;
       bottom: 0;
-    }
-    .actions-bar .nav-group {
-      display: flex;
-      gap: 8px;
+      z-index: 25;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
       align-items: center;
+      gap: 16px;
+      padding: 14px 24px calc(14px + env(safe-area-inset-bottom));
+      border-top: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 90%, transparent);
+      box-shadow: 0 -12px 36px rgba(23, 32, 46, 0.09);
+      backdrop-filter: blur(14px);
     }
-    .actions-bar .send-group {
+
+    .actions-bar[data-mode="undo-only"] {
+      grid-template-columns: 1fr;
+      justify-items: center;
+    }
+
+    .actions-bar[data-mode="undo-only"] .undo-group {
+      justify-content: center;
+      justify-self: center;
+    }
+
+    .nav-group {
       display: flex;
-      gap: 12px;
       align-items: center;
+      justify-content: center;
+      gap: 10px;
     }
+
+    .undo-group {
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .send-group {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
     .send-count {
+      color: var(--muted);
       font-size: 13px;
-      color: var(--text-secondary);
+      white-space: nowrap;
     }
+
     button {
-      padding: 8px 16px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
+      min-height: 38px;
+      padding: 8px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
       background: var(--surface);
       color: var(--text);
-      transition: background 0.1s;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
     }
-    button:hover { background: var(--bg); }
+
+    button:hover:not(:disabled) {
+      background: var(--surface-soft);
+      border-color: var(--line-strong);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(1px);
+    }
+
     button:focus-visible {
       outline: none;
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
     }
+
     button.primary {
+      border-color: var(--accent);
       background: var(--accent);
       color: #fff;
-      border-color: var(--accent);
     }
-    button.primary:hover { background: var(--accent-hover); }
+
+    button.primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
     button.danger {
+      border-color: color-mix(in srgb, var(--danger) 38%, var(--line));
+      background: var(--danger-soft);
       color: var(--danger);
+    }
+
+    button.danger:hover:not(:disabled) {
       border-color: var(--danger);
+      background: color-mix(in srgb, var(--danger-soft) 75%, var(--surface));
     }
-    button.danger:hover { background: var(--danger-bg); }
+
     button:disabled {
-      opacity: 0.4;
       cursor: not-allowed;
+      opacity: 0.45;
+      transform: none;
     }
+
     .shortcuts-hint {
-      font-size: 11px;
-      color: var(--text-secondary);
-      padding: 8px 24px;
-      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
     }
+
     .shortcuts-hint kbd {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 3px;
-      padding: 1px 5px;
-      font-size: 11px;
-      font-family: inherit;
-    }
-    .accepted-badge {
       display: inline-block;
-      padding: 2px 8px;
-      background: var(--success-bg);
-      color: var(--success);
+      min-width: 20px;
+      padding: 1px 5px;
+      border: 1px solid var(--line);
       border-radius: 4px;
+      background: var(--surface-soft);
+      color: var(--text);
+      font-family: inherit;
       font-size: 11px;
-      font-weight: 600;
-    }
-    .status-bar {
-      padding: 8px 24px;
-      font-size: 13px;
       text-align: center;
-      color: var(--success);
-      background: var(--success-bg);
-      display: none;
     }
-    .status-bar.visible { display: block; }
+
+    @media (max-width: 820px) {
+      header {
+        align-items: flex-start;
+        padding: 14px 16px;
+      }
+
+      .review-container {
+        padding: 18px 14px 174px;
+        place-items: start center;
+      }
+
+      .review-drawers,
+      .drawer-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .actions-bar {
+        grid-template-columns: 1fr;
+        justify-items: center;
+        gap: 10px;
+      }
+
+      .send-group {
+        justify-content: center;
+      }
+
+      .nav-group {
+        order: 1;
+      }
+
+      .undo-group {
+        order: 2;
+        justify-content: center;
+      }
+
+      .send-group {
+        order: 3;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .top-actions {
+        width: auto;
+      }
+
+      .review-menu-panel {
+        right: -4px;
+      }
+
+      .card-face {
+        padding: 14px;
+      }
+
+      .front-face textarea,
+      .back-face textarea {
+        min-height: 116px;
+        font-size: 1.08rem;
+      }
+
+      .nav-group {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .nav-group button {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Review Queue</h1>
-    <div class="meta" id="headerMeta"></div>
-  </header>
-
-  <div id="statusBar" class="status-bar"></div>
-
-  <div id="emptyState" class="empty-state" hidden>
-    <h2>No cards to review</h2>
-    <p>Highlight text on any page and click "Save for later" to queue cards here.</p>
-  </div>
-
-  <div class="review-container" id="reviewContainer" hidden>
-    <div class="card-review" id="cardReview">
-      <div class="source-panel">
-        <h3>Source</h3>
-        <div class="source-text" id="sourceText"></div>
-        <div class="source-meta">
-          <div id="sourceTitle"></div>
-          <div><a id="sourceUrl" href="#" target="_blank"></a></div>
-          <div id="sourceCaptured"></div>
-        </div>
+  <div class="review-shell">
+    <header>
+      <div>
+        <h1>Review Queue</h1>
+        <div class="meta" id="headerMeta"></div>
       </div>
-      <div class="card-panel">
-        <h3>Card</h3>
-        <div id="draftOrigin" class="draft-origin"></div>
-        <div class="field-group">
-          <label for="cardFront">Front</label>
-          <textarea id="cardFront" rows="3" placeholder="Question..."></textarea>
-        </div>
-        <div class="field-group">
-          <label for="cardBack">Back</label>
-          <textarea id="cardBack" rows="3" placeholder="Answer..."></textarea>
-        </div>
-        <div class="field-group">
-          <label for="cardContext">Context</label>
-          <input type="text" id="cardContext" placeholder="e.g. Chapter 3, lecture notes">
-        </div>
-        <div class="field-group">
-          <label for="cardTags">Tags</label>
-          <input type="text" id="cardTags" placeholder="Space-separated tags">
-        </div>
-        <div class="field-group">
-          <label for="cardDeck">Deck</label>
-          <select id="cardDeck"></select>
-        </div>
+
+      <div class="top-actions">
+        <details class="review-menu">
+          <summary>More</summary>
+          <div class="review-menu-panel">
+            <button id="btnDelete" class="danger" title="Delete (D)">Delete current card</button>
+            <div class="shortcuts-hint" id="shortcutsHint" hidden>
+              <kbd>A</kbd> Accept &nbsp; <kbd>R</kbd> Reject &nbsp; <kbd>D</kbd> Delete<br>
+              <kbd>U</kbd> Undo &nbsp; <kbd>Ctrl/Cmd+Z</kbd> Undo<br>
+              <kbd>E</kbd> Edit front &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> Navigate &nbsp; <kbd>Enter</kbd> Send
+            </div>
+          </div>
+        </details>
       </div>
-    </div>
-  </div>
+    </header>
 
-  <div class="shortcuts-hint" id="shortcutsHint" hidden>
-    <kbd>A</kbd> Accept &nbsp; <kbd>S</kbd> Skip &nbsp; <kbd>D</kbd> Delete &nbsp; <kbd>E</kbd> Edit front &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> Navigate &nbsp; <kbd>Enter</kbd> Send all
-  </div>
+    <div id="statusBar" class="status-bar"></div>
 
-  <div class="actions-bar" id="actionsBar" hidden>
-    <div class="nav-group">
-      <button id="btnPrev" title="Previous (←)">← Prev</button>
-      <button id="btnAccept" class="primary" title="Accept (A)">Accept</button>
-      <button id="btnSkip" title="Skip (S)">Skip</button>
-      <button id="btnDelete" class="danger" title="Delete (D)">Delete</button>
-      <button id="btnNext" title="Next (→)">Next →</button>
+    <div id="emptyState" class="empty-state" hidden>
+      <h2>No cards to review</h2>
+      <p>Highlight text on any page, open Ghostwriter, and queue a card here.</p>
     </div>
-    <div class="send-group">
-      <span class="send-count" id="sendCount"></span>
-      <button id="btnSend" class="primary" title="Send to Anki (Enter)" disabled>Send to Anki</button>
+
+    <main class="review-container" id="reviewContainer" hidden>
+      <section class="card-review" id="cardReview">
+        <div class="review-kicker">
+          <div id="draftOrigin" class="draft-origin"></div>
+          <div id="statusPill" class="status-pill">Pending</div>
+        </div>
+
+        <div class="card-panel">
+          <div class="card-face front-face">
+            <label class="face-label" for="cardFront">Front</label>
+            <textarea id="cardFront" rows="4" placeholder="Question..."></textarea>
+          </div>
+
+          <div class="card-face back-face">
+            <label class="face-label" for="cardBack">Back</label>
+            <textarea id="cardBack" rows="4" placeholder="Answer..."></textarea>
+          </div>
+        </div>
+
+        <div class="review-drawers">
+          <details class="meta-drawer">
+            <summary>Card details</summary>
+            <div class="drawer-body drawer-grid">
+              <div class="field-group">
+                <label for="cardContext">Context</label>
+                <input type="text" id="cardContext" placeholder="e.g. Chapter 3, lecture notes">
+              </div>
+              <div class="field-group">
+                <label for="cardTags">Tags</label>
+                <input type="text" id="cardTags" placeholder="Space-separated tags">
+              </div>
+              <div class="field-group">
+                <label for="cardDeck">Deck</label>
+                <select id="cardDeck"></select>
+              </div>
+            </div>
+          </details>
+
+          <details class="meta-drawer">
+            <summary>Source</summary>
+            <div class="drawer-body">
+              <div class="source-text" id="sourceText"></div>
+              <div class="source-meta">
+                <div id="sourceTitle"></div>
+                <div><a id="sourceUrl" href="#" target="_blank" rel="noreferrer"></a></div>
+                <div id="sourceCaptured"></div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <div class="actions-bar" id="actionsBar" hidden>
+      <div class="undo-group">
+        <button id="btnUndo" title="Undo last action (U or Ctrl/Cmd+Z)" disabled>Undo</button>
+      </div>
+      <div class="nav-group">
+        <button id="btnPrev" title="Previous (Left arrow)">Previous</button>
+        <button id="btnSkip" class="danger" title="Reject (R)">Reject</button>
+        <button id="btnAccept" class="primary" title="Accept (A)">Accept</button>
+        <button id="btnNext" title="Next (Right arrow)">Next</button>
+      </div>
+      <div class="send-group">
+        <span class="send-count" id="sendCount"></span>
+        <button id="btnSend" class="primary" title="Send to Anki (Enter)" disabled>Send to Anki</button>
+      </div>
     </div>
   </div>
 

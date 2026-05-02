@@ -85,6 +85,64 @@ TEXT:
 {{TEXT}}`;
 }
 
+function buildFocusedSuggestionModePrompt(mode) {
+  const baseRules = `Rules:
+- Preserve the user's apparent target from Front/Back/Notes before using the Source.
+- Do not decide what is "important" on the user's behalf; the highlight and typed words are the signal.
+- Make one stable retrieval cue: enough context to cue the same answer months later, but no answer leakage.
+- Cue, don't disclose: the Front names the problem/context, while the Back holds the method, formula, definition, result, name, or example.
+- If a Front would need "by defining", "using", "where", "namely", or another answer-bearing phrase, stop before that phrase.
+- Avoid T1-style failures: vague context, multiple valid answers, shallow textbook lists, and passage restatement.
+- Stay grounded in the Source. If the target is unclear or unsupported, return an empty string for uncertain fields.
+- No preamble, markdown, critique, or alternatives.
+{{CONTEXT}}
+
+Current card:
+Front: {{FRONT}}
+Back: {{BACK}}
+Notes: {{NOTES}}
+
+Source:
+{{TEXT}}`;
+
+  switch (mode) {
+    case "complete-front":
+      return `Return ONLY valid JSON: { "front": "..." }
+Complete the user's Front for this single card. Continue their wording when possible.
+${baseRules}`;
+    case "complete-back":
+      return `Return ONLY valid JSON: { "back": "..." }
+Complete the Back for this single card. Answer the Front exactly, with the smallest stable answer.
+${baseRules}`;
+    case "rewrite-front":
+      return `Return ONLY valid JSON: { "front": "..." }
+Rewrite the Front only enough to make the user's intended target stable and answerable.
+${baseRules}`;
+    case "make-atomic":
+      return `Return ONLY valid JSON: { "front": "...", "back": "..." }
+Repair this as one atomic Anki card. Preserve the user's intended target even if another source fact is easier.
+${baseRules}`;
+    case "generate-candidate":
+    default:
+      return `Return ONLY valid JSON. Never include explanations or backticks.
+Create exactly ONE candidate Anki card only if the Source/highlight implies a specific memorable target.
+Output shape:
+{ "cards": [ { "type":"basic", "front":"...", "back":"...", "tags":["AI-suggested"], "context":"source-grounded" } ] }
+Rules:
+- Exactly one card.
+- One target only: preserve what made the highlight worth marking, not generic trivia nearby.
+- Front is an unambiguous cue that will still work months later.
+- Front must cue the missing answer without disclosing the method/formula/definition/result/name/example.
+- Back is the minimal answer that satisfies the cue.
+- Prefer sentence-completion cues when they preserve the highlighted novelty better than generic questions.
+- Use the Source only. If no good single card can be made, return { "cards": [] }.
+{{CONTEXT}}
+
+TEXT:
+{{TEXT}}`;
+  }
+}
+
 function buildLegacyResearchPaperAITemplatePrompt() {
   return `Return ONLY valid JSON. Never include explanations or backticks.
 You are making bibliography drill cards for a research paper.
@@ -143,47 +201,29 @@ function upgradeResearchPaperPromptIfNeeded(templates) {
 
 const DEFAULT_AI_TEMPLATES = [
   {
-    id: "concept",
-    name: "Concept",
-    prompt: buildSimpleAITemplatePrompt("concept")
+    id: "complete-front",
+    name: "Complete Front",
+    prompt: buildFocusedSuggestionModePrompt("complete-front")
   },
   {
-    id: "definition",
-    name: "Definition",
-    prompt: buildDefinitionAITemplatePrompt()
+    id: "complete-back",
+    name: "Complete Back",
+    prompt: buildFocusedSuggestionModePrompt("complete-back")
   },
   {
-    id: "math",
-    name: "Math formula",
-    prompt: buildSimpleAITemplatePrompt("math")
+    id: "rewrite-front",
+    name: "Rewrite Front",
+    prompt: buildFocusedSuggestionModePrompt("rewrite-front")
   },
   {
-    id: "research-paper",
-    name: "Research paper (3 cards)",
-    prompt: buildResearchPaperAITemplatePrompt()
+    id: "make-atomic",
+    name: "Make Atomic",
+    prompt: buildFocusedSuggestionModePrompt("make-atomic")
   },
   {
-    id: "book",
-    name: "Book (2 cards)",
-    prompt: `Return ONLY valid JSON. Never include explanations or backticks.
-You are making bibliography drill cards for a book.
-Extract: book_name, authors (comma-separated), and year (YYYY).
-
-Output shape EXACTLY:
-{
-  "deck": "",  // optional
-  "cards": [
-    { "type":"basic", "front":"Book name: <book_name> (a, y)", "back":"Authors: <authors>\\nYear: <year>", "tags":["AI-generated"], "context":"Bibliography \u2014 canonical" },
-    { "type":"basic", "front":"Book by <authors> in <year> \u2014 name?", "back":"<book_name>", "tags":["AI-generated"], "context":"Bibliography \u2014 recall" }
-  ]
-}
-Rules:
-- In "(a, y)", use the FIRST author's last name for "a" and the year for "y".
-- Preserve capitalization of the official book title.
-{{CONTEXT}}
-
-TEXT:
-{{TEXT}}`
+    id: "generate-candidate",
+    name: "Generate Candidate From Source",
+    prompt: buildFocusedSuggestionModePrompt("generate-candidate")
   }
 ];
 
@@ -334,10 +374,12 @@ async function ensureAiTemplatesLoaded(force = false) {
 function buildFallbackAiPrompt(templateId) {
   const name = templateId || "custom";
   return `Return ONLY valid JSON. Never include explanations or backticks.
-Make 1\u20132 flashcards using the TEMPLATE type: ${name}.
+Make exactly one source-grounded flashcard using the suggestion mode: ${name}.
 Output shape:
 { "cards": [ { "type":"basic", "front":"...", "back":"...", "tags":["AI-generated"] } ] }
-Keep answers atomic; fronts univocal.
+Preserve the user's apparent target, make one stable retrieval cue, and keep the answer minimal.
+Avoid vague context, multiple valid answers, shallow textbook lists, and passage restatement.
+If there is not enough source, return { "cards": [] }.
 {{CONTEXT}}
 
 TEXT:

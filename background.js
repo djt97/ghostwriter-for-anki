@@ -1,35 +1,57 @@
 // background.js — drive Ghostwriter for Anki UI surfaces (overlay ➜ tab; side panel is explicit)
 
 const supportsSidePanel = () => Boolean(chrome.sidePanel && (chrome.sidePanel.open || chrome.sidePanel.setOptions)); // keep
-const SOURCE_MODE_KEY = "quickflash_source_mode_v1";
+const OPTIONS_KEY = "quickflash_options";
 
-// Free-tier proxy: subsidized first 10 copilot suggestions
-const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton.workers.dev/v1";
-const FREE_TIER_LIMIT = 10;
+// Free-tier proxy: subsidized first-run AI suggestions. The proxy must also
+// enforce these limits server-side; local state is only for UX/status.
+const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton97.workers.dev/v1";
+const FREE_TIER_LIMIT = 20;
+const FREE_TIER_DAILY_LIMIT = 10;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 async function getFreeTierState() {
   const got = await chrome.storage.local.get(FREE_TIER_KEY);
   const state = got?.[FREE_TIER_KEY] || {};
   if (!state.installId) {
     state.installId = crypto.randomUUID();
-    state.used = 0;
-    await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+    state.used = state.used || 0;
   }
-  return { ...state, remaining: Math.max(0, FREE_TIER_LIMIT - (state.used || 0)) };
+  const today = todayKey();
+  if (state.dailyDate !== today) {
+    state.dailyDate = today;
+    state.dailyUsed = 0;
+  }
+  await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+  const lifetimeRemaining = Math.max(0, FREE_TIER_LIMIT - (state.used || 0));
+  const dailyRemaining = Math.max(0, FREE_TIER_DAILY_LIMIT - (state.dailyUsed || 0));
+  return {
+    ...state,
+    limit: FREE_TIER_LIMIT,
+    dailyLimit: FREE_TIER_DAILY_LIMIT,
+    remaining: Math.min(lifetimeRemaining, dailyRemaining),
+    lifetimeRemaining,
+    dailyRemaining,
+  };
 }
 
 async function incrementFreeTierUsage() {
   const got = await chrome.storage.local.get(FREE_TIER_KEY);
   const state = got?.[FREE_TIER_KEY] || {};
+  const today = todayKey();
+  if (state.dailyDate !== today) {
+    state.dailyDate = today;
+    state.dailyUsed = 0;
+  }
   state.used = (state.used || 0) + 1;
+  state.dailyUsed = (state.dailyUsed || 0) + 1;
   await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
 }
 const PANEL_PAGE_URL = chrome.runtime.getURL("panel.html");
-
-function normalizeSourceMode(mode) {
-  return (mode === "clipboard" || mode === "page") ? mode : "auto";
-}
 
 function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
@@ -38,14 +60,31 @@ function normalizeProvider(value) {
   return "ultimate";
 }
 
+function inferProviderFromOptions(opts) {
+  if (opts?.llmProvider) return normalizeProvider(opts.llmProvider);
+  if (opts?.openaiKey) return "openai";
+  if (opts?.ultimateKey) return "ultimate";
+  if (opts?.geminiKey) return "gemini";
+  if (opts?.claudeKey) return "claude";
+  if (/ultimateai/i.test(String(opts?.ultimateBaseUrl || ""))) return "ultimate";
+  if (/api\.openai\.com/i.test(String(opts?.openaiBaseUrl || ""))) return "openai";
+  return "openai";
+}
+
+function normalizeEditorSurface(value) {
+  if (value === "side_panel" || value === "sidePanel") return "side_panel";
+  if (value === "tab") return "tab";
+  return "overlay";
+}
+
 function getOpenAIProviderConfig(opts, overrideProvider) {
-  const provider = normalizeProvider(overrideProvider || opts?.llmProvider || "ultimate");
+  const provider = overrideProvider ? normalizeProvider(overrideProvider) : inferProviderFromOptions(opts || {});
   if (provider === "openai") {
     return {
       provider,
       baseUrl: (opts.openaiBaseUrl || "https://api.openai.com/v1").replace(/\/+$/g, ""),
-      apiKey: opts.openaiKey || opts.ultimateKey || "",
-      model: opts.openaiModel || opts.ultimateModel || "gpt-4o-mini",
+      apiKey: opts.openaiKey || "",
+      model: opts.openaiModel || opts.ultimateModel || "gpt-4.1-mini",
     };
   }
 
@@ -53,22 +92,50 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
     provider: "ultimate",
     baseUrl: (opts.ultimateBaseUrl || "https://smart.ultimateai.org/v1").replace(/\/+$/g, ""),
     apiKey: opts.ultimateKey || "",
-    model: opts.ultimateModel || "gpt-4o-mini",
+    model: opts.ultimateModel || "auto",
   };
 }
 
-async function cycleSourceModeSetting() {
-  try {
-    const got = await chrome.storage.sync.get(SOURCE_MODE_KEY);
-    const current = normalizeSourceMode(got?.[SOURCE_MODE_KEY]);
-    const next = current === "auto" ? "clipboard" : (current === "clipboard" ? "page" : "auto");
-    await chrome.storage.sync.set({ [SOURCE_MODE_KEY]: next });
-    return next;
-  } catch {
-    return "auto";
+function readChatMessageContent(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === "string") return part;
+      if (typeof part?.text === "string") return part.text;
+      if (typeof part?.content === "string") return part.content;
+      return "";
+    }).join("");
   }
+  return "";
 }
 
+function getChatCompletionText(data, requestedModel) {
+  const choice = data?.choices?.[0] || {};
+  const message = choice.message || {};
+  const out = readChatMessageContent(message).trim();
+  if (out) return out;
+  const actualModel = data?.model || requestedModel || "unknown model";
+  const hasReasoning = !!(
+    message.reasoning_content ||
+    message.thinking ||
+    message.thinking_blocks ||
+    message.provider_specific_fields?.thinking_blocks
+  );
+  if (hasReasoning) {
+    throw new Error(`Provider returned reasoning only from ${actualModel}, with no card text.`);
+  }
+  throw new Error(`Provider returned no card text from ${actualModel}.`);
+}
+
+async function getQuickflashOptions() {
+  try {
+    const { [OPTIONS_KEY]: options } = await chrome.storage.sync.get(OPTIONS_KEY);
+    return options || {};
+  } catch {
+    return {};
+  }
+}
 
 async function configureSidePanelBehavior(openOnClick = false) {
   if (supportsSidePanel() && chrome.sidePanel.setPanelBehavior) {
@@ -79,6 +146,11 @@ async function configureSidePanelBehavior(openOnClick = false) {
     }
   }
 }
+
+// Chrome persists side-panel action behavior across extension reloads. Keep the
+// toolbar action routed through our overlay-first click handler unless we
+// explicitly fall back to the side panel.
+configureSidePanelBehavior(false);
 
 async function enableSidePanelForTab(tabId) {
   if (!supportsSidePanel()) throw new Error("Side panel unsupported.");
@@ -95,10 +167,20 @@ async function enableSidePanelForTab(tabId) {
 }
 
 async function openSidePanelForTab(tabId) {
-  await enableSidePanelForTab(tabId);
+  if (!supportsSidePanel() || !chrome.sidePanel?.open) throw new Error("Side panel unsupported.");
+  if (typeof tabId !== "number") throw new Error("Side panel requires a numeric tabId.");
+
+  // sidePanel.open() must be called directly from the user gesture. Start the
+  // enabling request, but do not await it before opening the panel.
+  if (chrome.sidePanel.setOptions) {
+    chrome.sidePanel
+      .setOptions({ tabId, path: "panel.html", enabled: true })
+      .catch((e) => console.warn("setOptions error:", e?.message || e));
+  }
 
   try {
     await chrome.sidePanel.open({ tabId });
+    markSidePanelOpen({ tabId });
     console.info("sidePanel.open succeeded", { tabId });
   } catch (e) {
     console.warn("sidePanel.open error:", e?.message || e, { tabId });
@@ -111,8 +193,14 @@ async function closeSidePanelForTab(tabId) {
   if (typeof tabId !== "number") return false;
 
   try {
+    if (chrome.sidePanel.close) {
+      await chrome.sidePanel.close({ tabId });
+      markSidePanelClosed({ tabId });
+      return true;
+    }
     if (chrome.sidePanel.setOptions) {
       await chrome.sidePanel.setOptions({ tabId, enabled: false });
+      markSidePanelClosed({ tabId });
       return true;
     }
   } catch (e) {
@@ -121,6 +209,162 @@ async function closeSidePanelForTab(tabId) {
 
   return false;
 }
+
+function getCommandTabContext(tab) {
+  return {
+    tabId: typeof tab?.id === "number" ? tab.id : undefined,
+    windowId: typeof tab?.windowId === "number" ? tab.windowId : undefined,
+  };
+}
+
+const sidePanelOpenState = {
+  tabs: new Set(),
+  windows: new Set(),
+};
+
+function isGhostwriterSidePanelPath(path) {
+  if (!path) return true;
+  const cleanPath = String(path).split(/[?#]/)[0].replace(/^\/+/, "");
+  return cleanPath === "panel.html";
+}
+
+function markSidePanelOpen({ tabId, windowId, path } = {}) {
+  if (!isGhostwriterSidePanelPath(path)) return;
+  if (typeof tabId === "number") {
+    sidePanelOpenState.tabs.add(tabId);
+  } else if (typeof windowId === "number") {
+    sidePanelOpenState.windows.add(windowId);
+  }
+}
+
+function markSidePanelClosed({ tabId, windowId, path } = {}) {
+  if (!isGhostwriterSidePanelPath(path)) return;
+  if (typeof tabId === "number") {
+    sidePanelOpenState.tabs.delete(tabId);
+  } else if (typeof windowId === "number") {
+    sidePanelOpenState.windows.delete(windowId);
+  }
+}
+
+function isSidePanelMarkedOpen({ tabId, windowId } = {}) {
+  return (
+    (typeof tabId === "number" && sidePanelOpenState.tabs.has(tabId)) ||
+    (typeof windowId === "number" && sidePanelOpenState.windows.has(windowId))
+  );
+}
+
+function getSidePanelCommandOptions({ tabId, windowId } = {}) {
+  if (typeof tabId === "number") return { tabId };
+  if (typeof windowId === "number") return { windowId };
+  return null;
+}
+
+function closeSidePanelCommandFromUserGesture({ tabId, windowId } = {}) {
+  const closeOptions = getSidePanelCommandOptions({ tabId, windowId });
+  if (!closeOptions) return false;
+
+  if (!chrome.sidePanel?.close) {
+    if (typeof tabId === "number") {
+      closeSidePanelForTab(tabId).catch((err) => {
+        console.warn("Side panel toggle fallback failed:", err?.message || err);
+      });
+      return true;
+    }
+    return false;
+  }
+
+  let closeResult;
+  try {
+    closeResult = chrome.sidePanel.close(closeOptions);
+    markSidePanelClosed({ tabId, windowId });
+  } catch (err) {
+    console.warn("Side panel close failed:", err?.message || err);
+    markSidePanelClosed({ tabId, windowId });
+    return true;
+  }
+
+  Promise.resolve(closeResult)
+    .then(() => {
+      markSidePanelClosed({ tabId, windowId });
+      console.info("sidePanel.close succeeded", closeOptions);
+    })
+    .catch((err) => {
+      markSidePanelClosed({ tabId, windowId });
+      console.warn("sidePanel.close error:", err?.message || err, closeOptions);
+    });
+
+  return true;
+}
+
+function openSidePanelCommandFromUserGesture(tab) {
+  const { tabId, windowId } = getCommandTabContext(tab);
+  if (!supportsSidePanel() || !chrome.sidePanel?.open) {
+    openPanelTabFallback(tabId, windowId, "side-panel-unsupported").catch((err) => {
+      console.warn("Side panel fallback failed:", err?.message || err);
+    });
+    return;
+  }
+
+  if (isSidePanelMarkedOpen({ tabId, windowId }) && closeSidePanelCommandFromUserGesture({ tabId, windowId })) {
+    return;
+  }
+
+  if (typeof tabId === "number" && chrome.sidePanel.setOptions) {
+    chrome.sidePanel
+      .setOptions({ tabId, path: "panel.html", enabled: true })
+      .catch((err) => console.warn("setOptions error:", err?.message || err));
+  }
+
+  let openOptions = null;
+  if (typeof tabId === "number") {
+    openOptions = { tabId };
+  } else if (typeof windowId === "number") {
+    openOptions = { windowId };
+  }
+
+  if (!openOptions) {
+    openPanelTabFallback(tabId, windowId, "side-panel-command-no-tab").catch((err) => {
+      console.warn("Side panel fallback failed:", err?.message || err);
+    });
+    return;
+  }
+
+  let openResult;
+  try {
+    openResult = chrome.sidePanel.open(openOptions);
+    markSidePanelOpen({ tabId, windowId });
+  } catch (err) {
+    markSidePanelClosed({ tabId, windowId });
+    console.warn("Side panel command failed; opening panel tab:", err?.message || err);
+    openPanelTabFallback(tabId, windowId, "side-panel-command-failed").catch((fallbackErr) => {
+      console.warn("Side panel fallback failed:", fallbackErr?.message || fallbackErr);
+    });
+    return;
+  }
+
+  Promise.resolve(openResult)
+    .then(() => {
+      markSidePanelOpen({ tabId, windowId });
+      console.info("sidePanel.open succeeded", openOptions);
+      seedLastDraftFromTab(tabId).catch(() => {});
+    })
+    .catch((err) => {
+      markSidePanelClosed({ tabId, windowId });
+      console.warn("Side panel command failed; opening panel tab:", err?.message || err);
+      openPanelTabFallback(tabId, windowId, "side-panel-command-failed").catch((fallbackErr) => {
+        console.warn("Side panel fallback failed:", fallbackErr?.message || fallbackErr);
+      });
+    });
+}
+
+try {
+  chrome.sidePanel?.onOpened?.addListener((info) => {
+    markSidePanelOpen(info);
+  });
+  chrome.sidePanel?.onClosed?.addListener((info) => {
+    markSidePanelClosed(info);
+  });
+} catch {}
 
 async function getSidePanelEnabled(tabId) {
   if (!supportsSidePanel() || !chrome.sidePanel.getOptions) return null;
@@ -218,7 +462,7 @@ function openOrActivatePanelTab() {
   });
 }
 
-async function showOverlay({ tabId, windowId, pasteSelection, skipCapturePopover } = {}) {
+async function showOverlay({ tabId, windowId, pasteSelection, skipCapturePopover = true } = {}) {
   const id = await resolveActiveTabId({ tabId, windowId });
   if (typeof id !== "number") return false;
 
@@ -290,10 +534,47 @@ async function openPanelTabFallback(activeId, windowId, reason = "fallback") {
   });
 }
 
-async function openPanel({ tabId, windowId } = {}) {
-  const activeId = await resolveActiveTabId({ tabId, windowId });
+async function seedLastDraftFromTab(activeId) {
+  if (typeof activeId !== "number") return null;
+  try {
+    const ctx = await requestPageContext(activeId);
+    if (ctx && (ctx.selection || ctx.url)) {
+      await chrome.storage.local.set({ quickflash_lastDraft: ctx });
+      return ctx;
+    }
+  } catch {}
+  return null;
+}
 
-  if (await showOverlay({ tabId: activeId, windowId })) return;
+async function openOverlayCommand({ tabId, windowId } = {}) {
+  await configureSidePanelBehavior(false);
+  const activeId = typeof tabId === "number" ? tabId : await resolveActiveTabId({ tabId, windowId });
+  if (await showOverlay({ tabId: activeId, windowId, skipCapturePopover: true })) return;
+  await openPanelTabFallback(activeId, windowId, "overlay-command-failed");
+}
+
+async function openPanel({ tabId, windowId, pasteSelection = false, preferredSurface } = {}) {
+  const activeId = await resolveActiveTabId({ tabId, windowId });
+  const opts = await getQuickflashOptions();
+  const surface = normalizeEditorSurface(preferredSurface || opts.defaultEditorSurface);
+
+  if (surface === "side_panel") {
+    try {
+      await openSidePanelForTab(activeId);
+      seedLastDraftFromTab(activeId).catch(() => {});
+      return;
+    } catch (err) {
+      console.warn("Preferred side panel failed; trying overlay:", err?.message || err);
+    }
+  }
+
+  if (surface === "tab") {
+    await seedLastDraftFromTab(activeId);
+    await openPanelTabFallback(activeId, windowId, "preferred-tab");
+    return;
+  }
+
+  if (await showOverlay({ tabId: activeId, windowId, pasteSelection, skipCapturePopover: true })) return;
 
   try {
     await openSidePanelForTab(activeId);
@@ -308,15 +589,7 @@ async function openPanel({ tabId, windowId } = {}) {
 
 async function handleActionClick(tab) {
   try {
-    const tabId = tab?.id;
-    if (supportsSidePanel() && typeof tabId === "number") {
-      await enableSidePanelForTab(tabId);
-      if (!chrome.sidePanel?.setPanelBehavior) {
-        await openSidePanelForTab(tabId);
-      }
-      return;
-    }
-    await openPanel({ tabId, windowId: tab?.windowId });
+    await openOverlayCommand({ tabId: tab?.id, windowId: tab?.windowId });
   } catch (err) {
     console.warn("openPanel failed on action click:", err?.message || err);
   }
@@ -346,6 +619,22 @@ try {
 const ARCHIVE_KEY = "quickflash_archive_v1";
 const ARCHIVE_BACKUP_KEY = "quickflash_archive_backup_v1";
 const LAST_VER_KEY = "qf_lastVersion";
+const OPTIONS_BACKUP_KEY = "ghostwriter_options_backup_v1";
+const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v1";
+const OPTIONS_SCHEMA_VERSION = 2;
+const DEFAULT_QUEUE_SHORTCUT = "Meta+Shift+A";
+const PROVIDER_KEY_FIELDS = ["openaiKey", "ultimateKey", "geminiKey", "claudeKey"];
+const PROVIDER_CONFIG_FIELDS = [
+  ...PROVIDER_KEY_FIELDS,
+  "openaiBaseUrl",
+  "ultimateBaseUrl",
+  "geminiBaseUrl",
+  "claudeBaseUrl",
+  "openaiModel",
+  "ultimateModel",
+  "geminiModel",
+  "claudeModel",
+];
 
 async function storeArchiveBackup({ trigger = "update", prev = "" } = {}) {
   try {
@@ -366,15 +655,154 @@ async function storeArchiveBackup({ trigger = "update", prev = "" } = {}) {
   }
 }
 
+function hasStoredValue(opts, key) {
+  return typeof opts?.[key] === "string" ? !!opts[key].trim() : opts?.[key] !== undefined && opts?.[key] !== null;
+}
+
+function hasProviderConfig(opts) {
+  return PROVIDER_CONFIG_FIELDS.some((key) => hasStoredValue(opts, key));
+}
+
+function getPreservedCredentialSummary(opts) {
+  const summary = {};
+  for (const key of PROVIDER_KEY_FIELDS) {
+    summary[key] = hasStoredValue(opts, key);
+  }
+  return summary;
+}
+
+function normalizeQueueShortcutForUpdate(value) {
+  const text = String(value || "").trim();
+  if (!text) return value;
+  const normalized = text.toLowerCase().replace(/\s+/g, "");
+  return normalized === "meta+shift+q" || normalized === "cmd+shift+q" || normalized === "command+shift+q"
+    ? DEFAULT_QUEUE_SHORTCUT
+    : value;
+}
+
+function migrateOptionsForFocusedV2(existingOptions = {}) {
+  const original = existingOptions && typeof existingOptions === "object" && !Array.isArray(existingOptions)
+    ? existingOptions
+    : {};
+  const next = { ...original };
+
+  if (next.llmProvider) {
+    next.llmProvider = normalizeProvider(next.llmProvider);
+  } else if (hasProviderConfig(next)) {
+    next.llmProvider = inferProviderFromOptions(next);
+  }
+
+  if (next.defaultEditorSurface !== undefined) {
+    next.defaultEditorSurface = normalizeEditorSurface(next.defaultEditorSurface);
+  } else {
+    next.defaultEditorSurface = "overlay";
+  }
+
+  if (next.addShortcut !== undefined) {
+    next.addShortcut = normalizeQueueShortcutForUpdate(next.addShortcut);
+  }
+
+  if (next.manualCopilotOnly === undefined) next.manualCopilotOnly = true;
+  if (next.autoMagicGenerate === undefined) next.autoMagicGenerate = false;
+  if (next.ghostwriterSchemaVersion !== OPTIONS_SCHEMA_VERSION) {
+    next.ghostwriterSchemaVersion = OPTIONS_SCHEMA_VERSION;
+  }
+
+  return {
+    options: next,
+    changed: JSON.stringify(next) !== JSON.stringify(original),
+    preservedCredentials: getPreservedCredentialSummary(next),
+  };
+}
+
+function buildUpdateNotice({ previousVersion = "", currentVersion = "", preservedCredentials = {} } = {}) {
+  const preservedCount = Object.values(preservedCredentials || {}).filter(Boolean).length;
+  return {
+    id: `focused-v2-${currentVersion || "unknown"}`,
+    kind: "focused-v2",
+    previousVersion: previousVersion || null,
+    currentVersion: currentVersion || null,
+    createdAt: Date.now(),
+    dismissed: false,
+    title: `Ghostwriter updated to ${currentVersion || "the latest version"}`,
+    message: preservedCount
+      ? "Your API keys and Anki settings were preserved. Ghostwriter now defaults to the focused highlight -> overlay -> queue workflow."
+      : "Ghostwriter now defaults to the focused highlight -> overlay -> queue workflow. Add an API key any time, or keep writing manually.",
+    actions: [
+      "Review Queue is now the canonical place for drafts.",
+      "Overlay is the default editor surface; side panel is still available in Settings.",
+      "Manual AI suggestions are the default, with existing provider keys left untouched.",
+    ],
+    preservedCredentials,
+  };
+}
+
+async function backupOptionsBeforeMigration(existingOptions, { previousVersion = "", currentVersion = "" } = {}) {
+  if (!existingOptions || typeof existingOptions !== "object" || !Object.keys(existingOptions).length) return;
+  try {
+    const got = await chrome.storage.local.get(OPTIONS_BACKUP_KEY);
+    const currentBackup = got?.[OPTIONS_BACKUP_KEY];
+    if (currentBackup?.currentVersion === currentVersion) return;
+    await chrome.storage.local.set({
+      [OPTIONS_BACKUP_KEY]: {
+        snapshotAt: Date.now(),
+        previousVersion: previousVersion || null,
+        currentVersion: currentVersion || null,
+        options: existingOptions,
+      },
+    });
+  } catch (err) {
+    console.warn("Options compatibility backup failed:", err?.message || err);
+  }
+}
+
+async function runFocusedV2CompatibilityUpdate({ reason = "update", previousVersion = "" } = {}) {
+  if (reason !== "update" && reason !== "startup") return null;
+  const currentVersion = chrome.runtime.getManifest().version;
+  const got = await chrome.storage.sync.get(OPTIONS_KEY);
+  const existingOptions = got?.[OPTIONS_KEY] || {};
+  const migrated = migrateOptionsForFocusedV2(existingOptions);
+
+  await backupOptionsBeforeMigration(existingOptions, { previousVersion, currentVersion });
+  if (migrated.changed) {
+    await chrome.storage.sync.set({ [OPTIONS_KEY]: migrated.options });
+  }
+
+  const notice = buildUpdateNotice({
+    previousVersion,
+    currentVersion,
+    preservedCredentials: migrated.preservedCredentials,
+  });
+  await chrome.storage.local.set({ [UPDATE_NOTICE_KEY]: notice });
+  return { ...migrated, notice };
+}
+
+function maybeShowUpdateNotification(notice) {
+  try {
+    if (!notice || !chrome.notifications?.create) return;
+    chrome.notifications.create(`ghostwriter-update-${notice.id}`, {
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: notice.title,
+      message: "Settings and API keys were preserved. Open Settings to review what changed.",
+    });
+  } catch {}
+}
+
 chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
-  configureSidePanelBehavior(true);
+  configureSidePanelBehavior(false);
+  for (const id of ["quickflash-save-for-later", "quickflash-open", "quickflash-write-card"]) {
+    try { await chrome.contextMenus.remove(id); } catch {}
+  }
   chrome.contextMenus.create({ id: "quickflash-open", title: "Ghostwriter for Anki", contexts: ["all"] });
-  chrome.contextMenus.create({ id: "quickflash-write-card", title: "Write card with Ghostwriter", contexts: ["selection"] });
-  chrome.contextMenus.create({ id: "quickflash-save-for-later", title: "Save for later", contexts: ["selection"] });
+  chrome.contextMenus.create({ id: "quickflash-write-card", title: "Create Anki card with Ghostwriter", contexts: ["selection"] });
 
   try {
+    let updateResult = null;
     if (reason === "update") {
       await storeArchiveBackup({ trigger: "update", prev: previousVersion || "" });
+      updateResult = await runFocusedV2CompatibilityUpdate({ reason, previousVersion: previousVersion || "" });
+      maybeShowUpdateNotification(updateResult?.notice);
     }
     await chrome.storage.local.set({ [LAST_VER_KEY]: chrome.runtime.getManifest().version });
   } catch {}
@@ -393,7 +821,7 @@ async function refreshBadge() {
 }
 
 chrome.runtime.onStartup?.addListener(async () => {
-  configureSidePanelBehavior(true);
+  configureSidePanelBehavior(false);
   refreshBadge();
   try {
     const current = chrome.runtime.getManifest().version;
@@ -401,6 +829,8 @@ chrome.runtime.onStartup?.addListener(async () => {
     const prev = got?.[LAST_VER_KEY];
     if (prev && prev !== current) {
       await storeArchiveBackup({ trigger: "startup", prev });
+      const updateResult = await runFocusedV2CompatibilityUpdate({ reason: "startup", previousVersion: prev });
+      maybeShowUpdateNotification(updateResult?.notice);
       await chrome.storage.local.set({ [LAST_VER_KEY]: current });
     }
   } catch {}
@@ -409,6 +839,10 @@ chrome.runtime.onStartup?.addListener(async () => {
 // Open review queue when nudge notification is clicked
 try {
   chrome.notifications?.onClicked?.addListener((notificationId) => {
+    if (notificationId.startsWith("ghostwriter-update")) {
+      try { chrome.runtime.openOptionsPage(); } catch {}
+      return;
+    }
     if (notificationId.startsWith("ghostwriter-nudge")) {
       chrome.tabs.create({ url: chrome.runtime.getURL("review.html") });
     }
@@ -431,9 +865,16 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  markSidePanelClosed({ tabId });
   const key = `sticky_context_${tabId}`;
   chrome.storage.local.remove(key).catch(() => {});
 });
+
+try {
+  chrome.windows?.onRemoved?.addListener((windowId) => {
+    markSidePanelClosed({ windowId });
+  });
+} catch {}
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
@@ -442,60 +883,28 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
   if (info.menuItemId === "quickflash-write-card") {
-    // Skip capture popover, go straight to full panel with selection
-    const ctx = await requestPageContext(tab.id);
-    if (ctx) {
-      try { await chrome.storage.local.set({ quickflash_lastDraft: ctx }); } catch {}
-    }
-    await showOverlay({ tabId: tab.id, windowId: tab.windowId, pasteSelection: true, skipCapturePopover: true });
-    return;
-  }
-  if (info.menuItemId === "quickflash-save-for-later") {
-    // Send save-for-later message to content script
-    const injected = await ensureContentScript(tab.id);
-    if (!injected) return;
-    try {
-      await chrome.tabs.sendMessage(tab.id, { type: "quickflash:saveForLater" });
-    } catch (err) {
-      console.warn("Save for later failed:", err?.message || err);
-    }
+    await openPanel({ tabId: tab.id, windowId: tab.windowId });
     return;
   }
 });
 
-chrome.commands.onCommand.addListener(async (command) => {
-  let activeTab;
-  try {
-    [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  } catch (err) {
-    console.warn("Failed to resolve active tab for command log:", err?.message || err);
-  }
+chrome.commands.onCommand.addListener((command, tab) => {
+  const { tabId, windowId } = getCommandTabContext(tab);
   console.info("Command received", {
     command,
-    tabId: activeTab?.id ?? null,
-    windowId: activeTab?.windowId ?? null,
+    tabId: tabId ?? null,
+    windowId: windowId ?? null,
     supportsSidePanel: supportsSidePanel(),
   });
-  if (command === "open-ghostwriter") {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (await showOverlay({ tabId: tab?.id, windowId: tab?.windowId })) {
-      return;
-    }
-    await openPanelTabFallback(tab?.id, tab?.windowId);
+  if (command === "open-ghostwriter-overlay") {
+    openOverlayCommand({ tabId, windowId }).catch((err) => {
+      console.warn("Overlay command failed:", err?.message || err);
+    });
     return;
   }
-  if (command === "open-ghostwriter-with-selection") {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (
-      !(await showOverlay({ tabId: tab?.id, windowId: tab?.windowId, pasteSelection: true }))
-    ) {
-      await openPanelTabFallback(tab?.id, tab?.windowId);
-    }
+  if (command === "open-ghostwriter-side-panel" || command === "open-ghostwriter") {
+    openSidePanelCommandFromUserGesture(tab);
     return;
-  }
-  if (command === "quickflash-toggle-source-mode") {
-    const mode = await cycleSourceModeSetting();
-    try { await chrome.runtime.sendMessage({ type: "quickflash:sourceModeChanged", mode }); } catch {}
   }
 });
 
@@ -725,7 +1134,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }),
         });
         const data = await r.json();
-        const content = data?.choices?.[0]?.message?.content || "";
+        const content = getChatCompletionText(data, mdl);
 
         if (usingFreeTier) {
           await incrementFreeTierUsage();

@@ -255,7 +255,7 @@ const stickyContextState = { enabled: false, tabId: null, value: "" };
 
 
 
-// AI template functions → moved to panel-ai-templates.js
+// Focused AI suggestion mode functions live in panel-ai-templates.js.
 
 
 function isLikelyMobileDevice() {
@@ -583,35 +583,74 @@ function normalizeProvider(value) {
   return "ultimate";
 }
 
-const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton.workers.dev/v1";
-const FREE_TIER_LIMIT = 10;
+function inferProviderFromOptions(opts) {
+  if (opts?.llmProvider) return normalizeProvider(opts.llmProvider);
+  if (opts?.openaiKey) return "openai";
+  if (opts?.ultimateKey) return "ultimate";
+  if (opts?.geminiKey) return "gemini";
+  if (opts?.claudeKey) return "claude";
+  return "openai";
+}
+
+const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton97.workers.dev/v1";
+const FREE_TIER_LIMIT = 20;
+const FREE_TIER_DAILY_LIMIT = 10;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
 
 async function getFreeTierState() {
   try {
-    const got = await chrome.storage.local.get(FREE_TIER_KEY);
-    const state = got?.[FREE_TIER_KEY] || {};
-    return { installId: state.installId || "", used: state.used || 0, remaining: Math.max(0, FREE_TIER_LIMIT - (state.used || 0)) };
+	    const got = await chrome.storage.local.get(FREE_TIER_KEY);
+	    const state = got?.[FREE_TIER_KEY] || {};
+	    let changed = false;
+	    if (!state.installId) {
+	      state.installId = crypto.randomUUID();
+	      state.used = state.used || 0;
+	      changed = true;
+	    }
+	    const today = new Date().toISOString().slice(0, 10);
+	    const dailyUsed = state.dailyDate === today ? (state.dailyUsed || 0) : 0;
+	    if (state.dailyDate !== today) {
+	      state.dailyDate = today;
+	      state.dailyUsed = 0;
+	      changed = true;
+	    }
+	    if (changed) await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+	    const lifetimeRemaining = Math.max(0, FREE_TIER_LIMIT - (state.used || 0));
+	    const dailyRemaining = Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed);
+	    return {
+	      installId: state.installId || "",
+	      used: state.used || 0,
+	      dailyUsed,
+	      remaining: Math.min(lifetimeRemaining, dailyRemaining),
+	      lifetimeRemaining,
+	      dailyRemaining,
+	    };
   } catch { return { installId: "", used: 0, remaining: 0 }; }
 }
 
 async function incrementFreeTierUsage() {
   try {
-    const got = await chrome.storage.local.get(FREE_TIER_KEY);
-    const state = got?.[FREE_TIER_KEY] || {};
-    state.used = (state.used || 0) + 1;
-    await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+	    const got = await chrome.storage.local.get(FREE_TIER_KEY);
+	    const state = got?.[FREE_TIER_KEY] || {};
+	    const today = new Date().toISOString().slice(0, 10);
+	    if (state.dailyDate !== today) {
+	      state.dailyDate = today;
+	      state.dailyUsed = 0;
+	    }
+	    state.used = (state.used || 0) + 1;
+	    state.dailyUsed = (state.dailyUsed || 0) + 1;
+	    await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
   } catch {}
 }
 
 function getOpenAIProviderConfig(opts, overrideProvider) {
-  const provider = normalizeProvider(overrideProvider || opts?.llmProvider || "ultimate");
+  const provider = overrideProvider ? normalizeProvider(overrideProvider) : inferProviderFromOptions(opts || {});
   if (provider === "openai") {
     return {
       provider,
       baseUrl: (opts.openaiBaseUrl || "https://api.openai.com/v1").replace(/\/+$/g, ""),
-      apiKey: opts.openaiKey || opts.ultimateKey || "",
-      model: opts.openaiModel || opts.ultimateModel || "gpt-4o-mini",
+      apiKey: opts.openaiKey || "",
+      model: opts.openaiModel || opts.ultimateModel || "gpt-4.1-mini",
     };
   }
 
@@ -619,7 +658,7 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
     provider: "ultimate",
     baseUrl: (opts.ultimateBaseUrl || "https://smart.ultimateai.org/v1").replace(/\/+$/g, ""),
     apiKey: opts.ultimateKey || "",
-    model: opts.ultimateModel || "gpt-4o-mini",
+    model: opts.ultimateModel || "auto",
   };
 }
 
@@ -650,7 +689,7 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
   opts = opts || {};
 
   const optsAll = await getOptions();
-  const provider = normalizeProvider(optsAll?.llmProvider || "ultimate");
+  const provider = inferProviderFromOptions(optsAll);
   const temperature = typeof opts.temperature === "number" ? opts.temperature : 0.2;
 
   // Gemini path
@@ -719,7 +758,7 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     recordDebugError(err);
     throw err;
   }
-  const content = data?.choices?.[0]?.message?.content || "";
+  const content = getChatCompletionText(data, { requestedModel: model, provider: providerName, maxTokens: opts.maxTokens });
   if (_freeTier) incrementFreeTierUsage();
   recordDebugResponse(content);
   const parsed = parseJSONLoose(content);
@@ -729,6 +768,53 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     throw new Error("AI did not return array/object JSON as requested.");
   }
   return parsed;
+}
+
+function readChatMessageContent(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === "string") return part;
+      if (typeof part?.text === "string") return part.text;
+      if (typeof part?.content === "string") return part.content;
+      return "";
+    }).join("");
+  }
+  return "";
+}
+
+function makeReasoningOnlyProviderError(data, { requestedModel, provider, maxTokens } = {}) {
+  const actualModel = data?.model || requestedModel || "unknown model";
+  const choice = data?.choices?.[0] || {};
+  const message = choice?.message || {};
+  const hasReasoning = !!(
+    message.reasoning_content ||
+    message.thinking ||
+    message.thinking_blocks ||
+    message.provider_specific_fields?.thinking_blocks ||
+    choice.delta?.reasoning_content
+  );
+  if (hasReasoning) {
+    return new Error(
+      `Provider returned reasoning only from ${actualModel}, with no card text. ` +
+      `Switch to direct OpenAI or choose a non-reasoning UltimateAI model.`
+    );
+  }
+  if (choice.finish_reason === "length") {
+    return new Error(
+      `Provider returned no card text before the ${maxTokens || "current"} token limit. ` +
+      `This model may be spending tokens on hidden reasoning.`
+    );
+  }
+  return new Error(`Provider returned no card text from ${actualModel}.`);
+}
+
+function getChatCompletionText(data, { requestedModel, provider, maxTokens } = {}) {
+  const message = data?.choices?.[0]?.message || {};
+  const out = readChatMessageContent(message).trim();
+  if (out) return out;
+  throw makeReasoningOnlyProviderError(data, { requestedModel, provider, maxTokens });
 }
 
 async function ultimateCompletion(prompt, options = {}) {
@@ -794,11 +880,7 @@ async function ultimateCompletion(prompt, options = {}) {
     recordDebugError(err);
     throw err;
   }
-  const text = data?.choices?.[0]?.message?.content;
-  const out = typeof text === "string" ? text.trim() : "";
-  if (!out && data?.choices?.[0]?.finish_reason === "length") {
-    throw new Error(`Max tokens reached (${maxTokens}). Open Options to increase the limit.`);
-  }
+  const out = getChatCompletionText(data, { requestedModel: mdl, provider, maxTokens });
   if (_freeTier) incrementFreeTierUsage();
   recordDebugResponse(out);
   return out;
@@ -1027,11 +1109,20 @@ async function geminiCompletionStream(
 
   const debugActive = debugState.enabled;
   let debugBuffer = "";
+  let contentBuffer = "";
+  let sawReasoningOnly = false;
   const emitDelta = (chunk) => {
+    contentBuffer += chunk;
     if (debugActive) debugBuffer += chunk;
     onDelta?.(chunk);
   };
   const finalizeStream = () => {
+    if (!contentBuffer && sawReasoningOnly) {
+      throw new Error(
+        `Provider returned reasoning only from ${mdl}, with no card text. ` +
+        `Switch to direct OpenAI or choose a non-reasoning UltimateAI model.`
+      );
+    }
     if (debugActive) recordDebugResponse(debugBuffer);
     onDone?.();
   };
@@ -1111,12 +1202,26 @@ async function ultimateCompletionStream(
   { model, maxTokens = 24, temperature = 0.2, stop, system, signal, onDelta, onStart, onDone } = {}
 ) {
   const opts   = await getOptions();
-  const baseUrl = (opts.ultimateBaseUrl || "https://smart.ultimateai.org/v1").replace(/\/+$/,'');
-  const apiKey  = opts.ultimateKey || "";
-  const mdl     = model || opts.ultimateModel || "gpt-4o-mini";
-  if (!apiKey) throw new Error("UltimateAI API key missing. Set it in Options.");
+  const providerConfig = await getOpenAIProviderConfigWithFreeTier(opts);
+  const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
+  const mdl = model || defaultModel;
+  if (!apiKey) throw new Error("API key missing. Set it in Options.");
   const endpoint = `${baseUrl}/chat/completions`;
   const systemPrompt = system || getCopilotSystemPrompt("front");
+  if (_freeTier) {
+    const text = await ultimateCompletion(prompt, {
+      model: mdl,
+      maxTokens,
+      temperature,
+      stop,
+      system,
+      signal,
+    });
+    onStart?.();
+    if (text) onDelta?.(text);
+    onDone?.();
+    return;
+  }
   const payload = {
     model: mdl,
     messages: [
@@ -1130,7 +1235,7 @@ async function ultimateCompletionStream(
     stop: Array.isArray(stop) && stop.length ? stop : undefined
   };
   recordDebugRequest({
-    provider: "ultimate",
+    provider,
     model: mdl,
     endpoint,
     system: systemPrompt,
@@ -1143,11 +1248,31 @@ async function ultimateCompletionStream(
 
   const debugActive = debugState.enabled;
   let debugBuffer = "";
+  let contentBuffer = "";
+  let sawReasoningOnly = false;
+  let sawLengthFinish = false;
   const emitDelta = (chunk) => {
+    contentBuffer += chunk;
     if (debugActive) debugBuffer += chunk;
     onDelta?.(chunk);
   };
   const finalizeStream = () => {
+    if (!contentBuffer && sawReasoningOnly) {
+      const err = new Error(
+        `Provider returned reasoning only from ${mdl}, with no card text. ` +
+        `Switch to direct OpenAI or choose a non-reasoning UltimateAI model.`
+      );
+      recordDebugError(err);
+      throw err;
+    }
+    if (!contentBuffer && sawLengthFinish) {
+      const err = new Error(
+        `Provider returned no card text before the ${maxTokens || "current"} token limit. ` +
+        `This model may be spending tokens on hidden reasoning.`
+      );
+      recordDebugError(err);
+      throw err;
+    }
     if (debugActive) recordDebugResponse(debugBuffer);
     onDone?.();
   };
@@ -1189,7 +1314,11 @@ async function ultimateCompletionStream(
       if (data === "[DONE]") { finalizeStream(); return; }
       try {
         const j = JSON.parse(data);
-        const chunk = j?.choices?.[0]?.delta?.content || "";
+        const choice = j?.choices?.[0] || {};
+        const delta = choice.delta || {};
+        const chunk = delta.content || "";
+        if (!chunk && (delta.reasoning_content || delta.thinking || delta.thinking_blocks)) sawReasoningOnly = true;
+        if (choice.finish_reason === "length") sawLengthFinish = true;
         if (chunk) emitDelta(chunk);
       } catch {}
     }
@@ -1316,7 +1445,7 @@ function setStorageFlag(storage, key, value) {
 const copilot = {
   enabled: true,
   apiConfigured: false,
-  provider: "ultimate",
+  provider: "openai",
   toggleEl: null,
   statusEl: null,
   lastStatus: "",
@@ -1331,8 +1460,8 @@ const copilot = {
   // tuning (defaults; overridden by options)
   frontWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontWordCap || 20,
   backWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackWordCap || 16,
-  frontMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontMaxTokens || 1024,
-  backMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackMaxTokens || 1024,
+  frontMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontMaxTokens || 48,
+  backMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackMaxTokens || 36,
   minIntervalMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotMinIntervalMs || 1200,
   timeoutMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotTimeoutMs || 30000,
   pauseUntil: 0,
@@ -1415,6 +1544,7 @@ function resetCopilotLocks() {
     st.suggestion = "";
     st.lastValue = "";
   }
+  updateShortcutCoach();
 }
 
 async function copilotRateLimit() {
@@ -1454,31 +1584,30 @@ function getCopilotSystemPrompt(kind = "front") {
 
   if (kind === "back") {
     return appendStrictMathRule(renderPromptTemplate([
-      "You autocomplete flashcard ANSWERS.",
-      "Return a single, atomic answer (≤ {{backWordCap}} words).",
-      "Follow minimum-information (one fact per card) and univocality (one correct answer).",
-      "Ground in the Source excerpt when present; if insufficient, infer minimally from notes/question; only then use general knowledge.",
-      "No preamble; do not repeat the question; prefer a short noun phrase or clause.",
-      "Answer with the minimal phrase that fully answers the question; do not restate the source sentence.",
-      "Do not append extra descriptors (e.g., weights, dates, clauses) unless they are required to disambiguate the answer.",
-      "Bad: “Blue whales are the largest animal on earth.” Good: “Blue whales.”"
+      "Autocomplete one Anki Back field.",
+      "Output only the text to insert. No analysis, labels, quotes, markdown, or \"The user\".",
+      "Continue after the user's prefix; do not repeat, correct, or restate text already typed.",
+      "Answer the Front exactly. Prefer the smallest source-grounded phrase.",
+      "Supply the missing answer the Front cues; do not turn the Back into a passage summary."
     ].join(" ")));
   }
   if (kind === "front-from-back") {
     return appendStrictMathRule(renderPromptTemplate([
-      "You write flashcard QUESTIONS from a provided answer.",
-      "Ask a direct question that is univocal and answered exactly by the Back text.",
-      "Return ≤ {{frontWordCap}} words; fewer is better. No answers, no filler.",
-      "Prefer exact vocabulary from the Source excerpt when present. No preambles."
+      "Autocomplete one Anki Front field.",
+      "Output only the text to insert. No analysis, labels, quotes, markdown, or \"The user\".",
+      "Continue after the user's prefix; do not repeat, correct, or restate text already typed.",
+      "Use the Back as the answer contract. Ask for exactly one target.",
+      "Cue, don't disclose: the Front must point at the Back answer while leaving that answer missing."
     ].join(" ")));
   }
   // kind === 'front'
   return appendStrictMathRule(renderPromptTemplate([
-    "You autocomplete flashcard QUESTIONS.",
-    "Continue ONLY the question fragment the user started.",
-    "Apply minimum-information (one fact per card) and ensure the question is univocal (admits one correct answer).",
-    "Return ≤ {{frontWordCap}} words; fewer is better. No answers, no filler.",
-    "Prefer exact vocabulary from the Source excerpt when present. No preambles."
+    "Autocomplete one Anki Front field.",
+    "Output only the text to insert. No analysis, labels, quotes, markdown, or \"The user\".",
+    "Continue after the user's prefix; do not repeat, correct, or restate text already typed.",
+    "Complete the user's prefix into one durable retrieval cue. No answer leakage.",
+    "Cue, don't disclose: silently identify the minimal Back answer, then write a Front that asks for it without revealing the method, formula, definition, result, name, or example.",
+    "If the completion would need \"by defining\", \"using\", \"where\", \"namely\", or another answer-bearing phrase, stop before that phrase."
   ].join(" ")));
 }
 
@@ -1528,6 +1657,7 @@ async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, f
     src.dataset.autoClipboard = '1';
     if (wantPaste) src.dispatchEvent(new Event('input', { bubbles: true }));
   }
+  updateOverlaySourceChrome();
   if (debugState.enabled && debugState.prefs.showSource) {
     const debugSource = $("#debugSource");
     if (debugSource) debugSource.value = clip || "";
@@ -1558,12 +1688,32 @@ function clearClipboardSource({ notify = false } = {}) {
   const hadValue = !!src.value;
   src.value = "";
   delete src.dataset.autoClipboard;
+  updateOverlaySourceChrome();
   if (notify && hadValue) {
     src.dispatchEvent(new Event('input', { bubbles: true }));
   }
   if (copilot?.pageCtx?.usingClipboard) {
     copilot.pageCtx = null;
   }
+  return true;
+}
+
+function applyPageContextToEditor(ctx, { dispatch = true, preserveUserText = false } = {}) {
+  const selection = (ctx?.selection || "").trim();
+  if (!selection) return false;
+  const sourceEl = document.querySelector("#source");
+  if (!sourceEl) return false;
+  if (preserveUserText && sourceEl.value.trim()) return false;
+  delete sourceEl.dataset.autoClipboard;
+  sourceEl.value = selection;
+  if (dispatch) sourceEl.dispatchEvent(new Event("input", { bubbles: true }));
+  updateOverlaySourceChrome();
+  refreshDebugSource();
+  updateLocalMetrics((metrics) => {
+    markMetricOnce(metrics, "first_draft_created_at");
+    bumpMetric(metrics, "highlight_drafts_created");
+    return metrics;
+  });
   return true;
 }
 
@@ -1666,6 +1816,10 @@ async function seedCopilotPageContext() {
     if (quickflash_lastDraft) {
       copilot.pageCtx = quickflash_lastDraft;           // prefer exact overlay context
       await chrome.storage.local.remove("quickflash_lastDraft").catch(() => {});
+      if ((quickflash_lastDraft.selection || "").trim()) {
+        await clearManualDraftStorage().catch(() => {});
+      }
+      applyPageContextToEditor(quickflash_lastDraft, { preserveUserText: false });
       refreshDebugSource();
       return;
     }
@@ -1689,6 +1843,7 @@ window.addEventListener("message", async (event) => {
     if (incomingSelection) clearClipboardSource({ notify: true });
 
     copilot.pageCtx = event.data.payload || copilot.pageCtx; // latest overlay context
+    applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
     resetCopilotLocks();
     refreshDebugSource();
 
@@ -1730,6 +1885,9 @@ window.addEventListener("message", async (event) => {
     resetCopilotLocks();
     setCopilotStatus("Copilot ready.");
   }
+  if (event?.data?.type === "quickflash:queueCurrentCard") {
+    await queueCurrentCardForReview();
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -1754,14 +1912,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 function setCopilotStatus(text, isError = false) {
   copilot.lastStatus = text || "";
-  if (!copilot.statusEl) return;
-  copilot.statusEl.textContent = text || "";
-  copilot.statusEl.classList.toggle("error", !!isError && !!text);
+  if (copilot.statusEl) {
+    copilot.statusEl.textContent = text || "";
+    copilot.statusEl.classList.toggle("error", !!isError && !!text);
+  }
+  if (isError && text) {
+    showCopilotNotice(text, { error: true });
+  }
 }
 
-// Ephemeral “lite fallback” notice anchored between Front and Back
+// Ephemeral Copilot notice anchored between Front and Back
 let __qfLiteToastTimer = null;
-function showLiteFallbackToast(message = "Used lite fallback") {
+function showCopilotNotice(message = "Copilot notice", { error = false } = {}) {
   try {
     // Reuse the same banner if it already exists
     let note = document.getElementById("qf-lite-fallback");
@@ -1770,13 +1932,9 @@ function showLiteFallbackToast(message = "Used lite fallback") {
       note.id = "qf-lite-fallback";
       note.setAttribute("role", "status");
       note.className = "small";
-      // Inline styles so we don’t need to touch panel.html CSS
       note.style.margin = "6px 0 10px";
       note.style.padding = "6px 8px";
       note.style.borderRadius = "8px";
-      note.style.background = "#dcfce7";     // green-100
-      note.style.border = "1px solid #86efac"; // green-300
-      note.style.color = "#14532d";          // green-900-ish
       note.style.boxShadow = "0 1px 2px rgba(0,0,0,.05)";
 
       // Anchor just below the compact copilot bar (between Front & Back)
@@ -1789,6 +1947,9 @@ function showLiteFallbackToast(message = "Used lite fallback") {
         (document.querySelector("main") || document.body).appendChild(note);
       }
     }
+    note.style.background = error ? "#fee2e2" : "#dcfce7";
+    note.style.border = error ? "1px solid #fecaca" : "1px solid #86efac";
+    note.style.color = error ? "#7f1d1d" : "#14532d";
     note.textContent = message;
     note.style.display = "block";
     if (__qfLiteToastTimer) clearTimeout(__qfLiteToastTimer);
@@ -1796,6 +1957,10 @@ function showLiteFallbackToast(message = "Used lite fallback") {
       try { note.remove(); } catch {}
     }, 2400);
   } catch {}
+}
+
+function showLiteFallbackToast(message = "Used lite fallback") {
+  showCopilotNotice(message, { error: false });
 }
 
 function cancelCopilotRequests() {
@@ -1806,6 +1971,7 @@ function cancelCopilotRequests() {
     state.suggestion = "";
     state.lastValue = "";
   }
+  updateShortcutCoach();
 }
 
 async function persistCopilotPreference(enabled) {
@@ -1859,6 +2025,65 @@ function setCopilotEnabled(nextEnabled, { persist = false } = {}) {
   }
 }
 
+function buildCompletionPrefixIndex(value) {
+  const chars = [];
+  const positions = [];
+  let lastWasSpace = false;
+  const text = String(value || "");
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (/[\u200b\u200c\u200d\ufeff]/.test(ch)) continue;
+    if (/['’‘`]/.test(ch)) continue;
+    if (/\s/.test(ch)) {
+      if (chars.length && !lastWasSpace) {
+        chars.push(" ");
+        positions.push(i + 1);
+        lastWasSpace = true;
+      }
+      continue;
+    }
+    chars.push(ch.toLowerCase());
+    positions.push(i + 1);
+    lastWasSpace = false;
+  }
+  while (chars[chars.length - 1] === " ") {
+    chars.pop();
+    positions.pop();
+  }
+  return { text: chars.join(""), positions };
+}
+
+function stripExistingPrefixFromCompletion(completionText, existingText) {
+  const text = String(completionText || "");
+  const existing = String(existingText || "").trim();
+  if (!text || !existing) return text;
+
+  const lowerText = text.toLowerCase();
+  const lowerExisting = existing.toLowerCase();
+  if (lowerText.startsWith(lowerExisting)) {
+    return text.slice(existing.length).replace(/^\s+/, "");
+  }
+  if (lowerExisting.startsWith(lowerText) && lowerText.length < lowerExisting.length) {
+    return "";
+  }
+
+  const existingIndex = buildCompletionPrefixIndex(existing);
+  const completionIndex = buildCompletionPrefixIndex(text);
+  const prefix = existingIndex.text;
+  if (prefix.startsWith(completionIndex.text) && completionIndex.text.length < prefix.length) {
+    return "";
+  }
+  if (!prefix || !completionIndex.text.startsWith(prefix)) return text;
+
+  const next = completionIndex.text[prefix.length] || "";
+  const prefixHasWordBreak = /\s/.test(prefix);
+  const safeBoundary = !next || !/[a-z0-9]/i.test(next) || prefixHasWordBreak;
+  if (!safeBoundary) return text;
+
+  const cut = completionIndex.positions[prefix.length - 1] || 0;
+  return cut > 0 ? text.slice(cut).replace(/^\s+/, "") : text;
+}
+
 function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWords } = {}) {
   if (!raw) return "";
   let text = String(raw)
@@ -1869,18 +2094,41 @@ function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWord
     .replace(/\s{2,}/g, " ")
     .trim();
 
+  text = stripCopilotMetaOutput(text);
+  if (!text) return "";
+
+  text = stripExistingPrefixFromCompletion(text, existingText);
+  if (!text) return "";
+
   const cap = typeof maxWords === "number"
     ? maxWords
     : (role === "front" ? copilot.frontWordCap : copilot.backWordCap);
   const words = text.split(/\s+/);
   if (words.length > cap) text = words.slice(0, cap).join(" ");
 
-  const existing = (existingText || "").trim();
-  if (existing && text.toLowerCase().startsWith(existing.toLowerCase())) {
-    text = text.slice(existing.length).replace(/^\s+/, "");
-  }
   // IMPORTANT: do NOT drop suffix matches; streaming models often send suffix-sized deltas first.
   return text;
+}
+
+function stripCopilotMetaOutput(rawText) {
+  let text = String(rawText || "").trim();
+  if (!text) return "";
+
+  text = text
+    .replace(/^(?:front|back|question|answer|completion)\s*[:\-]\s*/i, "")
+    .replace(/^(?:the\s+)?(?:answer|completion)\s+(?:is|would be|should be)\s+/i, "")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+
+  const startsWithMeta = /^(?:the user\b|i\b|we\b|looking at\b|based on\b|this (?:card|front|back|source)\b|the (?:front|back|source)\b)/i.test(text);
+  if (!startsWithMeta) return text;
+
+  const labelled = text.match(/\b(?:answer|back|completion)\s*[:\-]\s*["“]?(.+?)["”]?$/i);
+  if (labelled?.[1] && !/^(?:the user\b|i\b|looking at\b)/i.test(labelled[1].trim())) {
+    return labelled[1].trim();
+  }
+
+  return "";
 }
 
 function stripFrontFromBack(backText, frontText) {
@@ -1931,6 +2179,129 @@ function finalizeFrontQuestion(text) {
   return s; // leave as-is
 }
 
+function normalizeFrontLeakText(value) {
+  return String(value || "")
+    .replace(/\\\((.*?)\\\)/g, " $1 ")
+    .replace(/\\\[(.*?)\\\]/g, " $1 ")
+    .replace(/\\[a-zA-Z]+\*?/g, " ")
+    .replace(/[{}*_`"'“”‘’]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function getFrontAnswerLeakReason(frontText, { existingText = "", backText = "" } = {}) {
+  const text = normalizeFrontLeakText(frontText);
+  if (!text) return "";
+
+  const existing = normalizeFrontLeakText(existingText);
+  const added = existing && text.startsWith(existing)
+    ? text.slice(existing.length).trim()
+    : text;
+  const check = added || text;
+  const equationToken = "(?:=|->|=>|\\\\to|\\\\mapsto|\\\\rightarrow|\\\\Rightarrow|\\u2192|\\u21a6)";
+
+  const phrasePatterns = [
+    {
+      reason: "answer-bearing method phrase",
+      regex: /\b(?:by|via|using|through)\s+(?:defining|setting|letting|writing|choosing|taking|introducing|substituting|applying)\b/i,
+    },
+    {
+      reason: "answer-bearing apposition",
+      regex: /\b(?:namely|specifically|i\.e\.|that is)\s+[^?.!]{3,}/i,
+    },
+    {
+      reason: "answer-bearing definition phrase",
+      regex: /\b(?:defined as|given by|where|with)\s+[^?.!]{0,90}(?:=|->|=>|\\to|\\mapsto|\\rightarrow|\\Rightarrow|\u2192|\u21a6)/i,
+    },
+    {
+      reason: "answer-bearing equation",
+      regex: new RegExp(`\\b(?:define|defines|defined|set|sets|setting|let|lets|letting|write|writes|writing|take|takes|taking|choose|chooses|choosing|introduce|introduces|introducing)\\b[^?.!]{0,90}${equationToken}`, "i"),
+    },
+    {
+      reason: "answer-bearing formula after cue phrase",
+      regex: new RegExp(`\\b(?:by|using|via|with|where|namely|specifically)\\b[^?.!]{0,90}${equationToken}`, "i"),
+    },
+  ];
+
+  for (const pattern of phrasePatterns) {
+    if (pattern.regex.test(check) || pattern.regex.test(text)) {
+      return pattern.reason;
+    }
+  }
+
+  const back = normalizeFrontLeakText(backText);
+  if (back && back.length >= 8 && text.includes(back)) {
+    return "front includes the Back answer";
+  }
+
+  return "";
+}
+
+function buildFrontLeakRetryPrompt(basePrompt, leakedDraft, reason) {
+  const clip = (value, max = 220) => {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (text.length <= max) return text;
+    return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}...`;
+  };
+  const base = String(basePrompt || "").trim().replace(/\nOutput:\s*$/i, "");
+  return [
+    base,
+    "",
+    "Quality check: the previous Front was rejected because it disclosed the answer.",
+    reason ? `Reason: ${reason}.` : "",
+    leakedDraft ? `Rejected Front: ${clip(leakedDraft)}` : "",
+    "Rewrite once. Keep the user's target, but make the Front a cue with the answer missing.",
+    "Do not include the method, formula, definition, result, name, or example that belongs on the Back.",
+    "Output:"
+  ].filter(Boolean).join("\n");
+}
+
+async function callFrontLLMWithLeakRetry(prompt, sys, controller, state, existingText, ctx = {}) {
+  state._lastFrontLeakBlocked = false;
+  let suggestion = await callFrontLLM(prompt, sys, controller, state, existingText);
+  if (controller?.signal?.aborted) return "";
+
+  const fullDraft = (existingText + (suggestion ? ` ${suggestion}` : "")).trim();
+  const leakReason = getFrontAnswerLeakReason(fullDraft, {
+    existingText,
+    backText: ctx.other || "",
+  });
+  if (!suggestion || !leakReason) return suggestion;
+
+  console.debug("[Copilot] Rewriting front suggestion that leaked the answer:", leakReason, fullDraft);
+  clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
+  if (state.suggestionEl) {
+    state.suggestionEl.hidden = false;
+    state.suggestionEl.classList.remove("error");
+    state.suggestionEl.classList.add("loading");
+  }
+  if (state.hintEl) state.hintEl.textContent = "Rewriting cue...";
+  if (state.workingEl) {
+    state.workingEl.textContent = "Copilot rewriting cue...";
+    state.workingEl.hidden = false;
+  }
+
+  copilot._skipRateLimit = true;
+  const retryPrompt = buildFrontLeakRetryPrompt(prompt, fullDraft, leakReason);
+  const retry = await callFrontLLM(retryPrompt, sys, controller, state, existingText);
+  if (controller?.signal?.aborted) return "";
+
+  const retryDraft = (existingText + (retry ? ` ${retry}` : "")).trim();
+  const retryReason = getFrontAnswerLeakReason(retryDraft, {
+    existingText,
+    backText: ctx.other || "",
+  });
+  if (retry && !retryReason) return retry;
+
+  if (retryReason) {
+    console.debug("[Copilot] Suppressed front suggestion after no-leak retry:", retryReason, retryDraft);
+  }
+  state._lastFrontLeakBlocked = true;
+  clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
+  return "";
+}
+
 // --- Provider strategy helpers for LLM calls ---
 
 function updateSuggestionUI(state, text) {
@@ -1952,13 +2323,21 @@ function makeLinkedAbort(parentSignal) {
   return { local, cleanup };
 }
 
+function getCopilotMaxTokens(role) {
+  const isBack = role === "back";
+  const fallback = isBack ? 36 : 48;
+  const configured = Number(isBack ? copilot.backMaxTokens : copilot.frontMaxTokens);
+  if (!Number.isFinite(configured) || configured <= 0) return fallback;
+  return Math.max(fallback, Math.min(configured, 64));
+}
+
 async function geminiFrontStream(prompt, sys, local, state, existingText, capWords) {
   let acc = "";
   let anyVisible = false;
   try {
     await geminiCompletionStream(prompt, {
-      maxTokens: Math.max(8, Math.min(capWords + 2, 24)),
-      temperature: 0.2,
+      maxTokens: getCopilotMaxTokens("front"),
+      temperature: 0.1,
       stop: undefined,
       system: sys,
       signal: local.signal,
@@ -2000,8 +2379,8 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
 
 async function geminiFrontNonStream(prompt, sys, local, existingText, capWords) {
   const raw = await geminiCompletion(prompt, {
-    maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
-    temperature: 0.2,
+    maxTokens: getCopilotMaxTokens("front"),
+    temperature: 0.1,
     stop: undefined,
     system: sys,
     signal: local.signal,
@@ -2011,8 +2390,8 @@ async function geminiFrontNonStream(prompt, sys, local, existingText, capWords) 
     showLiteFallbackToast("Used lite fallback");
     const rawLite = await geminiCompletion(prompt, {
       model: "gemini-2.5-flash-lite",
-      maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
-      temperature: 0.2,
+      maxTokens: getCopilotMaxTokens("front"),
+      temperature: 0.1,
       stop: undefined,
       system: sys,
       signal: local.signal,
@@ -2036,8 +2415,8 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
   }, timeoutMs);
   try {
     await ultimateCompletionStream(prompt, {
-      maxTokens: Math.max(8, Math.min(copilot.frontMaxTokens || 1024, capWords * 2)),
-      temperature: 0.2,
+      maxTokens: getCopilotMaxTokens("front"),
+      temperature: 0.1,
       stop: undefined,
       signal: local.signal,
       system: sys,
@@ -2062,8 +2441,8 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
   if (parentSignal?.aborted && !abortedByEarlyStop) return "";
   if (!suggestion && !abortedByEarlyStop && !parentSignal?.aborted) {
     const raw = await ultimateCompletion(prompt, {
-      maxTokens: Math.max(10, (copilot.frontMaxTokens || 1024)),
-      temperature: 0.2,
+      maxTokens: getCopilotMaxTokens("front"),
+      temperature: 0.1,
       stop: undefined,
       signal: local.signal,
       system: sys,
@@ -2076,7 +2455,7 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
 
 async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
   const opts = await getOptions();
-  const provider = opts.llmProvider || "ultimate";
+  const provider = inferProviderFromOptions(opts);
   const capWords = copilot.frontWordCap;
   const parentSignal = ctrl?.signal;
   const { local, cleanup } = makeLinkedAbort(parentSignal);
@@ -2103,8 +2482,8 @@ async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
 
 async function geminiBackCall(prompt, sys, signal, existingText, capWords) {
   let raw = await geminiCompletion(prompt, {
-    maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
-    temperature: 0.3,
+    maxTokens: getCopilotMaxTokens("back"),
+    temperature: 0.1,
     stop: undefined,
     system: sys,
     signal,
@@ -2117,8 +2496,8 @@ async function geminiBackCall(prompt, sys, signal, existingText, capWords) {
     showLiteFallbackToast("Used lite fallback");
     raw = await geminiCompletion(prompt, {
       model: "gemini-2.5-flash-lite",
-      maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
-      temperature: 0.3,
+      maxTokens: getCopilotMaxTokens("back"),
+      temperature: 0.1,
       stop: undefined,
       system: sys,
       signal,
@@ -2133,8 +2512,8 @@ async function geminiBackCall(prompt, sys, signal, existingText, capWords) {
 
 async function openAIBackCall(prompt, sys, signal, existingText, capWords) {
   const raw = await ultimateCompletion(prompt, {
-    maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
-    temperature: 0.3,
+    maxTokens: getCopilotMaxTokens("back"),
+    temperature: 0.1,
     stop: undefined,
     system: sys,
     signal,
@@ -2148,7 +2527,7 @@ async function openAIBackCall(prompt, sys, signal, existingText, capWords) {
 
 async function claudeFrontCall(prompt, sys, local, existingText, capWords) {
   const raw = await claudeCompletion(prompt, {
-    maxTokens: Math.max(12, (copilot.frontMaxTokens || 1024)),
+    maxTokens: getCopilotMaxTokens("front"),
     system: sys,
     signal: local.signal,
   }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
@@ -2159,7 +2538,7 @@ async function claudeFrontCall(prompt, sys, local, existingText, capWords) {
 
 async function claudeBackCall(prompt, sys, signal, existingText, capWords) {
   const raw = await claudeCompletion(prompt, {
-    maxTokens: Math.max(16, Math.ceil(capWords * 2.2)),
+    maxTokens: getCopilotMaxTokens("back"),
     system: sys,
     signal,
   }).catch((err) => {
@@ -2172,7 +2551,7 @@ async function claudeBackCall(prompt, sys, signal, existingText, capWords) {
 
 async function callBackLLM(prompt, sys, ctrl, existingText) {
   const opts = await getOptions();
-  const provider = opts.llmProvider || "ultimate";
+  const provider = inferProviderFromOptions(opts);
   const capWords = copilot.backWordCap;
   console.debug("[Copilot] provider:", provider, "mode:back");
   if (provider === "gemini") {
@@ -2201,25 +2580,31 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   const page = ctx.page || {};
   const sourceMode = normalizeSourceMode(ctx.sourceMode);
   const fromClipboard = !!page.usingClipboard || sourceMode === 'clipboard';
-  const role = fieldId === "back" ? "answer (back side)" : "question (front side)";
+  const role = fieldId === "back" ? "BACK" : "FRONT";
+  const oppositeLabel = fieldId === "back" ? "Front" : "Back";
 
   // clip noisy long excerpts so we don't flood the model
-  const clip = (s, n = 600) => (s || "").replace(/\s+/g, " ").trim().slice(0, n);
+  const clip = (s, n = 240) => (s || "").replace(/\s+/g, " ").trim().slice(0, n);
   const hasExisting = !!(existing && existing.trim());
+  const sourceCap = fieldId === "back" ? 320 : 220;
 
-  let prompt = `You help write concise, high-quality flashcards. ${hasExisting ? `Continue the ${role} text after the existing words.` : `Write the ${role} text from scratch.`}\n`;
+  let prompt = [
+    `Complete ${role}. Output text only.`,
+    hasExisting
+      ? `Prefix: ${clip(existing, 160)}`
+      : "",
+  ].join("\n") + "\n";
   if (opposite) {
-    const label = fieldId === "back" ? "Front" : "Back";
-    prompt += `${label} currently says:\n"""${clip(opposite, 300)}"""\n`;
+    const tag = oppositeLabel.toLowerCase();
+    prompt += `${oppositeLabel}: ${clip(opposite, tag === "front" ? 220 : 180)}\n`;
   }
   if (notes) {
-    prompt += `Additional notes:\n"""${clip(notes, 300)}"""\n`;
+    prompt += `Notes: ${clip(notes, 120)}\n`;
   }
   if (page && (page.selection || page.title || page.url)) {
-    const maxExcerpt = fieldId === "front" ? 300 : 600;
-    if (page.selection) prompt += `Source excerpt:\n"""${clip(page.selection, maxExcerpt)}"""\n`;
+    if (page.selection) prompt += `Source: ${clip(page.selection, sourceCap)}\n`;
     if (!fromClipboard && (page.title || page.url)) {
-      prompt += `Page context: title="${clip(page.title, 120)}" url="${page.url || ""}"\n`;
+      if (page.title) prompt += `Title: ${clip(page.title, 80)}\n`;
     }
   }
   if (sourceMode === 'clipboard') {
@@ -2231,28 +2616,24 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   const rules = fieldId === "front"
     ? [
         "Rules:",
-        `- FRONT only. ≤ ${copilot.frontWordCap} words. No answers or preamble. Prefer Source wording if present.`,
-        "- Return only the continuation text (no quotes, no labels).",
+        "- No task narration or labels.",
+        "- Continue after Prefix; do not repeat, correct, or restate text already typed.",
+        "- Preserve the user's target from Prefix/Back before using the Source.",
+        "- One atomic cue, unambiguous, enough context, no answer leakage.",
+        "- Cue, don't disclose: silently identify the minimal Back answer, then leave the method/formula/definition/result/name/example missing.",
+        "- If the wording would need \"by defining\", \"using\", \"where\", \"namely\", or another answer-bearing phrase, stop before that phrase.",
       ]
     : [
         "Rules:",
-        "- Ground yourself in the Source excerpt; use its vocabulary when possible.",
-        `- BACK: return one atomic answer ≤ ${copilot.backWordCap} words; no preamble, no restating the question.`,
-        "- Return the shortest answer that fully resolves the question.",
-        "- Do not repeat the source sentence or append clause fragments from it.",
-        "- Include extra details only if needed to disambiguate the answer.",
-        "- If the excerpt is insufficient, infer minimally from notes/question; only then use general knowledge.",
-        "- Return only the continuation text (no quotes, no labels).",
+        "- No task narration or labels.",
+        "- Continue after Prefix; do not repeat, correct, or restate text already typed.",
+        "- Preserve the user's target from Front before using the Source.",
+        "- Minimal answer, source-grounded, no passage restatement.",
+        "- Supply the missing answer cued by the Front; do not turn the Back into a passage summary.",
       ];
+  rules.push("- If the target is unsupported or unclear, output nothing.");
   prompt += `${rules.join("\n")}\n`;
-  if (hasExisting) {
-    prompt += [
-      "",
-      "Existing text:",
-      `"""${clip(existing, 300)}"""`,
-      "Continuation:",
-    ].join("\n");
-  }
+  prompt += "Output:";
   return prompt;
 }
 
@@ -2293,6 +2674,11 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   }
 
   const page = copilot.pageCtx || null;
+  if (!ensureAiSourceInputWithinLimit(getCopilotSourceTextForLimit(page), { notify: "copilot" })) {
+    clearSuggestionUI(backState, { mirrorValue: existingBack });
+    backState.suggestion = "";
+    return;
+  }
 
   // Respect any active server‑side backoff.
   if (Date.now() < (copilot.pauseUntil || 0)) {
@@ -2349,9 +2735,13 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     if (!force && since < copilot.minIntervalMs) {
       await new Promise((r) => setTimeout(r, copilot.minIntervalMs - since));
     }
-    copilot._lastAt = Date.now();
+	    copilot._lastAt = Date.now();
+	    updateLocalMetrics((metrics) => {
+	      bumpMetric(metrics, "ai_suggestions_requested");
+	      return metrics;
+	    });
 
-    const raw = await callBackLLM(prompt, sys, controller, existingBack);
+	    const raw = await callBackLLM(prompt, sys, controller, existingBack);
     if (controller.signal.aborted) return;
 
     let suggestion = raw || "";
@@ -2361,6 +2751,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     if (!suggestion) {
       clearSuggestionUI(backState, { mirrorValue: existingBack });
       backState.suggestion = "";
+      setCopilotStatus("AI returned no usable card text. Try direct OpenAI or a different model.", true);
       return;
     }
 
@@ -2399,6 +2790,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     if (backState.ghostEl) backState.ghostEl.hidden = true;
     if (backState.ghostTextEl) backState.ghostTextEl.textContent = "";
     if (backState.mirrorEl) backState.mirrorEl.textContent = existingBack;
+    setCopilotStatus(msg, true);
   } finally {
     clearTimeout(abortTimer);
     if (backState.workingEl) {
@@ -2455,6 +2847,13 @@ function applyCopilotSuggestion(state) {
     if (copilot.locks.frontAccepted) copilot.locks.allSuspended = true;
   }
   if (state.ghostEl) { state.ghostEl.hidden = true; }
+  copilot.acceptedCount = (copilot.acceptedCount || 0) + 1;
+  recordShortcutCoachEvent("suggestionAccepted").catch(() => {});
+  updateLocalMetrics((metrics) => {
+    bumpMetric(metrics, "ai_suggestions_accepted");
+    return metrics;
+  });
+  updateShortcutCoach(state.fieldId);
   return true;
 }
 
@@ -2490,6 +2889,7 @@ function rejectCopilotSuggestion(state) {
   if (state.ghostTextEl) state.ghostTextEl.textContent = "";
   if (state.mirrorEl)    state.mirrorEl.textContent = state.textarea?.value || "";
   if (state.workingEl)   state.workingEl.hidden = true;
+  updateShortcutCoach(state.fieldId);
 }
 
 function clearOtherCopilotSuggestions(exceptFieldId) {
@@ -2621,6 +3021,14 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   }
 
   const page = copilot.pageCtx || null;
+  if (!ensureAiSourceInputWithinLimit(getCopilotSourceTextForLimit(page), { notify: "copilot" })) {
+    clearSuggestionUI(state, { mirrorValue: value });
+    state.suggestion = "";
+    clearTimeout(abortTimer);
+    if (state.workingEl) state.workingEl.hidden = true;
+    if (state.controller === controller) state.controller = null;
+    return;
+  }
 
   const prompt = buildCopilotCompletionPrompt(state.fieldId, trimmed, { other, notes, page, sourceMode: mode });
 
@@ -2633,8 +3041,13 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     }
     copilot._lastAt = Date.now();
     copilot._skipRateLimit = true;
-    const suggestion = state.fieldId === "front"
-      ? await callFrontLLM(prompt, sys, controller, state, trimmed)
+    state._lastFrontLeakBlocked = false;
+    updateLocalMetrics((metrics) => {
+      bumpMetric(metrics, "ai_suggestions_requested");
+      return metrics;
+    });
+    let suggestion = state.fieldId === "front"
+      ? await callFrontLLMWithLeakRetry(prompt, sys, controller, state, trimmed, { other, notes, page, sourceMode: mode })
       : await callBackLLM(prompt, sys, controller, trimmed);
     if (controller.signal.aborted) return;
     const frontForBack = (trimmed + (suggestion ? (" " + suggestion) : "")).trim().slice(0, 500);
@@ -2648,6 +3061,12 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       if (state.fieldId === "front") {
         maybeRequestBackDraft(frontForBack);
       }
+      setCopilotStatus(
+        state._lastFrontLeakBlocked
+          ? "AI suggestion put the answer on the Front, so Ghostwriter hid it. Try a shorter cue or ask for the Back."
+          : "AI returned no usable card text. Try direct OpenAI or a different model.",
+        true
+      );
       return;
     }
     state.suggestion = suggestion;
@@ -2662,6 +3081,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       state.ghostTextEl.textContent = suggestion;
       state.ghostEl.hidden = !suggestion;
     }
+    updateShortcutCoach(state.fieldId);
     if (state.fieldId === "front") {
       const backIsBlank = !((document.querySelector("#back")?.value || "").trim());
       if (withOther && backIsBlank && frontForBack) {
@@ -2895,12 +3315,12 @@ async function initCopilot() {
     });
   }
   try {
-    const opts = await getOptions();
-    copilot.provider = opts.llmProvider || "ultimate";
+	    const opts = await getOptions();
+	    copilot.provider = inferProviderFromOptions(opts);
     if (copilot.provider === "gemini") {
       copilot.apiConfigured = !!opts.geminiKey;
     } else if (copilot.provider === "openai") {
-      copilot.apiConfigured = !!(opts.openaiKey || opts.ultimateKey);
+      copilot.apiConfigured = !!opts.openaiKey;
     } else if (copilot.provider === "claude") {
       copilot.apiConfigured = !!opts.claudeKey;
     } else {
@@ -2911,19 +3331,21 @@ async function initCopilot() {
       try {
         const ft = await chrome.storage.local.get("ghostwriter_free_tier");
         const ftState = ft?.ghostwriter_free_tier || {};
-        const remaining = Math.max(0, 10 - (ftState.used || 0));
+	        const today = new Date().toISOString().slice(0, 10);
+	        const dailyUsed = ftState.dailyDate === today ? (ftState.dailyUsed || 0) : 0;
+	        const remaining = Math.min(
+	          Math.max(0, FREE_TIER_LIMIT - (ftState.used || 0)),
+	          Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed)
+	        );
         if (remaining > 0) copilot.apiConfigured = true;
       } catch {}
     }
     copilot.enabled = opts.autoCompleteAI !== false;
     copilot.autoFillBack = opts.autoFillBackAI !== false; // defaults to true if missing
-    const storedFront = (opts.copilotFrontSystemPrompt || "").trim();
-    const storedBack = (opts.copilotBackSystemPrompt || "").trim();
-    const storedFrontFromBack = (opts.copilotFrontFromBackSystemPrompt || "").trim();
     copilot.prompts = {
-      front: storedFront || basePromptDefaults.front || null,
-      back: storedBack || basePromptDefaults.back || null,
-      frontFromBack: storedFrontFromBack || basePromptDefaults.frontFromBack || null,
+      front: basePromptDefaults.front || null,
+      back: basePromptDefaults.back || null,
+      frontFromBack: basePromptDefaults.frontFromBack || null,
     };
     copilot.showSourceModePill = opts.showSourceModePill !== false;
     const D = window.GHOSTWRITER_DEFAULTS || {};
@@ -2933,20 +3355,20 @@ async function initCopilot() {
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut) || parseShortcutSpec("Cmd+Shift+X");
     copilot.frontWordCap   = Number.isFinite(+opts.copilotFrontWordCap) ? +opts.copilotFrontWordCap : (D.copilotFrontWordCap || 20);
     copilot.backWordCap    = Number.isFinite(+opts.copilotBackWordCap)  ? +opts.copilotBackWordCap  : (D.copilotBackWordCap || 16);
-    copilot.frontMaxTokens = Number.isFinite(+opts.copilotFrontMaxTokens) ? +opts.copilotFrontMaxTokens : (D.copilotFrontMaxTokens || 1024);
-    copilot.backMaxTokens  = Number.isFinite(+opts.copilotBackMaxTokens) ? +opts.copilotBackMaxTokens : (D.copilotBackMaxTokens || 1024);
+    copilot.frontMaxTokens = Number.isFinite(+opts.copilotFrontMaxTokens) ? +opts.copilotFrontMaxTokens : (D.copilotFrontMaxTokens || 48);
+    copilot.backMaxTokens  = Number.isFinite(+opts.copilotBackMaxTokens) ? +opts.copilotBackMaxTokens : (D.copilotBackMaxTokens || 36);
     copilot.minIntervalMs  = Number.isFinite(+opts.copilotMinIntervalMs) ? +opts.copilotMinIntervalMs : (D.copilotMinIntervalMs || 1200);
     copilot.timeoutMs      = Number.isFinite(+opts.copilotTimeoutMs) ? +opts.copilotTimeoutMs : (D.copilotTimeoutMs || 30000);
   } catch (e) {
     console.warn("Copilot init failed", e);
     copilot.apiConfigured = false;
-    copilot.provider = "ultimate";
+	    copilot.provider = "openai";
     copilot.enabled = false;
     copilot.prompts = { front: null, back: null, frontFromBack: null };
     copilot.manualOnly = false;
     copilot.triggerShortcut = "Cmd+Shift+X";
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut);
-    copilot.backMaxTokens = 1024;
+    copilot.backMaxTokens = 36;
   }
 
   await seedCopilotPageContext();
@@ -2969,11 +3391,11 @@ async function initCopilot() {
       if (areaName !== "sync") return;
       if (changes.quickflash_options) {
         const next = changes.quickflash_options.newValue || {};
-        copilot.provider = next.llmProvider || "ultimate";
+        copilot.provider = inferProviderFromOptions(next);
         if (copilot.provider === "gemini") {
           copilot.apiConfigured = !!next.geminiKey;
         } else if (copilot.provider === "openai") {
-          copilot.apiConfigured = !!(next.openaiKey || next.ultimateKey);
+          copilot.apiConfigured = !!next.openaiKey;
         } else if (copilot.provider === "claude") {
           copilot.apiConfigured = !!next.claudeKey;
         } else {
@@ -2984,18 +3406,20 @@ async function initCopilot() {
           try {
             chrome.storage.local.get("ghostwriter_free_tier").then((ft) => {
               const ftState = ft?.ghostwriter_free_tier || {};
-              const remaining = Math.max(0, 10 - (ftState.used || 0));
+              const today = new Date().toISOString().slice(0, 10);
+              const dailyUsed = ftState.dailyDate === today ? (ftState.dailyUsed || 0) : 0;
+              const remaining = Math.min(
+                Math.max(0, FREE_TIER_LIMIT - (ftState.used || 0)),
+                Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed)
+              );
               if (remaining > 0) copilot.apiConfigured = true;
             });
           } catch {}
         }
-        const nextFront = (next.copilotFrontSystemPrompt || "").trim();
-        const nextBack = (next.copilotBackSystemPrompt || "").trim();
-        const nextFrontFromBack = (next.copilotFrontFromBackSystemPrompt || "").trim();
         copilot.prompts = {
-          front: nextFront || basePromptDefaults.front || null,
-          back: nextBack || basePromptDefaults.back || null,
-          frontFromBack: nextFrontFromBack || basePromptDefaults.frontFromBack || null,
+          front: basePromptDefaults.front || null,
+          back: basePromptDefaults.back || null,
+          frontFromBack: basePromptDefaults.frontFromBack || null,
         };
         copilot.manualOnly = next.manualCopilotOnly !== false;
         const nextShortcut = typeof next.copilotShortcut === "string" ? next.copilotShortcut.trim() : "";
@@ -3007,7 +3431,9 @@ async function initCopilot() {
         copilot.backMaxTokens  = Number.isFinite(+next.copilotBackMaxTokens) ? +next.copilotBackMaxTokens : copilot.backMaxTokens;
         copilot.minIntervalMs  = Number.isFinite(+next.copilotMinIntervalMs) ? +next.copilotMinIntervalMs : copilot.minIntervalMs;
         copilot.timeoutMs      = Number.isFinite(+next.copilotTimeoutMs) ? +next.copilotTimeoutMs : copilot.timeoutMs;
+        shortcutCoach.enabled = next.showShortcutHints !== false;
         setCopilotEnabled(next.autoCompleteAI !== false);
+        updateShortcutCoach();
         updateShortcutHelpText();
       }
       if (changes[SOURCE_MODE_KEY]) {
@@ -3083,13 +3509,6 @@ async function maybeShowTriageHintOnce() {
   }, { once: true });
 }
 
-function blurActiveTextField() {
-  const active = document.activeElement;
-  if (isTextField(active) && typeof active?.blur === "function") {
-    try { active.blur(); } catch {}
-  }
-}
-
 function hasTriageQueue() {
   return Array.isArray(triage.cards) && triage.cards.length > 0;
 }
@@ -3115,6 +3534,7 @@ function setTriageActive(on) {
   const typing = isTextField(document.activeElement);
   const next = wantOn && !typing;
   if (wantOn) triageState.active = true;
+  else triageState.active = false;
   triageActive = next;
 
   document.body.dataset.triageActive = next ? "true" : "false";
@@ -3127,6 +3547,7 @@ function setTriageActive(on) {
   }
 
   updateTriageUI();
+  updateShortcutCoach();
 }
 
 const triageState = {
@@ -3160,8 +3581,8 @@ function syncTriageState({ activateIfCards = false } = {}) {
 }
 
 function updateTriageUI() {
-  const { active, index, total } = triageState;
-  const pending = triage.cards.filter((c) => !c._status).length;
+  const { index, total } = triageState;
+  const pending = triage.cards.filter((c) => getCardReviewStatus(c) === "pending").length;
   const flagged = outbox.cards.filter((c) => c._duplicateState === "possible" && !c.allowDuplicate).length;
   const hasQueue = hasTriageQueue();
   const triageOn = triageActive && hasQueue;
@@ -3194,35 +3615,25 @@ function updateTriageUI() {
 
   // Status line: show both "mode" and whether shortcuts are live
   if (editorStatusEl) {
-    if (!hasQueue) {
-      editorStatusEl.textContent = "New card";
-    } else if (pending === 0) {
-      editorStatusEl.textContent = "Review complete";
-    } else if (!triageState.active) {
-      editorStatusEl.textContent = "Editing – triage paused";
-    } else if (!triageOn) {
-      editorStatusEl.textContent = "Editing – review paused";
-    } else if (triageOn) {
+    if (triageOn) {
       editorStatusEl.textContent = "Review mode – shortcuts on";
     } else {
-      editorStatusEl.textContent = "Editing this card – triage paused";
+      editorStatusEl.textContent = "Card details";
     }
   }
 
   let metaText = "";
-  if (pending > 0 && total) {
+  if (triageOn && pending > 0 && total) {
     metaText = `Pending ${pending} | Accepted ${triage.accepted.length} | Rejected ${triage.skipped.length} | Card ${index + 1}/${total}`;
     if (flagged) metaText += ` | Outbox dup flagged ${flagged}`;
-  } else if (total && pending === 0) {
+  } else if (triageOn && total && pending === 0) {
     metaText = `Review complete · Accepted ${triage.accepted.length} · Rejected ${triage.skipped.length}`;
     if (flagged) metaText += ` · Outbox dup flagged ${flagged}`;
   }
   if (triageMetaEl) triageMetaEl.textContent = metaText;
 
-  // Only show "Resume triage" if there are cards AND some are still pending
   if (triageResumeBtn) {
-    // Show only when triage was explicitly deactivated (not just paused while typing)
-    triageResumeBtn.hidden = !(hasQueue && pending > 0 && !active);
+    triageResumeBtn.hidden = true;
   }
   // First‑time mobile triage hint
   if (triageOn) {
@@ -3244,6 +3655,7 @@ function resumeTriage() {
 const STORAGE_KEYS = {
   triage: "quickflash_triage_v1",
   outbox: "quickflash_outbox_v1",
+  metrics: "ghostwriter_metrics_v1",
 };
 
 const ARCHIVE_KEY = "quickflash_archive_v1";
@@ -3251,8 +3663,10 @@ const ARCHIVE_BACKUP_KEY = "quickflash_archive_backup_v1";
 
 const MANUAL_PREFS_KEY = "quickflash_manualPrefs_v1";
 const MANUAL_DRAFT_KEY = "quickflash_manual_draft_v1";
+const SHORTCUT_COACH_KEY = "ghostwriter_onboarding_v1";
 const IMAGE_STORE_KEY = "quickflash_image_store_v1";
-const DEFAULT_ADD_SHORTCUT = "Meta+Shift+A";
+const DEFAULT_QUEUE_SHORTCUT = "Meta+Shift+A";
+const AI_SOURCE_MAX_INPUT_TOKENS = 1500;
 
 let pageContextCache = null;
 const preflightTimers = new Map();
@@ -3261,6 +3675,191 @@ let activeModal = null;
 let manualPrefsCache = null;
 let addShortcutConfig = null;
 let manualDraftSaveTimer = null;
+const shortcutCoach = {
+  loaded: false,
+  enabled: (window.GHOSTWRITER_DEFAULTS || {}).showShortcutHints !== false,
+  activeFieldId: null,
+  state: {
+    cardsQueued: 0,
+    suggestionsAccepted: 0,
+    hintsDismissed: false,
+  },
+};
+
+function getEditorSurface() {
+  if (/\bpopover\b/i.test(location.hash || "")) return "overlay";
+  if (typeof chrome !== "undefined" && chrome?.sidePanel) return "side_panel";
+  return "tab";
+}
+
+function compactInlineText(value, max = 180) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+function estimateInputTokens(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return 0;
+  const byChars = Math.ceil(text.length / 4);
+  const byWords = Math.ceil(text.split(/\s+/).length * 1.35);
+  return Math.max(byChars, byWords);
+}
+
+function formatNumber(value) {
+  try { return Number(value || 0).toLocaleString(); } catch { return String(value || 0); }
+}
+
+function getAiInputLimitMessage(tokens) {
+  return `Please select a smaller excerpt (${formatNumber(tokens)} estimated tokens; limit ${formatNumber(AI_SOURCE_MAX_INPUT_TOKENS)}).`;
+}
+
+function getCopilotSourceTextForLimit(page = null) {
+  const sourceField = $("#source")?.value || "";
+  return String(page?.selection || sourceField || "").trim();
+}
+
+function ensureAiSourceInputWithinLimit(sourceText, { notify = "status" } = {}) {
+  const tokens = estimateInputTokens(sourceText);
+  if (tokens <= AI_SOURCE_MAX_INPUT_TOKENS) return true;
+  const message = getAiInputLimitMessage(tokens);
+  if (notify === "copilot") {
+    setCopilotStatus(message, true);
+  } else {
+    status(message);
+    showCopilotNotice(message, { error: true });
+  }
+  return false;
+}
+
+function getCurrentSourceLabel() {
+  const ctx = copilot?.pageCtx || {};
+  const fromCtx = ctx.sourceLabel || ctx.title || "";
+  if (fromCtx) return compactInlineText(fromCtx, 90);
+  const pageMeta = $("#pageMeta")?.textContent || "";
+  if (pageMeta) return compactInlineText(pageMeta.split("—")[0] || pageMeta, 90);
+  const url = ctx.sourceUrl || ctx.url || "";
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    if (host) return host;
+  } catch {}
+  return "";
+}
+
+function getReviewQueueCount() {
+  const pendingReview = triage.cards.filter((card) => {
+    const reviewStatus = getCardReviewStatus(card);
+    return reviewStatus === "pending" || reviewStatus === "accepted";
+  }).length;
+  return pendingReview + outbox.cards.length;
+}
+
+function updateOverlayQueueBadge() {
+  const badge = $("#overlayReviewBadge");
+  if (!badge) return;
+  const count = getReviewQueueCount();
+  badge.textContent = String(count);
+  badge.hidden = count <= 0;
+}
+
+async function updateSourceRenderedPreview() {
+  const frame = $("#previewSource");
+  if (!frame) return;
+  const sourceEl = $("#source");
+  const text = (sourceEl?.value || copilot?.pageCtx?.selection || "").trim();
+  const markdown = text || "_No source captured._";
+  const prepared = await inlinePreviewImages(markdown);
+  queuePreviewFrameRender(frame, prepared, sourceEl);
+}
+
+function updateCardDetailsSummary() {
+  const summary = $("#cardDetailsSummary");
+  if (!summary) return;
+  const deck = ($("#deck")?.value || "").trim();
+  const model = ($("#model")?.value || "").trim();
+  const tags = ($("#tags")?.value || "").trim().split(/\s+/).filter(Boolean);
+  const parts = [];
+  if (deck) parts.push(compactInlineText(deck, 44));
+  if (model) parts.push(compactInlineText(model, 44));
+  if (tags.length) parts.push(`${tags.length} tag${tags.length === 1 ? "" : "s"}`);
+  summary.textContent = parts.length ? parts.join(" · ") : "Deck, note type, tags, and helpers";
+}
+
+function updateOverlaySourceChrome() {
+  const sourceText = ($("#source")?.value || copilot?.pageCtx?.selection || "").trim();
+  const preview = $("#sourcePreviewText");
+  if (preview) {
+    preview.textContent = sourceText ? compactInlineText(sourceText, 220) : "No source captured";
+  }
+  const headerSource = $("#overlayHeaderSource");
+  if (headerSource) {
+    headerSource.textContent = getCurrentSourceLabel() || (sourceText ? "Selected source" : "No source captured");
+  }
+  updateOverlayQueueBadge();
+  updateCardDetailsSummary();
+  updateSourceRenderedPreview().catch((err) => {
+    console.warn("Source preview update failed", err);
+  });
+}
+
+function applySurfaceModeClass() {
+  const surface = getEditorSurface();
+  document.documentElement.dataset.editorSurface = surface;
+  document.body?.classList.toggle("is-overlay-surface", surface === "overlay");
+
+  const sourceDetails = $("#sourceContextDetails");
+  if (sourceDetails && !sourceDetails.dataset.surfaceDefaulted) {
+    sourceDetails.open = surface !== "overlay";
+    sourceDetails.dataset.surfaceDefaulted = "true";
+  }
+
+  const cardDetails = $("#cardDetailsPanel");
+  if (cardDetails && !cardDetails.dataset.surfaceDefaulted) {
+    cardDetails.open = surface !== "overlay";
+    cardDetails.dataset.surfaceDefaulted = "true";
+  }
+
+  updateOverlaySourceChrome();
+}
+
+async function updateLocalMetrics(mutator) {
+  try {
+    const got = await chrome.storage.local.get(STORAGE_KEYS.metrics);
+    const current = got?.[STORAGE_KEYS.metrics] && typeof got[STORAGE_KEYS.metrics] === "object"
+      ? got[STORAGE_KEYS.metrics]
+      : {};
+    const next = mutator({ ...current }) || current;
+    await chrome.storage.local.set({ [STORAGE_KEYS.metrics]: next });
+  } catch {}
+}
+
+function markMetricOnce(metrics, key) {
+  if (!metrics[key]) metrics[key] = new Date().toISOString();
+}
+
+function bumpMetric(metrics, key, amount = 1) {
+  metrics[key] = (Number(metrics[key]) || 0) + amount;
+}
+
+function setCardReviewStatus(card, status) {
+  if (!card) return card;
+  const normalized = ["pending", "accepted", "skipped", "deleted", "sent"].includes(status)
+    ? status
+    : "pending";
+  card.review_status = normalized;
+  if (normalized === "pending") delete card._status;
+  else card._status = normalized;
+  return card;
+}
+
+function getCardReviewStatus(card) {
+  if (!card) return "pending";
+  if (["pending", "accepted", "skipped", "deleted", "sent"].includes(card.review_status)) {
+    return card.review_status;
+  }
+  if (["accepted", "skipped", "deleted", "sent"].includes(card._status)) return card._status;
+  return "pending";
+}
 
 function getManualDraftPayload() {
   const front = $("#front")?.value ?? "";
@@ -3330,6 +3929,7 @@ async function restoreManualDraftFromStorage() {
     if (contextEl && typeof draft.context === "string") contextEl.value = draft.context;
     if (sourceEl && typeof draft.source === "string") sourceEl.value = draft.source;
     updateFrontDetection(frontEl?.value || "");
+    updateOverlaySourceChrome();
     await updateMarkdownPreview();
   } catch {}
 }
@@ -3381,9 +3981,236 @@ function formatShortcutSpec(spec) {
   if (spec.ctrl) parts.push("Ctrl");
   if (spec.alt) parts.push("Alt");
   if (spec.shift) parts.push("Shift");
-  const key = spec.key.length === 1 ? spec.key.toUpperCase() : spec.key;
+  const keyNames = { enter: "Enter", return: "Enter", escape: "Esc", esc: "Esc", space: "Space" };
+  const key = keyNames[spec.key] || (spec.key.length === 1 ? spec.key.toUpperCase() : spec.key);
   parts.push(key);
   return parts.join(" + ");
+}
+
+function normalizeShortcutCoachState(value = {}, metrics = {}) {
+  const stored = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const metricSource = metrics && typeof metrics === "object" && !Array.isArray(metrics) ? metrics : {};
+  return {
+    cardsQueued: Math.max(0, Number(stored.cardsQueued ?? metricSource.cards_queued ?? 0) || 0),
+    suggestionsAccepted: Math.max(0, Number(stored.suggestionsAccepted ?? metricSource.ai_suggestions_accepted ?? 0) || 0),
+    hintsDismissed: !!stored.hintsDismissed,
+    lastHintShownAt: Number(stored.lastHintShownAt || 0) || 0,
+    retiredAt: Number(stored.retiredAt || 0) || 0,
+  };
+}
+
+function isShortcutCoachRetired(state = shortcutCoach.state, { enabled = shortcutCoach.enabled } = {}) {
+  if (!enabled) return true;
+  if (state?.hintsDismissed) return true;
+  return false;
+}
+
+function getCoachFieldIdFromElement(el) {
+  if (el?.id === "front" || el?.id === "back") return el.id;
+  return copilot.lastFocusedField === "back" ? "back" : "front";
+}
+
+function getShortcutCoachElements(fieldId) {
+  const coachEl = document.querySelector(`.shortcut-coach[data-field-coach="${fieldId}"]`);
+  return {
+    coachEl,
+    textEl: coachEl?.querySelector("[data-coach-text]") || null,
+  };
+}
+
+function hideShortcutCoach() {
+  document.querySelectorAll(".shortcut-coach").forEach((el) => {
+    el.hidden = true;
+  });
+}
+
+function hasVisibleCopilotSuggestion(fieldId) {
+  const state = copilot.fields.get(fieldId);
+  if (!state) return false;
+  if ((state.suggestion || "").trim()) return true;
+  if (state.ghostEl && !state.ghostEl.hidden && (state.ghostTextEl?.textContent || "").trim()) return true;
+  return false;
+}
+
+function canQueueCurrentEditorCard() {
+  const front = ($("#front")?.value || "").trim();
+  const back = ($("#back")?.value || "").trim();
+  if (!front) return false;
+  return !!back || CLOZE_PATTERN.test(front);
+}
+
+function shortcutCoachMessageForField(fieldId) {
+  if (!fieldId || isTriageActive()) return "";
+  if (hasVisibleCopilotSuggestion(fieldId)) {
+    return "Tab to accept · Esc to dismiss";
+  }
+
+  const activeValue = ($(`#${fieldId}`)?.value || "").trim();
+  if (!activeValue) return "";
+
+  if (canQueueCurrentEditorCard()) {
+    const queueShortcut = formatShortcutSpec(addShortcutConfig);
+    return queueShortcut ? `Use ${queueShortcut} to queue card.` : "";
+  }
+
+  if (copilot.enabled && copilot.apiConfigured) {
+    const suggestionShortcut = formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut || "";
+    return suggestionShortcut ? `Use ${suggestionShortcut} for AI autocomplete.` : "";
+  }
+
+  return "";
+}
+
+function renderShortcutCoachText(text) {
+  const frag = document.createDocumentFragment();
+  const shortcutMatch = text.match(/^(Use )?((?:Cmd|Ctrl|Alt|Shift)(?: \+ [A-Za-z0-9]+| \+ (?:Cmd|Ctrl|Alt|Shift|[A-Za-z0-9]+))+) (?=for|to)/);
+  if (!shortcutMatch) {
+    frag.appendChild(document.createTextNode(text));
+    return frag;
+  }
+
+  const prefix = shortcutMatch[1] || "";
+  const shortcutText = shortcutMatch[2].trim();
+  const rest = text.slice(shortcutMatch[0].length);
+  if (prefix) frag.appendChild(document.createTextNode(prefix));
+  const kbd = document.createElement("kbd");
+  kbd.textContent = shortcutText;
+  frag.appendChild(kbd);
+  frag.appendChild(document.createTextNode(rest));
+  return frag;
+}
+
+function updateShortcutCoach(fieldId = shortcutCoach.activeFieldId) {
+  if (!shortcutCoach.loaded || isShortcutCoachRetired()) {
+    hideShortcutCoach();
+    return;
+  }
+
+  const activeFieldId = fieldId === "back" ? "back" : fieldId === "front" ? "front" : null;
+  if (!activeFieldId) {
+    hideShortcutCoach();
+    return;
+  }
+
+  const message = shortcutCoachMessageForField(activeFieldId);
+  document.querySelectorAll(".shortcut-coach").forEach((el) => {
+    const isActive = el.dataset.fieldCoach === activeFieldId && !!message;
+    el.hidden = !isActive;
+  });
+
+  if (!message) return;
+  const { textEl } = getShortcutCoachElements(activeFieldId);
+  if (textEl) {
+    textEl.replaceChildren(renderShortcutCoachText(message));
+  }
+  const now = Date.now();
+  if (!shortcutCoach.state.lastHintShownAt || now - shortcutCoach.state.lastHintShownAt > 30000) {
+    shortcutCoach.state.lastHintShownAt = now;
+    try {
+      chrome.storage.local.set({
+        [SHORTCUT_COACH_KEY]: {
+          ...shortcutCoach.state,
+          lastHintShownAt: shortcutCoach.state.lastHintShownAt,
+        },
+      }).catch(() => {});
+    } catch {}
+  }
+}
+
+async function persistShortcutCoachState(patch = {}) {
+  shortcutCoach.state = {
+    ...shortcutCoach.state,
+    ...patch,
+  };
+  if (!shortcutCoach.state.retiredAt && isShortcutCoachRetired(shortcutCoach.state)) {
+    shortcutCoach.state.retiredAt = Date.now();
+  }
+  try {
+    await chrome.storage.local.set({ [SHORTCUT_COACH_KEY]: shortcutCoach.state });
+  } catch {}
+  updateShortcutCoach();
+}
+
+async function recordShortcutCoachEvent(eventName) {
+  if (!shortcutCoach.loaded) return;
+  if (eventName === "cardQueued") {
+    await persistShortcutCoachState({
+      cardsQueued: (Number(shortcutCoach.state.cardsQueued) || 0) + 1,
+    });
+  } else if (eventName === "suggestionAccepted") {
+    await persistShortcutCoachState({
+      suggestionsAccepted: (Number(shortcutCoach.state.suggestionsAccepted) || 0) + 1,
+    });
+  }
+}
+
+async function dismissShortcutCoach() {
+  await persistShortcutCoachState({
+    hintsDismissed: true,
+    dismissedAt: Date.now(),
+  });
+  hideShortcutCoach();
+}
+
+function rejectFocusedCopilotSuggestion(target = document.activeElement) {
+  const fieldId = getCoachFieldIdFromElement(target);
+  const state = copilot.fields.get(fieldId);
+  if (!state || !hasVisibleCopilotSuggestion(fieldId)) return false;
+  rejectCopilotSuggestion(state);
+  updateShortcutCoach(fieldId);
+  return true;
+}
+
+async function initShortcutCoach() {
+  const D = window.GHOSTWRITER_DEFAULTS || {};
+  try {
+    const opts = await getOptions();
+    shortcutCoach.enabled = opts.showShortcutHints ?? D.showShortcutHints ?? true;
+    const got = await chrome.storage.local.get([SHORTCUT_COACH_KEY, STORAGE_KEYS.metrics]);
+    shortcutCoach.state = normalizeShortcutCoachState(
+      got?.[SHORTCUT_COACH_KEY],
+      got?.[STORAGE_KEYS.metrics]
+    );
+  } catch {
+    shortcutCoach.enabled = D.showShortcutHints !== false;
+    shortcutCoach.state = normalizeShortcutCoachState();
+  }
+  shortcutCoach.loaded = true;
+
+  for (const fieldId of ["front", "back"]) {
+    const textarea = document.querySelector(`#${fieldId}`);
+    const coachEl = document.querySelector(`.shortcut-coach[data-field-coach="${fieldId}"]`);
+    if (!textarea || !coachEl) continue;
+    textarea.addEventListener("focus", () => {
+      shortcutCoach.activeFieldId = fieldId;
+      updateShortcutCoach(fieldId);
+    });
+    textarea.addEventListener("input", () => {
+      shortcutCoach.activeFieldId = fieldId;
+      updateShortcutCoach(fieldId);
+    });
+    textarea.addEventListener("blur", () => {
+      setTimeout(() => {
+        const nextFieldId = getCoachFieldIdFromElement(document.activeElement);
+        if (document.activeElement?.id !== "front" && document.activeElement?.id !== "back") {
+          shortcutCoach.activeFieldId = null;
+          hideShortcutCoach();
+          return;
+        }
+        shortcutCoach.activeFieldId = nextFieldId;
+        updateShortcutCoach(nextFieldId);
+      }, 0);
+    });
+    const dismissBtn = coachEl.querySelector("[data-coach-dismiss]");
+    if (dismissBtn) {
+      dismissBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        dismissShortcutCoach();
+      });
+    }
+  }
+
+  updateShortcutCoach(getCoachFieldIdFromElement(document.activeElement));
 }
 
 function applyShortcutSetting(spec) {
@@ -3391,7 +4218,11 @@ function applyShortcutSetting(spec) {
     addShortcutConfig = null;
     return;
   }
-  const parsed = parseShortcutSpec(spec) || parseShortcutSpec(DEFAULT_ADD_SHORTCUT);
+  const stored = parseShortcutSpec(spec);
+  const isLegacyDefault = stored?.meta && stored?.shift && !stored?.ctrl && !stored?.alt && ["a", "q"].includes(stored?.key);
+  const parsed = isLegacyDefault
+    ? parseShortcutSpec(DEFAULT_QUEUE_SHORTCUT)
+    : (stored || parseShortcutSpec(DEFAULT_QUEUE_SHORTCUT));
   addShortcutConfig = parsed || null;
 }
 
@@ -3413,16 +4244,19 @@ function matchesShortcut(event, shortcut) {
 
 function updateShortcutHelpText() {
   const addShortcutEl = $("#shortcutAdd");
+  const text = formatShortcutSpec(addShortcutConfig) || "Not set";
   if (addShortcutEl) {
-    const text = formatShortcutSpec(addShortcutConfig) || "Not set";
     addShortcutEl.textContent = text;
   }
+  const queueButtonHint = $("#queueShortcutButtonHint");
+  if (queueButtonHint) queueButtonHint.textContent = text;
   const copilotShortcutEl = $("#shortcutCopilot");
   if (copilotShortcutEl) {
     const spec = parseShortcutSpec(copilot.triggerShortcut);
     const text = formatShortcutSpec(spec) || copilot.triggerShortcut || "Not set";
     copilotShortcutEl.textContent = text;
   }
+  updateShortcutCoach();
 }
 
 function updateOutboxMeta() {
@@ -3441,7 +4275,7 @@ function updateOutboxMeta() {
     if (bits.length) text += ` (${bits.join(", ")})`;
     if (undoable) text += ` | Undoable: ${undoable}`;
     if (triage.cards.length) {
-      const pending = triage.cards.filter((c) => !c._status).length;
+      const pending = triage.cards.filter((c) => getCardReviewStatus(c) === "pending").length;
       let reviewHint = "";
       if (pending > 0 && triageActive && triageState.active) {
         reviewHint = `Reviewing: ${pending} pending of ${triage.cards.length}`;
@@ -3458,10 +4292,11 @@ function updateOutboxMeta() {
   }
   if (sendBtn) sendBtn.disabled = staged === 0;
   if (undoBtn) undoBtn.disabled = !undoable;
+  updateOverlayQueueBadge();
 }
 
 function hasPendingTriageCards() {
-  return triage.cards.some((c) => !c._status);
+  return triage.cards.some((c) => getCardReviewStatus(c) === "pending");
 }
 
 function maybeCompleteTriage({ showPrompt = true } = {}) {
@@ -4435,7 +5270,7 @@ function renderOutboxList() {
         triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
         triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
         if (restored) {
-          delete restored._status;
+          setCardReviewStatus(restored, "pending");
           triage.cards.splice(triage.i, 0, restored);
         }
         renderEditor();
@@ -4464,12 +5299,22 @@ function clearEditorFields() {
     }
   }
   updateFrontDetection("");
+  updateOverlaySourceChrome();
   clearManualDraftStorage().catch(() => {});
 }
 
+function setPrimaryActionButton(label, { showShortcut = false } = {}) {
+  const addBtn = $("#add");
+  if (!addBtn) return;
+  const labelEl = addBtn.querySelector(".button-label");
+  if (labelEl) labelEl.textContent = label;
+  else addBtn.textContent = label;
+  const hintEl = addBtn.querySelector("#queueShortcutButtonHint");
+  if (hintEl) hintEl.hidden = !showShortcut || !addShortcutConfig;
+}
+
 function renderEditor({ persist = true } = {}) {
-  const anyPending = triage.cards.some((c) => !c._status);
-  syncTriageState({ activateIfCards: anyPending || triageState.active });
+  syncTriageState({ activateIfCards: triageState.active });
   const navButtons = $("#editorNavButtons");
   const prevBtn = $("#triagePrev");
   const nextBtn = $("#triageNext");
@@ -4498,13 +5343,14 @@ function renderEditor({ persist = true } = {}) {
     }
     if (triageFooter) triageFooter.hidden = true;
     if (triageToolbar) triageToolbar.hidden = true;
-    if (addBtn) addBtn.textContent = "Add to Anki";
+    if (addBtn) setPrimaryActionButton("Queue card", { showShortcut: true });
     if (hadTriage) {
       clearEditorFields();
       focusFrontAtEnd();
     }
     applyInlinePreviewAfterEditorRender({ refresh: true });
     updateMarkdownPreview();
+    updateOverlaySourceChrome();
     renderEditor.lastMode = "manual";
     updateTriageUI();
     return;
@@ -4525,7 +5371,7 @@ function renderEditor({ persist = true } = {}) {
   }
   if (triageFooter) triageFooter.hidden = false;
   if (triageToolbar) triageToolbar.hidden = false;
-  if (addBtn) addBtn.textContent = "Accept";
+  if (addBtn) setPrimaryActionButton("Accept");
 
   const frontEl = $("#front");
   const backEl = $("#back");
@@ -4547,6 +5393,7 @@ function renderEditor({ persist = true } = {}) {
   }
 
   applyInlinePreviewAfterEditorRender({ refresh: true });
+  updateOverlaySourceChrome();
 
   if (altWrap) {
     altWrap.innerHTML = "";
@@ -4596,6 +5443,7 @@ function renderEditor({ persist = true } = {}) {
   }
 
   updateMarkdownPreview();
+  updateOverlaySourceChrome();
   renderEditor.lastMode = "triage";
   updateTriageUI();
   if (persist) persistTriageState();
@@ -4635,6 +5483,7 @@ function bindUnifiedEditorInputs() {
 
   const tagsEl = $("#tags");
   if (tagsEl) tagsEl.addEventListener("input", () => {
+    updateCardDetailsSummary();
     if (isTriageActive()) {
       const parts = tagsEl.value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
       mutateActiveTriageCard((card) => { card.tags = parts; });
@@ -4645,6 +5494,7 @@ function bindUnifiedEditorInputs() {
 
   const contextEl = $("#context");
   if (contextEl) contextEl.addEventListener("input", () => {
+    updateCardDetailsSummary();
     if (isTriageActive()) {
       const val = contextEl.value.trim();
       mutateActiveTriageCard((card) => {
@@ -4658,6 +5508,7 @@ function bindUnifiedEditorInputs() {
 
   const notesEl = $("#notes");
   if (notesEl) notesEl.addEventListener("input", () => {
+    updateCardDetailsSummary();
     if (isTriageActive()) {
       const val = notesEl.value.trim();
       mutateActiveTriageCard((card) => {
@@ -4672,6 +5523,7 @@ function bindUnifiedEditorInputs() {
   const sourceEl = $("#source");
   if (sourceEl) sourceEl.addEventListener("input", () => {
     delete sourceEl.dataset.autoClipboard;
+    updateOverlaySourceChrome();
     if (isTriageActive()) {
       const val = sourceEl.value.trim();
       mutateActiveTriageCard((card) => {
@@ -4874,6 +5726,16 @@ function bindMarkdownPreviewInputs() {
   }
 }
 
+function getPreviewFrameForMessageSource(source) {
+  const frameIds = [
+    ...markdownPreviewState.fields.map((field) => field.previewId),
+    "previewSource",
+  ];
+  return frameIds
+    .map((id) => document.getElementById(id))
+    .find((candidate) => candidate && candidate.contentWindow === source) || null;
+}
+
 window.addEventListener("message", (event) => {
   const data = event?.data;
   if (!data) return;
@@ -4884,9 +5746,7 @@ window.addEventListener("message", (event) => {
         : typeof data?.error?.message === "string" && data.error.message.trim()
           ? data.error.message
           : "") || "MathJax not loaded";
-    const frame = markdownPreviewState.fields
-      .map((field) => document.getElementById(field.previewId))
-      .find((candidate) => candidate && candidate.contentWindow === event.source);
+    const frame = getPreviewFrameForMessageSource(event.source);
     if (frame) {
       const warning = frame.closest("[data-preview-block]")?.querySelector("[data-preview-warning]");
       if (warning) {
@@ -4898,9 +5758,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (data.type !== "quickflash:previewRendered") return;
-  const frame = markdownPreviewState.fields
-    .map((field) => document.getElementById(field.previewId))
-    .find((candidate) => candidate && candidate.contentWindow === event.source);
+  const frame = getPreviewFrameForMessageSource(event.source);
   if (!frame) return;
   const nextHeight = Number(data.height);
   if (Number.isFinite(nextHeight)) {
@@ -5431,6 +6289,10 @@ function initInlineMathPreview() {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
     if (isTriageActive()) return;
+    if (rejectFocusedCopilotSuggestion(event.target)) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     if (window.top === window) {
       try {
@@ -5484,7 +6346,7 @@ function undoLastTriageDecision() {
     return;
   }
 
-  delete restoredCard._status;
+  setCardReviewStatus(restoredCard, "pending");
   triage.accepted = triage.accepted.filter((c) => c.id !== restoredCard.id);
   triage.skipped = triage.skipped.filter((c) => c.id !== restoredCard.id);
 
@@ -5529,7 +6391,7 @@ function insertAltAnswerCard(baseCard, answer) {
   const newCard = cloneCard(baseCard);
   newCard.id = `${baseCard.id || "card"}-alt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   newCard.back = answer;
-  delete newCard._status;
+  setCardReviewStatus(newCard, "pending");
   triage.accepted = triage.accepted.filter((c) => c.id !== newCard.id);
   triage.skipped = triage.skipped.filter((c) => c.id !== newCard.id);
   const baseIndex = triage.cards.findIndex((c) => c.id === baseCard.id);
@@ -5548,7 +6410,7 @@ async function acceptCurrentCard() {
   const cardBeforeAction = cloneCard(card);
   const outboxBeforeAction = outbox.cards.find((c) => c.id === card.id);
   const actionIndex = triage.i;
-  card._status = "accepted";
+  setCardReviewStatus(card, "accepted");
   triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
   triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
   triage.accepted.push(cloneCard(card));
@@ -5585,7 +6447,7 @@ function skipCurrentCard() {
   const actionIndex = triage.i;
 
   // Mark it as skipped for stats / persistence
-  card._status = "skipped";
+  setCardReviewStatus(card, "skipped");
   triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
   triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
   triage.skipped.push(cloneCard(card));
@@ -5641,6 +6503,7 @@ async function acceptAllPending() {
   }
   const pending = triage.cards.slice();
   for (const card of pending) {
+    setCardReviewStatus(card, "accepted");
     triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
     triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
     triage.accepted.push(cloneCard(card));
@@ -5679,11 +6542,14 @@ async function refreshMetaAndDefaults() {
   const manualPrefs = await loadManualPrefs();
   await ensureAiTemplatesLoaded();
 
-  const templateSelect = $("#editorTemplateSelect");
-  const editorGenerateBtn = $("#editorGenerateBtn");
-  const autoMagicGenerate = !!opts.autoMagicGenerate;
-  if (templateSelect) templateSelect.hidden = autoMagicGenerate;
-  if (editorGenerateBtn) editorGenerateBtn.textContent = autoMagicGenerate ? "✨ Smart Gen" : "Gen";
+	  const templateSelect = $("#editorTemplateSelect");
+	  const editorGenerateBtn = $("#editorGenerateBtn");
+	  const autoMagicGenerate = !!opts.autoMagicGenerate;
+	  if (templateSelect) templateSelect.hidden = true;
+	  if (editorGenerateBtn) {
+	    editorGenerateBtn.hidden = !opts.showAdvancedGenerate;
+	    editorGenerateBtn.textContent = autoMagicGenerate ? "Draft" : "Draft";
+	  }
 
   applyFieldVisibilityPrefs(opts);
   setDebugEnabled(!!opts.debugMode);
@@ -5722,7 +6588,7 @@ async function refreshMetaAndDefaults() {
     manualPrefsCache = { ...(manualPrefsCache || {}), mathjaxPreview: mathjaxValue };
   }
 
-  applyShortcutSetting(typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_ADD_SHORTCUT);
+  applyShortcutSetting(typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_QUEUE_SHORTCUT);
   updateShortcutHelpText();
 
   // Test mode: populate essential form controls without hitting AnkiConnect
@@ -5744,6 +6610,7 @@ async function refreshMetaAndDefaults() {
       if (draft) await chrome.storage.local.remove("quickflash_lastDraft").catch(() => {});
       const meta = document.querySelector("#pageMeta");
       if (meta) meta.textContent = use.url ? `${use.title || ""} — ${use.url}` : "";
+      updateOverlaySourceChrome();
     } catch {}
 
     await updateModelFieldWarning();
@@ -5780,6 +6647,7 @@ async function refreshMetaAndDefaults() {
     const use = draft || ctx || {};
     if (draft) await chrome.storage.local.remove("quickflash_lastDraft");
     $("#pageMeta").textContent = use.url ? `${use.title || ""} — ${use.url}` : "";
+    updateOverlaySourceChrome();
     status("Connected to AnkiConnect.", true);
     // Do NOT auto-fill Front with selection here; "open_overlay_with_selection" handles paste explicitly
   } catch (e) {
@@ -5825,19 +6693,22 @@ function applyStoredTriageData(triageData) {
   triage.accepted = [];
   triage.skipped = [];
   for (const card of triage.cards) {
-    if (acceptedIds.has(card.id)) {
-      card._status = "accepted";
+    const storedStatus = getCardReviewStatus(card);
+    if (acceptedIds.has(card.id) || storedStatus === "accepted") {
+      setCardReviewStatus(card, "accepted");
       triage.accepted.push(cloneCard(card));
-    } else if (skippedIds.has(card.id)) {
-      card._status = "skipped";
+    } else if (skippedIds.has(card.id) || storedStatus === "skipped") {
+      setCardReviewStatus(card, "skipped");
       triage.skipped.push(cloneCard(card));
+    } else if (storedStatus === "deleted" || storedStatus === "sent") {
+      setCardReviewStatus(card, storedStatus);
     } else {
-      delete card._status;
+      setCardReviewStatus(card, "pending");
     }
   }
-  const anyPending = triage.cards.some((c) => !c._status);
-  triageState.active = anyPending;
-  syncTriageState({ activateIfCards: anyPending });
+  triageState.active = false;
+  setTriageActive(false);
+  syncTriageState({ activateIfCards: false });
 }
 
 function applyStoredOutboxData(outboxData) {
@@ -5846,7 +6717,9 @@ function applyStoredOutboxData(outboxData) {
     outbox.lastSend = { noteIds: [], cards: [] };
     return;
   }
-  outbox.cards = Array.isArray(outboxData.cards) ? outboxData.cards.map((card) => deepClone(card)) : [];
+  outbox.cards = Array.isArray(outboxData.cards)
+    ? outboxData.cards.map((card) => setCardReviewStatus(deepClone(card), getCardReviewStatus(card) === "pending" ? "accepted" : getCardReviewStatus(card)))
+    : [];
   const lastSend = outboxData.lastSend || {};
   outbox.lastSend = {
     noteIds: Array.isArray(lastSend.noteIds) ? [...lastSend.noteIds] : [],
@@ -6669,7 +7542,7 @@ function applyLpcgToFront() {
 function initLpcgControls() {
   // For LPCG we now mimic the "Import Lyrics/Poetry" dialog:
   // the poem is entered directly in #lpcgText, and notes are generated
-  // from the full text when the user clicks "Add to Anki".
+  // from the full text when the user queues the card.
   //
   // All of the old word-bank / apply-to-front controls have been removed.
   applyLpcgDefaults();
@@ -6816,7 +7689,108 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
   };
 }
 
-// ------- Add to Anki -------
+// ------- Queue card -------
+async function queueCurrentCardForReview() {
+  const front = ($("#front")?.value || "").trim();
+  const back = ($("#back")?.value || "").trim();
+  const notesText = ($("#notes")?.value || "").trim();
+  const sourceText = ($("#source")?.value || "").trim();
+  const contextText = ($("#context")?.value || "").trim();
+  const tags = ($("#tags")?.value || "").trim().split(/\s+/).filter(Boolean);
+  const hasClozeDeletion = CLOZE_PATTERN.test(front);
+  if (!front) return status("Front is required.");
+  if (!back && !hasClozeDeletion) return status("Front and Back are required.");
+
+  let page = copilot?.pageCtx || null;
+  try {
+    const ctx = await getPageContext();
+    page = { ...(ctx || {}), ...(page || {}) };
+  } catch {}
+  const mode = await getSourceMode();
+  const sourceUrl = (mode === "clipboard" || page?.usingClipboard)
+    ? (page?.url || "")
+    : (page?.sourceUrl || page?.url || "");
+  const textFragmentUrl = (mode === "clipboard" || page?.usingClipboard)
+    ? ""
+    : (page?.sourceUrl || "");
+  const sourceTitle = (page?.title || "").trim();
+  const sourceLabel = (page?.sourceLabel || sourceTitle || sourceUrl || "").trim();
+  const deck = $("#deck")?.value || "";
+  const model = $("#model")?.value || "";
+  const aiSuggestionCount = copilot.acceptedCount || 0;
+  const draftOrigin = aiSuggestionCount > 0
+    ? "ai_assisted"
+    : (sourceText ? "highlight_triggered" : "user_written");
+
+  const card = {
+    id: `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    type: hasClozeDeletion ? "cloze" : "basic",
+    front,
+    back,
+    tags,
+    source_highlight: sourceText || undefined,
+    source_title: sourceTitle || undefined,
+    source_url: sourceUrl || undefined,
+    source_text_fragment_url: textFragmentUrl || undefined,
+    source_label: sourceLabel || undefined,
+    captured_at: new Date().toISOString(),
+    deck: deck || undefined,
+    model: model || undefined,
+    editor_surface: getEditorSurface(),
+    draft_origin: draftOrigin,
+    review_status: "pending",
+    ai_suggestion_count: aiSuggestionCount,
+    created_note_ids: [],
+  };
+  if (notesText) card.extra = notesText;
+  if (sourceText) card.source_excerpt = sourceText;
+  if (contextText) card.context = contextText;
+
+  setCardReviewStatus(card, "pending");
+  triage.cards.push(card);
+  try { triage.fingerprints.add(makeFingerprint(card)); } catch {}
+  if (!triage.cards.length) triage.i = 0;
+  triage.i = Math.max(0, Math.min(triage.i, triage.cards.length - 1));
+  await updateLocalMetrics((metrics) => {
+    markMetricOnce(metrics, "first_card_queued_at");
+    bumpMetric(metrics, "cards_queued");
+    const week = new Date().toISOString().slice(0, 10);
+    const days = new Set(Array.isArray(metrics.weekly_active_writer_dates) ? metrics.weekly_active_writer_dates : []);
+    days.add(week);
+    metrics.weekly_active_writer_dates = Array.from(days).sort();
+    return metrics;
+  });
+  await recordShortcutCoachEvent("cardQueued");
+
+  $("#front").value = "";
+  $("#back").value = "";
+  $("#notes").value = "";
+  const contextEl = $("#context");
+  if (contextEl && !isStickyContextEnabled()) contextEl.value = "";
+  const sourceEl = $("#source");
+  if (sourceEl) {
+    sourceEl.value = "";
+    delete sourceEl.dataset.autoClipboard;
+  }
+  const tagsEl = $("#tags");
+  if (tagsEl) tagsEl.value = "";
+  resetCopilotLocks();
+  cancelCopilotRequests();
+  await clearManualDraftStorage();
+  setTriageActive(false);
+  renderEditor();
+  updateOutboxMeta();
+  focusFrontAtEnd();
+  persistTriageState();
+  status("Queued card in Review Queue.", true);
+  const opts = await getOptions();
+  if (getEditorSurface() === "overlay" && opts.closeOverlayAfterQueue === true) {
+    setTimeout(() => {
+      try { window.parent?.postMessage({ type: "quickflash:closeOverlay" }, "*"); } catch {}
+    }, 80);
+  }
+}
+
 async function addToAnki() {
   let deckName = $("#deck").value || "All Decks";
   const modelName = $("#model").value || "Basic";
@@ -7277,6 +8251,14 @@ async function sendOutboxToAnki() {
       return;
     }
 
+    for (const entry of added) {
+      setCardReviewStatus(entry.card, "sent");
+      entry.card.created_note_ids = [
+        ...(Array.isArray(entry.card.created_note_ids) ? entry.card.created_note_ids : []),
+        entry.noteId,
+      ].filter(Boolean);
+      entry.card.sent_at = new Date().toISOString();
+    }
     const sentIds = new Set(added.map((entry) => entry.card.id));
     const sentCards = added.map((entry) => cloneCard(entry.card));
     outbox.lastSend = { noteIds: added.map((entry) => entry.noteId), cards: sentCards };
@@ -7293,8 +8275,13 @@ async function sendOutboxToAnki() {
 
     await archiveUpsertCards(added, { url, title, sourceLabel: title, meta, context: meta?.ogTitle || meta?.citationTitle || "" });
 
-    const sentCount = outbox.lastSend.noteIds.length;
-    let message = `Sent ${sentCount} note${sentCount === 1 ? "" : "s"} to Anki.`;
+	    const sentCount = outbox.lastSend.noteIds.length;
+	    await updateLocalMetrics((metrics) => {
+	      markMetricOnce(metrics, "first_card_sent_at");
+	      bumpMetric(metrics, "cards_sent", sentCount);
+	      return metrics;
+	    });
+	    let message = `Sent ${sentCount} note${sentCount === 1 ? "" : "s"} to Anki.`;
     if (skipped > 0) message += ` Skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}.`;
     if (failed.length > 0) {
       message += ` ${failed.length} failed (kept in queue).`;
@@ -7324,7 +8311,7 @@ async function undoLastSend() {
     const restored = cards.map((c) => cloneCard(c));
     const startIndex = triage.cards.length;
     for (const card of restored) {
-      delete card._status;
+      setCardReviewStatus(card, "pending");
       triage.cards.push(card);
       try { triage.fingerprints.add(makeFingerprint(card)); } catch {}
     }
@@ -7351,49 +8338,12 @@ function isTypingTarget(el) {
 
 // --- Triage ⇄ editing gating -----------------------------------------------
 
-// Click/tap anywhere: decide if we should be in triage or editing
-document.addEventListener('pointerdown', (event) => {
-  if (!hasPendingTriageCards()) return;
-
-  const target = event.target;
-
-  const insideText = target.closest(
-    'textarea,' +
-    'input[type=\"text\"],' +
-    'input[type=\"search\"],' +
-    'input[type=\"url\"],' +
-    'input[type=\"email\"],' +
-    'input[type=\"number\"],' +
-    'input[type=\"password\"],' +
-    'input[type=\"tel\"],' +
-    '[contenteditable=\"true\"]'
-  );
-
-  if (insideText) {
-    // Let focusin handle actual editing; avoid disabling triage on scroll taps.
-    return;
-  }
-  // Any click elsewhere: re‑enable triage (if there’s a queue)
-  setTriageActive(true);
-}, true); // capture=true so it works even if nested handlers stop propagation
-
 // Handle programmatic focus (e.g. front.focus()), tabbing, etc.
 document.addEventListener('focusin', (event) => {
   if (!hasPendingTriageCards()) return;
   if (isTextField(event.target)) {
     setTriageActive(false);
   }
-}, true);
-
-document.addEventListener('focusout', () => {
-  if (!hasPendingTriageCards()) return;
-  // Wait one tick so document.activeElement is updated
-  setTimeout(() => {
-    const el = document.activeElement;
-    if (!isTextField(el)) {
-      setTriageActive(true);
-    }
-  }, 0);
 }, true);
 
 function handleTriageShortcut(e) {
@@ -7472,21 +8422,26 @@ function handlePrimaryAction() {
   if (isTriageActive()) {
     return acceptCurrentCard();
   }
-  return addToAnki();
+  return queueCurrentCardForReview();
 }
 
-function handlePrimaryActionShortcut(event) {
+function handleQueueShortcut(event) {
   if (!addShortcutConfig) return;
   if (event.repeat) return;
   if (!matchesShortcut(event, addShortcutConfig)) return;
   event.preventDefault();
+  event.stopPropagation();
   try {
-    handlePrimaryAction();
+    if (triageActive && !isTextField(event.target)) {
+      status("Queue shortcut is for writing mode. Use A to accept review cards.");
+      return;
+    }
+    queueCurrentCardForReview();
   } catch (err) {
-    console.warn("Add shortcut failed", err);
+    console.warn("Queue shortcut failed", err);
   }
 }
-document.addEventListener("keydown", handlePrimaryActionShortcut, true);
+document.addEventListener("keydown", handleQueueShortcut, true);
 
 // ------- AI card draft -------
 function buildAIPrompt(templateId, sourceText, ctx = {}) {
@@ -7496,9 +8451,55 @@ function buildAIPrompt(templateId, sourceText, ctx = {}) {
   const templatePrompt = (template?.prompt && String(template.prompt)) || buildFallbackAiPrompt(fallbackId);
   const contextLine = `Context: title="${ctx.title || ""}", url="${ctx.url || ""}"`;
   const safeText = sourceText || "";
+  const front = ($("#front")?.value || "").trim();
+  const back = ($("#back")?.value || "").trim();
+  const notes = ($("#notes")?.value || "").trim();
   return templatePrompt
     .replace(/\{\{CONTEXT\}\}/g, contextLine)
-    .replace(/\{\{TEXT\}\}/g, safeText);
+    .replace(/\{\{TEXT\}\}/g, safeText)
+    .replace(/\{\{FRONT\}\}/g, front)
+    .replace(/\{\{BACK\}\}/g, back)
+    .replace(/\{\{NOTES\}\}/g, notes);
+}
+
+function isFocusedSuggestionMode(modeId) {
+  return ["complete-front", "complete-back", "rewrite-front", "make-atomic", "generate-candidate"].includes(modeId);
+}
+
+function setEditorFieldValue(selector, value) {
+  const el = $(selector);
+  if (!el || value === undefined || value === null) return false;
+  const text = String(value).trim();
+  if (!text) return false;
+  el.value = text;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+function applyFocusedSuggestionResult(modeId, data) {
+  if (!data || typeof data !== "object") return false;
+  if (modeId === "generate-candidate") {
+    const card = Array.isArray(data.cards) ? data.cards[0] : data;
+    if (!card || typeof card !== "object") return false;
+    let changed = false;
+    changed = setEditorFieldValue("#front", card.front || card.q || card.question) || changed;
+    changed = setEditorFieldValue("#back", card.back || card.a || card.answer) || changed;
+    if (Array.isArray(card.tags) && card.tags.length) {
+      changed = setEditorFieldValue("#tags", card.tags.join(" ")) || changed;
+    }
+    if (card.context !== undefined) {
+      changed = setEditorFieldValue("#context", Array.isArray(card.context) ? card.context.join(" | ") : card.context) || changed;
+    }
+    return changed;
+  }
+  let changed = false;
+  if (["complete-front", "rewrite-front", "make-atomic"].includes(modeId)) {
+    changed = setEditorFieldValue("#front", data.front || data.question || data.q) || changed;
+  }
+  if (["complete-back", "make-atomic"].includes(modeId)) {
+    changed = setEditorFieldValue("#back", data.back || data.answer || data.a) || changed;
+  }
+  return changed;
 }
 
 async function getAiSourceContext() {
@@ -7521,14 +8522,14 @@ async function detectBestTemplate(sourceText, templates = []) {
   const available = templates
     .filter((tpl) => tpl && tpl.id)
     .map((tpl) => ({ id: String(tpl.id), name: (tpl.name || tpl.label || tpl.id || "").toString().trim() || String(tpl.id) }));
-  if (!available.length) throw new Error("No templates to choose from.");
+  if (!available.length) throw new Error("No suggestion modes to choose from.");
   const list = available.map((tpl) => `- ${tpl.id}: ${tpl.name}`).join("\n");
   const maxChars = 6000;
   const snippet = cleanText.length > maxChars ? `${cleanText.slice(0, maxChars)}…` : cleanText;
   const prompt = [
-    'Analyze this text. Which of these templates is the best fit? Return JSON { "id": "..." }.',
+    'Analyze this text. Which of these suggestion modes is the best fit? Return JSON { "id": "..." }.',
     '',
-    'Templates:',
+    'Suggestion modes:',
     list,
     '',
     'Text (may be truncated):',
@@ -7550,26 +8551,27 @@ async function handleEditorGenerateClick() {
     status("No source text (type, select text, or enable clipboard-as-Source).");
     return;
   }
+  if (!ensureAiSourceInputWithinLimit(ctx.sourceText)) return;
 
   if (autoMagicGenerate) {
     const templates = getAiTemplateList()
       .filter((tpl) => tpl && tpl.id)
       .map((tpl) => ({ id: tpl.id, name: tpl.name || tpl.id }));
     if (!templates.length) {
-      status("No templates available.");
+      status("No suggestion modes available.");
       return;
     }
-    status("Finding best template…");
+    status("Finding best suggestion mode…");
     let pickedId;
     try {
       pickedId = await detectBestTemplate(ctx.sourceText, templates);
     } catch (e) {
-      status(`Template detection failed: ${e.message}`);
+      status(`Suggestion mode detection failed: ${e.message}`);
       return;
     }
     const match = templates.find((tpl) => tpl.id === pickedId);
     if (!match) {
-      status("AI returned an unknown template; please pick one manually.");
+      status("AI returned an unknown suggestion mode; please pick one manually.");
       return;
     }
     const templateSelect = $("#editorTemplateSelect");
@@ -7588,7 +8590,7 @@ async function aiGenerate(templateId, ctx = {}) {
   const templateSelect = $("#editorTemplateSelect");
   const templates = getAiTemplateList();
   if (!templates.length) {
-    status("No AI templates configured. Add some in Options.");
+    status("No AI suggestion modes configured. Add some in Options.");
     return;
   }
 
@@ -7602,10 +8604,26 @@ async function aiGenerate(templateId, ctx = {}) {
     status("No source text (type, select text, or enable clipboard-as-Source).");
     return;
   }
+  if (!ensureAiSourceInputWithinLimit(sourceText)) return;
 
   status("Contacting AI…");
   const prompt = buildAIPrompt(chosenTemplate, sourceText, effectiveCtx);
   try {
+    if (isFocusedSuggestionMode(chosenTemplate)) {
+      const data = await ultimateChatJSON(prompt, { temperature: 0.2, parseArrayOrObject: true });
+      if (!applyFocusedSuggestionResult(chosenTemplate, data)) {
+        status("AI returned no usable suggestion.");
+        return;
+      }
+      await updateLocalMetrics((metrics) => {
+        bumpMetric(metrics, "ai_suggestions_requested");
+        bumpMetric(metrics, "ai_suggestions_accepted");
+        return metrics;
+      });
+      status("Applied AI suggestion. Edit it before queueing.", true);
+      return;
+    }
+
     const data = await ultimateChatJSON(prompt, /*model*/ null);
     const rawCards = Array.isArray(data?.cards) ? data.cards : [];
     const cards = rawCards.map((c, i) => {
@@ -7620,7 +8638,7 @@ async function aiGenerate(templateId, ctx = {}) {
     }).filter((c) => c.front && (c.type === "cloze" || c.back));
 
     if (!cards.length) {
-      status("AI returned no usable cards; refine the source or template.");
+      status("AI returned no usable cards; refine the source or suggestion mode.");
       return;
     }
 
@@ -7692,8 +8710,16 @@ async function aiGenerate(templateId, ctx = {}) {
       }
     }
 
+    const oneCard = normalized.slice(0, 1);
+    if (normalized.length > 1) {
+      status("AI returned multiple cards; keeping the first candidate only.", true);
+    }
     const startLen = triage.cards.length;
-    for (const card of normalized) {
+    for (const card of oneCard) {
+      setCardReviewStatus(card, "pending");
+      card.draft_origin = "ai_assisted";
+      card.ai_suggestion_count = (Number(card.ai_suggestion_count) || 0) + 1;
+      card.captured_at = card.captured_at || new Date().toISOString();
       triage.cards.push(card);
       try { triage.fingerprints.add(makeFingerprint(card)); } catch {}
     }
@@ -7702,7 +8728,7 @@ async function aiGenerate(templateId, ctx = {}) {
       triage.i = 0;
     }
     renderEditor();
-    status(`AI generated ${normalized.length} card${normalized.length === 1 ? "" : "s"}; added ${normalized.length} to queue.`, true);
+    status(`AI generated one candidate card; added it to Review Queue.`, true);
   } catch (e) {
     status(`AI error: ${e.message}`);
   }
@@ -7778,6 +8804,7 @@ function markPanelReady() {
 
 async function initPanel() {
   try {
+    applySurfaceModeClass();
     $("#refresh").addEventListener("click", (e) => { e.preventDefault(); refreshMetaAndDefaults(); });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) refreshMetaAndDefaults();
@@ -7787,16 +8814,7 @@ async function initPanel() {
     if (editorGenerateBtn) {
       editorGenerateBtn.addEventListener("click", async (e) => {
         e.preventDefault();
-        // Let the existing logic fetch & merge AI cards
         await handleEditorGenerateClick();
-
-        // If AI produced cards, automatically enter triage
-        if (triage.cards.length && hasPendingTriageCards()) {
-          blurActiveTextField();
-          syncTriageState({ activateIfCards: true });
-          setTriageActive(true);
-          renderEditor();
-        }
       });
     }
     document.addEventListener("keydown", (e) => {
@@ -7812,11 +8830,16 @@ async function initPanel() {
     if (sendOutboxBtn) sendOutboxBtn.addEventListener("click", (e) => { e.preventDefault(); sendOutboxToAnki(); });
     const undoSendBtn = $("#undoLastSend");
     if (undoSendBtn) undoSendBtn.addEventListener("click", (e) => { e.preventDefault(); undoLastSend(); });
-    const reviewQueueBtn = $("#openReviewQueue");
-    if (reviewQueueBtn) reviewQueueBtn.addEventListener("click", (e) => {
+    const openReviewQueueSurface = (e) => {
       e.preventDefault();
       chrome.runtime.sendMessage({ type: "ghostwriter:openReviewQueue" });
-    });
+    };
+    const reviewQueueBtn = $("#openReviewQueue");
+    if (reviewQueueBtn) reviewQueueBtn.addEventListener("click", openReviewQueueSurface);
+    const overlayReviewQueueBtn = $("#overlayReviewQueue");
+    if (overlayReviewQueueBtn) overlayReviewQueueBtn.addEventListener("click", openReviewQueueSurface);
+    const inlineReviewQueueBtn = $("#openReviewQueueInline");
+    if (inlineReviewQueueBtn) inlineReviewQueueBtn.addEventListener("click", openReviewQueueSurface);
     const miniGen    = document.querySelector("#copilotMiniGenerate");
     const miniAccept = document.querySelector("#copilotMiniAccept");
     const miniReject = document.querySelector("#copilotMiniReject");
@@ -7935,19 +8958,10 @@ async function initPanel() {
 
       // --- Global keyboard shortcut for "AI draft from template" ---
       // Default: Cmd/Ctrl + Shift + G  (G = Generate)
-      function isMac() {
-        return navigator.platform.toUpperCase().includes('MAC');
-      }
-
       function matchesAiDraftShortcut(ev) {
-        const key = ev.key.toLowerCase();
-        if (key !== 'g') return false;
-
-        if (isMac()) {
-          return ev.metaKey && ev.shiftKey && !ev.altKey && !ev.ctrlKey;
-        } else {
-          return ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey;
-        }
+        // Focused v2 keeps the advanced mode palette internal; daily use is the field-level Suggest action.
+        void ev;
+        return false;
       }
 
       window.addEventListener('keydown', (ev) => {
@@ -8042,7 +9056,7 @@ async function initPanel() {
     const quickOptionsShell = document.querySelector('.quick-options-shell');
     const collapseQuickOptions = () => {
       if (!quickOptionsShell) return;
-      if (window.innerWidth <= 560) {
+      if (getEditorSurface() === "overlay" || window.innerWidth <= 560) {
         quickOptionsShell.open = false;
       } else {
         quickOptionsShell.open = true;
@@ -8053,6 +9067,7 @@ async function initPanel() {
     const deckSel = $("#deck");
     if (deckSel) deckSel.addEventListener("change", () => {
       triage.deck = deckSel.value || null;
+      updateCardDetailsSummary();
       persistTriageState();
       ensureOutboxPreflight({ force: true });
     });
@@ -8065,6 +9080,7 @@ async function initPanel() {
       ensureOutboxPreflight({ force: true });
       updateModelFieldWarning();
       updateCardTypeUI();
+      updateCardDetailsSummary();
     });
     const modelFieldWarning = $("#modelFieldWarning");
     const modelFieldWarningActions = $("#modelFieldWarningActions");
@@ -8124,6 +9140,7 @@ async function initPanel() {
     initDebugPanel();
 
     await initCopilot();
+    await initShortcutCoach();
     bindStorageSync();
     await restoreSavedState();
     await restoreManualDraftFromStorage();
@@ -8187,6 +9204,9 @@ async function applyEditorViewModeFromOptions() {
     updateTriageUI();
   }
 }
+
+applySurfaceModeClass();
+window.addEventListener("hashchange", applySurfaceModeClass);
 
 // Initialise once, then on resize
 applyEditorViewModeFromOptions();

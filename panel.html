@@ -79,6 +79,25 @@
     header h1 .version { font-size: 10px; font-weight: 500; color: var(--muted); margin-left: 6px; }
     header .inline a { color: var(--muted); text-decoration: none; }
     header .inline a:hover { text-decoration: underline; }
+    .header-title { min-width: 0; display: grid; gap: 1px; }
+    .header-actions { flex: 0 0 auto; }
+    .overlay-header-source,
+    .header-review-btn {
+      display: none;
+    }
+    .queue-badge {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: color-mix(in oklab, var(--accent) 14%, var(--surface));
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+    }
 
     main { padding: 12px; padding-bottom: 60px; display: grid; gap: 12px; max-width: 820px; margin: 0 auto; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -180,6 +199,38 @@
     .qf-ghost .mirror { visibility: hidden; }
     .qf-ghost[hidden] { display: none; }
     .copilot-suggestion[hidden] { display: none; }
+    .shortcut-coach {
+      margin-top: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 100%;
+      color: var(--muted);
+    }
+    .shortcut-coach[hidden] {
+      display: none;
+    }
+    .shortcut-coach kbd {
+      padding: 1px 5px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.08);
+    }
+    .shortcut-coach button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 0 2px;
+      font-size: 12px;
+      text-decoration: underline;
+      box-shadow: none;
+    }
+    .shortcut-coach button:hover {
+      color: var(--text);
+    }
 
     .copilot-row {
       display: flex;
@@ -282,6 +333,26 @@
     }
     button.primary:hover { filter: brightness(1.02); }
     button.primary:focus-visible { outline: none; box-shadow: 0 0 0 var(--focus-outline) var(--ring); }
+    button.primary-with-shortcut {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .button-shortcut {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 18px;
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: color-mix(in oklab, var(--accent-ink) 18%, transparent);
+      color: currentColor;
+      font-size: 11px;
+      line-height: 1;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 600;
+      white-space: nowrap;
+    }
     button.warning {
       background: color-mix(in oklab, #ef4444 18%, var(--surface));
       color: #991b1b;
@@ -303,6 +374,63 @@
     .card-entry summary { font-weight: 600; }
     summary { cursor: pointer; font-weight: 600; color: var(--text); }
     .card-entry-body { display: grid; gap: 12px; margin-top: 8px; }
+    .metadata-drawer > summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .metadata-drawer > summary::-webkit-details-marker { display: none; }
+    .source-summary-label {
+      flex: 0 0 auto;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .source-summary-preview {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .source-summary-action {
+      flex: 0 0 auto;
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .source-collapse-label,
+    .card-details-close-label {
+      display: none;
+    }
+    .source-drawer[open] .source-expand-label,
+    .card-details-panel[open] .card-details-open-label {
+      display: none;
+    }
+    .source-drawer[open] .source-collapse-label,
+    .card-details-panel[open] .card-details-close-label {
+      display: inline;
+    }
+    .source-controls { gap: 6px; align-items: center; }
+    .metadata-drawer-body { margin-top: 10px; }
+    .source-hidden-input {
+      display: none;
+    }
+    .source-rendered-section {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .source-preview-frame {
+      height: 180px;
+      min-height: 180px;
+    }
 
     .editor-bar {
       display:flex;
@@ -310,6 +438,36 @@
       justify-content:space-between;
       gap:12px;
       padding:6px 0 2px;
+    }
+    .card-details-panel {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    .card-details-panel > summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      list-style: none;
+    }
+    .card-details-panel > summary::-webkit-details-marker { display: none; }
+    .card-details-panel[open] > summary {
+      border-bottom: 1px solid var(--border);
+    }
+    .card-details-body {
+      padding: 10px;
+      margin-top: 0;
+    }
+    .card-details-action {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .card-details-panel[open] .card-details-action {
+      color: var(--accent);
     }
     .editor-status-wrap { display:flex; flex-direction:column; gap:2px; max-width: 100%; }
     .editor-status { font-weight:600; font-size:13px; max-width: 100%; overflow-wrap: anywhere; }
@@ -937,6 +1095,293 @@
       padding: 4px 8px;
     }
 
+    /* ------ Overlay-first writing surface ------ */
+    body.is-overlay-surface {
+      background: var(--surface);
+    }
+
+    body.is-overlay-surface header {
+      min-height: 44px;
+      padding: 7px 10px;
+      gap: 10px;
+    }
+
+    body.is-overlay-surface header h1 {
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    body.is-overlay-surface .overlay-header-source {
+      display: block;
+      max-width: min(58vw, 420px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    body.is-overlay-surface .header-actions {
+      gap: 6px;
+      padding-right: 36px;
+    }
+
+    body.is-overlay-surface .header-review-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    body.is-overlay-surface .header-review-btn {
+      gap: 5px;
+      padding: 5px 7px;
+      border-radius: 8px;
+      font-size: 12px;
+      box-shadow: none;
+      background: var(--surface-2);
+    }
+
+    body.is-overlay-surface .header-settings-link {
+      width: 30px;
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 0;
+      box-shadow: var(--shadow-sm);
+    }
+
+    body.is-overlay-surface .header-settings-link::before {
+      content: "⚙";
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    body.is-overlay-surface main {
+      max-width: 100%;
+      padding: 8px 10px 88px;
+      gap: 8px;
+    }
+
+    body.is-overlay-surface #cardEditor {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    body.is-overlay-surface #cardEditor > summary {
+      display: none;
+    }
+
+    body.is-overlay-surface .card-entry-body {
+      gap: 8px;
+      margin-top: 0;
+    }
+
+    body.is-overlay-surface .editor-bar {
+      padding: 0;
+      min-height: 0;
+    }
+
+    body.is-overlay-surface .card-details-panel {
+      background: var(--surface-2);
+      border-radius: 10px;
+      box-shadow: none;
+    }
+
+    body.is-overlay-surface .card-details-panel > summary {
+      padding: 8px 10px;
+    }
+
+    body.is-overlay-surface .editor-status {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    body.is-overlay-surface .editor-meta {
+      font-size: 11px;
+    }
+
+    body.is-overlay-surface .metadata-drawer {
+      padding: 0;
+      border-radius: 10px;
+      background: var(--surface-2);
+      box-shadow: none;
+    }
+
+    body.is-overlay-surface .metadata-drawer > summary {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 10px;
+      list-style: none;
+    }
+
+    body.is-overlay-surface .metadata-drawer[open] > summary {
+      border-bottom: 1px solid var(--border);
+    }
+
+    body.is-overlay-surface .source-summary-preview {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      white-space: normal;
+      overflow: hidden;
+      color: var(--text);
+      line-height: 1.25;
+    }
+
+    body.is-overlay-surface .source-summary-action {
+      font-size: 11px;
+    }
+
+    body.is-overlay-surface .metadata-drawer[open] .source-summary-action {
+      color: var(--accent);
+    }
+
+    body.is-overlay-surface .metadata-drawer-body {
+      padding: 10px;
+      margin-top: 0;
+      gap: 10px;
+    }
+
+    body.is-overlay-surface .source-preview-frame {
+      height: min(26vh, 210px);
+      min-height: 138px;
+    }
+
+    body.is-overlay-surface .deck-model-row,
+    body.is-overlay-surface .metadata-row {
+      grid-template-columns: 1fr;
+    }
+
+    body.is-overlay-surface .source-mode-row {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    body.is-overlay-surface .source-controls {
+      flex-wrap: wrap;
+    }
+
+    body.is-overlay-surface #standardFields {
+      display: grid;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    body.is-overlay-surface #standardFields > div {
+      min-width: 0;
+    }
+
+    body.is-overlay-surface .label {
+      font-size: 12px;
+    }
+
+    body.is-overlay-surface .front-detection[data-detected="basic"] {
+      display: none;
+    }
+
+    body.is-overlay-surface #front {
+      min-height: 112px;
+      height: min(24vh, 150px);
+      resize: vertical;
+    }
+
+    body.is-overlay-surface #back {
+      min-height: 104px;
+      height: min(22vh, 140px);
+      resize: vertical;
+    }
+
+    body.is-overlay-surface .copilot-mini {
+      padding: 0;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    body.is-overlay-surface .copilot-mini::-webkit-scrollbar {
+      display: none;
+    }
+
+    body.is-overlay-surface #sourceModePill {
+      display: none !important;
+    }
+
+    body.is-overlay-surface #readyToSendSection,
+    body.is-overlay-surface #debugPanel,
+    body.is-overlay-surface footer,
+    body.is-overlay-surface #shortcutHelpButton {
+      display: none !important;
+    }
+
+    #openReviewQueueInline {
+      display: none;
+    }
+
+    body.is-overlay-surface .primary-action-row {
+      position: fixed;
+      left: 50%;
+      right: auto;
+      bottom: 12px;
+      transform: translateX(-50%);
+      z-index: 7;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      width: min(360px, calc(100% - 56px));
+      padding-bottom: env(safe-area-inset-bottom);
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+
+    body.is-overlay-surface .primary-action-row .maintenance-action {
+      display: none;
+    }
+
+    body.is-overlay-surface #openReviewQueueInline {
+      display: inline-flex;
+      justify-content: center;
+    }
+
+    body.is-overlay-surface .primary-action-row:has(#triageSkip:not([hidden])) #openReviewQueueInline {
+      display: none;
+    }
+
+    body.is-overlay-surface .primary-action-row #add,
+    body.is-overlay-surface .primary-action-row #openReviewQueueInline,
+    body.is-overlay-surface .primary-action-row #triageSkip:not([hidden]) {
+      justify-content: center;
+      font-weight: 700;
+      min-height: 38px;
+      width: 100%;
+      border-radius: 10px;
+      box-shadow: 0 8px 20px rgba(2, 6, 23, 0.18);
+    }
+
+    body.is-overlay-surface .primary-action-row .button-shortcut {
+      display: none;
+    }
+
+    body.is-overlay-surface .primary-action-row #triageSkip:not([hidden]) {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
     /* --- Mobile editor typography & tap-zoom behaviour --- */
     html[data-editor-view="mobile"] body {
       font-size: 16px;
@@ -1011,9 +1456,15 @@
 </head>
 <body>
   <header>
-    <h1>Ghostwriter for Anki <span class="version" id="app-version"></span></h1>
-    <div class="inline small">
-      <a href="options.html" target="_blank">Options</a>
+    <div class="header-title">
+      <h1>Ghostwriter for Anki <span class="version" id="app-version"></span></h1>
+      <div id="overlayHeaderSource" class="overlay-header-source" aria-live="polite">No source captured</div>
+    </div>
+    <div class="inline small header-actions">
+      <button type="button" id="overlayReviewQueue" class="header-review-btn">
+        Review Queue <span id="overlayReviewBadge" class="queue-badge">0</span>
+      </button>
+      <a href="options.html" target="_blank" class="header-settings-link">Settings</a>
     </div>
   </header>
 
@@ -1028,59 +1479,115 @@
         <button type="button" id="triageHintDismiss">Got it</button>
       </div>
     </div>
-    <details class="card-entry" open>
+    <details id="cardEditor" class="card-entry editor-shell" open>
       <summary>Card editor</summary>
       <div class="card-entry-body">
-        <div class="row">
-          <div>
-            <div class="label">Deck</div>
-            <select id="deck"></select>
-          </div>
-          <div>
-            <div class="label">Note type</div>
-            <select id="model"></select>
-            <div id="ghostwriterModelInfo" class="small ghostwriter-warning ghostwriter-info" role="status" aria-live="polite" hidden>
-              <div>Ghostwriter uses its own custom note type with additional fields like Source and Context. We strongly recommend using these note types.</div>
-              <div class="ghostwriter-info-actions">
-                <button type="button" id="ghostwriterModelInfoDismiss">Got it</button>
-              </div>
-            </div>
-            <div id="modelFieldWarning" class="small model-warning" role="status" aria-live="polite" hidden>
-              <span id="modelFieldWarningText"></span>
-              <div class="model-warning-actions" id="modelFieldWarningActions" hidden>
-                <button type="button" id="dismissModelFieldWarning">Dismiss</button>
-                <label><input type="checkbox" id="hideModelFieldWarning"> Don’t show again</label>
-              </div>
-            </div>
-            <div id="clozeModelNotice" class="small model-info" role="status" aria-live="polite" hidden>
-              <div>Ghostwriter for Anki detects cloze deletions automatically. You can write cloze cards in basic mode; when deletions are present we send them as Cloze.</div>
-              <div class="model-info-actions">
-                <button type="button" id="dismissClozeNotice">Dismiss</button>
-                <label><input type="checkbox" id="hideClozeNotice"> Don’t show again</label>
-              </div>
-            </div>
-          </div>
-        </div>
         <div class="editor-bar">
-          <div class="editor-status-wrap">
-            <div id="editorStatus" class="editor-status">New card</div>
-            <div id="triageMeta" class="editor-meta"></div>
-          </div>
+          <details id="cardDetailsPanel" class="card card-details-panel">
+            <summary>
+              <div class="editor-status-wrap">
+                <div id="editorStatus" class="editor-status">Card details</div>
+                <div id="cardDetailsSummary" class="editor-meta">Deck, note type, tags, and helpers</div>
+                <div id="triageMeta" class="editor-meta"></div>
+              </div>
+              <span class="card-details-action">
+                <span class="card-details-open-label">Details</span>
+                <span class="card-details-close-label">Hide</span>
+              </span>
+            </summary>
+            <div class="card-entry-body card-details-body">
+              <div class="row deck-model-row">
+                <div>
+                  <div class="label">Deck</div>
+                  <select id="deck"></select>
+                </div>
+                <div>
+                  <div class="label">Note type</div>
+                  <select id="model"></select>
+                  <div id="ghostwriterModelInfo" class="small ghostwriter-warning ghostwriter-info" role="status" aria-live="polite" hidden>
+                    <div>Ghostwriter uses its own custom note type with additional fields like Source and Context. We strongly recommend using these note types.</div>
+                    <div class="ghostwriter-info-actions">
+                      <button type="button" id="ghostwriterModelInfoDismiss">Got it</button>
+                    </div>
+                  </div>
+                  <div id="modelFieldWarning" class="small model-warning" role="status" aria-live="polite" hidden>
+                    <span id="modelFieldWarningText"></span>
+                    <div class="model-warning-actions" id="modelFieldWarningActions" hidden>
+                      <button type="button" id="dismissModelFieldWarning">Dismiss</button>
+                      <label><input type="checkbox" id="hideModelFieldWarning"> Don’t show again</label>
+                    </div>
+                  </div>
+                  <div id="clozeModelNotice" class="small model-info" role="status" aria-live="polite" hidden>
+                    <div>Ghostwriter for Anki detects cloze deletions automatically. You can write cloze cards in basic mode; when deletions are present we send them as Cloze.</div>
+                    <div class="model-info-actions">
+                      <button type="button" id="dismissClozeNotice">Dismiss</button>
+                      <label><input type="checkbox" id="hideClozeNotice"> Don’t show again</label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="row metadata-row">
+                <div id="contextGroup" data-field-block="context">
+                  <div class="label">Context (optional)</div>
+                  <div class="context-input-row" id="contextInputRow">
+                    <input id="context" type="text" placeholder="e.g. Chapter 3, lecture notes" />
+                    <button type="button" id="contextStickyToggle" class="sticky-toggle" aria-pressed="false" aria-label="Toggle sticky context" title="Keep this context for this tab">📌</button>
+                  </div>
+                </div>
+                <div>
+                  <div class="label">Tags (space-separated)</div>
+                  <input id="tags" type="text" placeholder="e.g. research ai memory" />
+                </div>
+              </div>
+
+              <div class="row metadata-row">
+                <div id="notesGroup" data-field-block="notes">
+                  <div class="label">Notes / Extra</div>
+                  <textarea id="notes" placeholder="Extra detail to map into the Anki note"></textarea>
+                </div>
+                <div class="copilot-row">
+                  <div class="small">AI suggestion status</div>
+                  <div id="copilotStatus" class="copilot-status small"></div>
+                </div>
+              </div>
+
+              <details class="quick-options-shell">
+                <summary>Quick options</summary>
+                <div class="quick-options">
+                  <label class="inline"><input id="fillSourceField" type="checkbox" checked /> Fill <b>Source</b> field (if it exists)</label>
+                  <label class="inline"><input id="includeBackLink" type="checkbox" /> Add clickable link on Back</label>
+                  <label class="inline"><input id="manualAutoTag" type="checkbox" /> Auto-tag with AI</label>
+                  <label class="inline"><input id="manualAutoContext" type="checkbox" /> Generate context</label>
+                  <label class="inline"><input id="mathjaxPreview" type="checkbox" /> Auto preview</label>
+                  <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable AI suggestions</label>
+                </div>
+              </details>
+            </div>
+          </details>
           <div class="editor-nav-buttons" id="editorNavButtons" hidden>
             <button type="button" id="triagePrev">◀ Prev</button>
             <button type="button" id="triageNext">Next ▶</button>
           </div>
         </div>
 
-        <details class="quick-options-shell">
-          <summary>Quick options</summary>
-          <div class="quick-options">
-            <label class="inline"><input id="fillSourceField" type="checkbox" checked /> Fill <b>Source</b> field (if it exists)</label>
-            <label class="inline"><input id="includeBackLink" type="checkbox" /> Add clickable link on Back</label>
-            <label class="inline"><input id="manualAutoTag" type="checkbox" /> Auto-tag with AI</label>
-            <label class="inline"><input id="manualAutoContext" type="checkbox" /> Generate context</label>
-            <label class="inline"><input id="mathjaxPreview" type="checkbox" /> Auto preview</label>
-            <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable Copilot</label>
+        <details id="sourceContextDetails" class="card metadata-drawer source-drawer" open>
+          <summary>
+            <span class="source-summary-label">Source</span>
+            <span id="sourcePreviewText" class="source-summary-preview">No source captured</span>
+            <span class="source-summary-action">
+              <span class="source-expand-label">Expand</span>
+              <span class="source-collapse-label">Collapse</span>
+            </span>
+          </summary>
+          <div class="card-entry-body metadata-drawer-body source-drawer-body">
+            <div id="sourceGroup" data-field-block="source">
+              <div class="markdown-section source-rendered-section" data-preview-block="source">
+                <iframe id="previewSource" class="markdown-render preview-frame source-preview-frame" title="Source excerpt preview"></iframe>
+                <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
+              </div>
+              <textarea id="source" class="source-hidden-input" aria-hidden="true" tabindex="-1" placeholder="Quote or excerpt from the source…"></textarea>
+            </div>
           </div>
         </details>
 
@@ -1181,9 +1688,13 @@
                 <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
               </div>
             </div>
+            <div class="shortcut-coach small" data-field-coach="front" role="status" aria-live="polite" hidden>
+              <span data-coach-text></span>
+              <button type="button" data-coach-dismiss>Hide tips</button>
+            </div>
             <div class="copilot-suggestion" data-field="front" hidden>
               <div class="copilot-header">
-                <div class="copilot-meta">Copilot suggestion</div>
+                <div class="copilot-meta">AI suggestion</div>
                 <div class="copilot-hint small"></div>
               </div>
               <div class="copilot-text"></div>
@@ -1194,18 +1705,18 @@
             </div>
           </div>
 
-          <!-- Compact Copilot mini panel -->
+          <!-- Compact AI suggestion mini panel -->
           <div id="copilotMini" class="copilot-mini">
-            <select id="editorTemplateSelect" class="small"></select>
-            <button type="button" id="editorGenerateBtn" title="Draft cards from Source">Gen</button>
-            <button type="button" id="copilotMiniGenerate" title="Generate Q &amp; A">Copilot</button>
+            <select id="editorTemplateSelect" class="small" hidden></select>
+            <button type="button" id="editorGenerateBtn" title="Draft one card from Source" hidden>Draft</button>
+            <button type="button" id="copilotMiniGenerate" title="Request AI suggestion">Suggest</button>
             <span id="sourceModePill" class="source-pill small" aria-live="polite">Source: Auto</span>
             <button type="button" id="copilotMiniAccept" title="Accept both">Accept</button>
             <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)">Reject</button>
             <button type="button" id="copilotMiniClear" title="Clear Front &amp; Back">Clear</button>
           </div>
 
-          <!-- Triage toolbar (mobile-friendly; shown when triage is active) -->
+          <!-- Review toolbar (mobile-friendly; shown when review is active) -->
           <div id="triageToolbar" class="triage-toolbar" hidden>
             <button type="button" id="triageToolbarPrev" title="Previous (↑ / ←)">◀ Prev</button>
             <button type="button" id="triageToolbarSkip" title="Reject (Esc)">Reject</button>
@@ -1225,9 +1736,13 @@
                 <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
               </div>
             </div>
+            <div class="shortcut-coach small" data-field-coach="back" role="status" aria-live="polite" hidden>
+              <span data-coach-text></span>
+              <button type="button" data-coach-dismiss>Hide tips</button>
+            </div>
             <div class="copilot-suggestion" data-field="back" hidden>
               <div class="copilot-header">
-                <div class="copilot-meta">Copilot suggestion</div>
+                <div class="copilot-meta">AI suggestion</div>
                 <div class="copilot-hint small"></div>
               </div>
               <div class="copilot-text"></div>
@@ -1239,53 +1754,7 @@
           </div>
         </div>
 
-        <details id="sourceContextDetails" class="card" open>
-          <summary>Source &amp; context</summary>
-          <div class="card-entry-body">
-            <div class="row">
-              <div id="contextGroup" data-field-block="context">
-                <div class="label">Context (optional)</div>
-                <div class="context-input-row" id="contextInputRow">
-                  <input id="context" type="text" placeholder="e.g. Chapter 3, lecture notes" />
-                  <button type="button" id="contextStickyToggle" class="sticky-toggle" aria-pressed="false" aria-label="Toggle sticky context" title="Keep this context for this tab">📌</button>
-                </div>
-              </div>
-              <div id="notesGroup" data-field-block="notes">
-                <div class="label">Notes / Extra</div>
-                <textarea id="notes" placeholder="Extra detail to map into the Anki note"></textarea>
-              </div>
-            </div>
-            <div id="sourceGroup" data-field-block="source">
-              <div class="label source-mode-row">
-                <span>Source excerpt</span>
-                <div class="inline" style="gap:6px; align-items:center;">
-                  <button id="useClipboardAsSource" type="button" class="small">Use clipboard as Source</button>
-                  <select id="sourceMode" class="small">
-                    <option value="auto">Source: Auto</option>
-                    <option value="clipboard">Source: Clipboard</option>
-                    <option value="page">Source: Page</option>
-                  </select>
-                  <button type="button" id="sourceModeToggle">Mode: Auto</button>
-                </div>
-              </div>
-              <div class="small" id="sourceModeHint"></div>
-              <textarea id="source" placeholder="Quote or excerpt from the source…"></textarea>
-            </div>
-          </div>
-        </details>
-
         <div id="altAnswers" class="alt-answers" hidden></div>
-
-        <div class="row">
-          <div>
-            <div class="label">Tags (space-separated)</div>
-            <input id="tags" type="text" placeholder="e.g. research ai memory" />
-          </div>
-          <div class="copilot-row">
-            <div class="small">Copilot status</div>
-            <div id="copilotStatus" class="copilot-status small"></div>
-          </div>
-        </div>
       </div>
     </details>
 
@@ -1323,31 +1792,35 @@
       </div>
     </details>
 
-    <details open class=”card-entry”>
+    <details id="readyToSendSection" open class="card-entry">
       <summary>Ready to Send</summary>
-      <div class=”card-entry-body”>
-        <div class=”btns”>
-          <button type=”button” id=”openReviewQueue”>Open Review Queue</button>
+      <div class="card-entry-body">
+        <div class="btns">
+          <button type="button" id="openReviewQueue">Open Review Queue</button>
         </div>
-        <div class=”small” id=”outboxMeta”></div>
-        <div id=”outboxList”></div>
-        <div class=”btns”>
-          <button id=”sendOutbox” class=”primary”>Send to Anki</button>
-          <button id=”undoLastSend”>Undo last send</button>
+        <div class="small" id="outboxMeta"></div>
+        <div id="outboxList"></div>
+        <div class="btns">
+          <button id="sendOutbox" class="primary">Send to Anki</button>
+          <button id="undoLastSend">Undo last send</button>
         </div>
-        <div class=”btns”>
-          <button type=”button” id=”triageAcceptAll” class=”primary”>Queue all remaining</button>
-          <button type=”button” id=”triageClear”>Reset</button>
-          <button type=”button” id=”clearOutbox” class=”subtle-btn” hidden>Clear queue</button>
-          <button type=”button” id=”triageResume” hidden>Resume review</button>
+        <div class="btns">
+          <button type="button" id="triageAcceptAll" class="primary">Queue all remaining</button>
+          <button type="button" id="triageClear">Reset</button>
+          <button type="button" id="clearOutbox" class="subtle-btn" hidden>Clear queue</button>
+          <button type="button" id="triageResume" hidden>Resume review</button>
         </div>
       </div>
     </details>
 
-    <div class="btns">
-      <button id="refresh">↻ Refresh decks/types</button>
+    <div class="btns primary-action-row">
+      <button id="refresh" class="maintenance-action">↻ Refresh decks/types</button>
+      <button type="button" id="openReviewQueueInline" class="secondary-action">Review Queue</button>
       <button type="button" id="triageSkip" hidden>Reject</button>
-      <button class="primary" id="add">Add to Anki</button>
+      <button class="primary primary-with-shortcut" id="add">
+        <span class="button-label">Queue card</span>
+        <kbd id="queueShortcutButtonHint" class="button-shortcut">Cmd + Shift + A</kbd>
+      </button>
     </div>
 
     <div class="small" id="status"></div>
@@ -1375,15 +1848,19 @@
       <div class="modal-body">
         <ul class="shortcut-list">
           <li>
-            <span>AI template menu</span>
-            <code id="shortcutAiTemplate">Cmd/Ctrl + Shift + G</code>
+            <span>Open overlay</span>
+            <code>Mac: Option + Shift + F / Win/Linux: Ctrl + Shift + F</code>
           </li>
           <li>
-            <span>Copilot generate</span>
+            <span>Toggle side panel</span>
+            <code>Cmd/Ctrl + Shift + L</code>
+          </li>
+          <li>
+            <span>AI autocomplete</span>
             <code id="shortcutCopilot">Cmd/Ctrl + Shift + X</code>
           </li>
           <li>
-            <span>Add to Anki</span>
+            <span>Queue card</span>
             <code id="shortcutAdd">Custom</code>
           </li>
           <li>
@@ -1398,41 +1875,31 @@
             <span>Close overlay</span>
             <code>Esc</code>
           </li>
-          <li>
-            <span>Toggle side panel</span>
-            <code>Cmd/Ctrl + Shift + L</code>
-          </li>
         </ul>
-        <p class="small shortcut-note">
-          If your overlay or side-panel shortcut is set to <strong>Cmd/Ctrl + Shift + G</strong>,
-          it will conflict with the AI template menu in the overlay. Consider choosing a different
-          overlay shortcut in your extension shortcuts.
-          Existing installs may need to rebind shortcuts manually if Chrome does not migrate them.
-        </p>
       </div>
     </div>
   </div>
 
-  <!-- Template chooser palette (keyboard-friendly) -->
+  <!-- Focused AI suggestion mode palette (keyboard-friendly) -->
   <div id="aiTemplateModal" class="modal-overlay" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiTemplateModalTitle">
       <header>
-        <h2 id="aiTemplateModalTitle">AI draft from template</h2>
+        <h2 id="aiTemplateModalTitle">AI suggestion mode</h2>
         <button type="button" id="aiTemplateModalClose" aria-label="Close">×</button>
       </header>
       <div class="modal-body">
         <p class="small">
-          Choose a template, then press <strong>Enter</strong> to draft cards
+          Choose one focused assist, then press <strong>Enter</strong> to apply it
           from the current Source (selection / clipboard / page).
         </p>
         <select id="aiTemplateModalSelect" class="small" style="width:100%; margin-top:6px;"></select>
         <p class="small">
           Shortcuts:
-          <code>↑/↓</code> to move, <code>Enter</code> to generate,
+          <code>↑/↓</code> to move, <code>Enter</code> to apply,
           <code>Esc</code> to cancel.
         </p>
         <div class="btns" style="margin-top:8px;">
-          <button type="button" id="aiTemplateModalGenerate" class="primary">Generate</button>
+          <button type="button" id="aiTemplateModalGenerate" class="primary">Apply</button>
           <button type="button" id="aiTemplateModalCancel">Cancel</button>
         </div>
       </div>

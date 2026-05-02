@@ -7,6 +7,7 @@ const fs = require('fs');
 // functions by reading and evaluating just the parts we need.
 const buildScriptPath = path.resolve(__dirname, '../../scripts/build-release.js');
 const buildScriptSource = fs.readFileSync(buildScriptPath, 'utf8');
+const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../manifest.json'), 'utf8'));
 
 // Extract pure function source and evaluate in isolation
 function extractFunction(source, name) {
@@ -89,7 +90,12 @@ describe('build-release.js pure functions', () => {
     it('excludes dev-only files', () => {
       assert.ok(EXCLUDES.includes('node_modules'));
       assert.ok(EXCLUDES.includes('tests'));
+      assert.ok(EXCLUDES.includes('test-results'));
+      assert.ok(EXCLUDES.includes('playwright-report'));
       assert.ok(EXCLUDES.includes('package.json'));
+      assert.ok(EXCLUDES.includes('eslint.config.js'));
+      assert.ok(EXCLUDES.includes('AGENTS.md'));
+      assert.ok(EXCLUDES.includes('.DS_Store'));
     });
 
     it('excludes dist to prevent nesting', () => {
@@ -105,5 +111,28 @@ describe('build-release.js pure functions', () => {
     it('excludes stale licence files for removed features', () => {
       assert.ok(EXCLUDES.includes('licences'));
     });
+  });
+});
+
+describe('manifest shortcuts', () => {
+  it('defaults the explicit overlay command to the overlay-first shortcut', () => {
+    const overlayCommand = manifest.commands?.['open-ghostwriter-overlay'];
+    assert.equal(overlayCommand?.description, 'Open Ghostwriter for Anki Overlay');
+    assert.equal(overlayCommand?.suggested_key?.mac, 'Option+Shift+F');
+    assert.equal(overlayCommand?.suggested_key?.default, 'Ctrl+Shift+F');
+  });
+
+  it('keeps one visible side-panel toggle command with its own shortcut', () => {
+    const sidePanelCommand = manifest.commands?.['open-ghostwriter-side-panel'];
+    assert.equal(sidePanelCommand?.description, 'Toggle Ghostwriter for Anki Side Panel');
+    assert.equal(sidePanelCommand?.suggested_key?.mac, 'Command+Shift+L');
+    assert.equal(sidePanelCommand?.suggested_key?.default, 'Ctrl+Shift+L');
+  });
+
+  it('drops stale duplicate and tuning commands from the manifest', () => {
+    assert.equal(manifest.commands?._execute_action, undefined);
+    assert.equal(manifest.commands?.['open-ghostwriter'], undefined);
+    assert.equal(manifest.commands?.['open-ghostwriter-with-selection'], undefined);
+    assert.equal(manifest.commands?.['quickflash-toggle-source-mode'], undefined);
   });
 });

@@ -2,7 +2,7 @@
 
 **Current Version:** `0.3.3`
 
-Ghostwriter for Anki is an AI-assisted flashcard creation extension for Chrome/Edge that integrates with Anki via AnkiConnect.
+Ghostwriter for Anki helps you turn web highlights into reviewed Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional AI suggestions, queue the card, then review and send to Anki.
 
 ## Documentation
 
@@ -24,10 +24,9 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 
 1. [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/ghostwriter-for-anki/aldemiobejkammdkfgpfnmeppnegfaoc).
 2. Install AnkiConnect in desktop Anki (add-on ID `2055492159`).
-3. Set a keyboard shortcut: `chrome://extensions/` → Keyboard shortcuts → "Open Ghostwriter for Anki Overlay".
-4. Configure your AI provider in extension Options.
-5. Open Ghostwriter and start drafting cards.
-6. Send reviewed cards to Anki through Outbox.
+3. Highlight text on a page and open Ghostwriter from the extension icon, context menu, or shortcut.
+4. Write the card in the overlay; press the AI suggestion shortcut when useful.
+5. Queue the card, review it, then send accepted cards to Anki.
 
 ## Build commands
 

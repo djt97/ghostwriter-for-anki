@@ -18,6 +18,7 @@ return {
   buildDefinitionAITemplatePrompt,
   buildResearchPaperAITemplatePrompt,
   buildLegacyResearchPaperAITemplatePrompt,
+  buildFocusedSuggestionModePrompt,
   upgradeDefinitionPromptIfNeeded,
   upgradeResearchPaperPromptIfNeeded,
   DEFAULT_AI_TEMPLATES,
@@ -79,23 +80,54 @@ describe('panel-ai-templates.js', () => {
   });
 
   describe('DEFAULT_AI_TEMPLATES', () => {
-    it('has 5 built-in templates', () => {
+    it('has 5 built-in focused suggestion modes', () => {
       assert.equal(fns.DEFAULT_AI_TEMPLATES.length, 5);
     });
 
-    it('includes concept, definition, math, research-paper, book', () => {
+    it('includes the focused v2 modes', () => {
       const ids = fns.DEFAULT_AI_TEMPLATES.map(t => t.id);
-      assert.ok(ids.includes('concept'));
-      assert.ok(ids.includes('definition'));
-      assert.ok(ids.includes('math'));
-      assert.ok(ids.includes('research-paper'));
-      assert.ok(ids.includes('book'));
+      assert.deepEqual(ids, [
+        'complete-front',
+        'complete-back',
+        'rewrite-front',
+        'make-atomic',
+        'generate-candidate',
+      ]);
     });
 
-    it('all templates have non-empty prompts', () => {
+    it('all modes have non-empty prompts', () => {
       for (const tpl of fns.DEFAULT_AI_TEMPLATES) {
         assert.ok(tpl.prompt.length > 50, `template ${tpl.id} has short prompt`);
       }
+    });
+  });
+
+  describe('buildFocusedSuggestionModePrompt', () => {
+    it('builds field-completion JSON prompts', () => {
+      const front = fns.buildFocusedSuggestionModePrompt('complete-front');
+      assert.ok(front.includes('"front"'));
+      assert.ok(front.includes('{{FRONT}}'));
+      assert.ok(front.includes('{{BACK}}'));
+      assert.ok(front.includes('{{NOTES}}'));
+    });
+
+    it('candidate mode requires exactly one card', () => {
+      const p = fns.buildFocusedSuggestionModePrompt('generate-candidate');
+      assert.ok(p.includes('exactly ONE'));
+      assert.ok(p.includes('"cards"'));
+    });
+
+    it('focused prompts preserve the user target over generic source trivia', () => {
+      const p = fns.buildFocusedSuggestionModePrompt('make-atomic');
+      assert.ok(p.includes("Preserve the user's apparent target"));
+      assert.ok(p.includes('generic trivia nearby') || p.includes('another source fact is easier'));
+    });
+
+    it('focused prompts keep Front cues from disclosing Back answers', () => {
+      const p = fns.buildFocusedSuggestionModePrompt('complete-front');
+      assert.ok(p.includes("Cue, don't disclose"));
+      assert.ok(p.includes('answer-bearing phrase'));
+      assert.ok(p.includes('method, formula, definition, result, name, or example'));
     });
   });
 

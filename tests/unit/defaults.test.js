@@ -50,6 +50,9 @@ describe('defaults.js', () => {
 
   it('has editor and debug keys', () => {
     assert.ok('editorViewMode' in DEFAULTS);
+    assert.ok('defaultEditorSurface' in DEFAULTS);
+    assert.ok('closeOverlayAfterQueue' in DEFAULTS);
+    assert.ok('showShortcutHints' in DEFAULTS);
     assert.ok('debugMode' in DEFAULTS);
   });
 
@@ -70,6 +73,11 @@ describe('defaults.js', () => {
       assert.equal(DEFAULTS.copilotMinIntervalMs, 1200);
     });
 
+    it('copilot token budgets default to autocomplete-sized values', () => {
+      assert.equal(DEFAULTS.copilotFrontMaxTokens, 48);
+      assert.equal(DEFAULTS.copilotBackMaxTokens, 36);
+    });
+
     it('showMiniCopilotMode defaults to "off"', () => {
       assert.equal(DEFAULTS.showMiniCopilotMode, 'off');
     });
@@ -78,14 +86,28 @@ describe('defaults.js', () => {
       assert.equal(DEFAULTS.ankiBaseUrl, 'http://127.0.0.1:8765');
     });
 
-    it('debugMode defaults to false', () => {
-      assert.equal(DEFAULTS.debugMode, false);
+	    it('debugMode defaults to false', () => {
+	      assert.equal(DEFAULTS.debugMode, false);
+	    });
+
+	    it('defaultEditorSurface defaults to overlay', () => {
+	      assert.equal(DEFAULTS.defaultEditorSurface, 'overlay');
+	    });
+
+    it('closeOverlayAfterQueue defaults to false', () => {
+      assert.equal(DEFAULTS.closeOverlayAfterQueue, false);
+    });
+
+    it('shortcut hints default to on', () => {
+      assert.equal(DEFAULTS.showShortcutHints, true);
     });
   });
 
   it('cannot be mutated', () => {
     // Object.freeze prevents additions — verify the property doesn't stick
-    DEFAULTS.newProp = 'test';
+    try {
+      DEFAULTS.newProp = 'test';
+    } catch {}
     assert.equal(DEFAULTS.newProp, undefined);
   });
 });

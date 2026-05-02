@@ -10,10 +10,10 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
   showMiniCopilotMode: "off",
   showSourceModePill: true,
   copilotShortcut: "Cmd+Shift+X",
-  copilotFrontWordCap: 20,
-  copilotBackWordCap: 16,
-  copilotFrontMaxTokens: 1024,
-  copilotBackMaxTokens: 1024,
+  copilotFrontWordCap: 24,
+  copilotBackWordCap: 18,
+  copilotFrontMaxTokens: 48,
+  copilotBackMaxTokens: 36,
   copilotMinIntervalMs: 1200,
   copilotTimeoutMs: 30000,
 
@@ -37,6 +37,9 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
 
   // Editor
   editorViewMode: "auto",
+  defaultEditorSurface: "overlay",
+  closeOverlayAfterQueue: false,
+  showShortcutHints: true,
 
   // Debug
   debugMode: false,

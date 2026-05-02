@@ -1,28 +1,23 @@
 # Overview
 
-Ghostwriter for Anki is a Chrome/Edge Manifest V3 extension that helps you create, review, and send flashcards to Anki through AnkiConnect.
+Ghostwriter for Anki is a Chrome/Edge Manifest V3 extension that helps you turn web highlights into reviewed Anki cards through AnkiConnect.
 
 ## Core capabilities
 
-- **Manual card authoring with Copilot**
+- **Highlight-first card writing**
+  - Highlight text and open the editor directly.
+  - Overlay is the default editor; side panel is optional.
+- **Manual card authoring with AI suggestions**
   - Draft cards manually in Front/Back fields.
-  - Get AI suggestions while typing, then accept with keyboard shortcuts.
-- **Smart Generation from selected text**
-  - Select text on a page and ask Ghostwriter to generate card candidates.
-  - Uses templates and provider settings from the Options page.
-- **Triage queue + Outbox workflow**
-  - Review generated cards quickly (accept/reject).
-  - Send accepted cards in batches to Anki.
-- **Bulk generation with Custom GPTs**
-  - Generate large batches via [FlashcardGPT (ChatGPT)](https://chatgpt.com/g/g-690faa9681448191b2700ca01abdeca6-flashcardgpt) or [Gemini Gem](https://gemini.google.com/gem/1E1OquFI0cH_ohhvADJQ61qKYdjJ55Jcq), then import into the triage queue with `J`.
+  - Request short AI suggestions manually, then accept or ignore them.
+- **Review Queue + Ready to Send workflow**
+  - Queue cards locally while reading.
+  - Review and send accepted cards in batches to Anki.
 - **LaTeX/MathJax and Markdown preview**
   - Render math and formatted text in cards before sending to Anki.
 - **Multiple AI providers**
   - Google Gemini
   - OpenAI-compatible APIs (including UltimateAI)
-- **Optional dashboard / graph features in full build**
-  - The `full` release includes graph/embedding assets.
-  - The `lite` release removes those features for smaller footprint.
 
 ## UI surfaces
 
@@ -36,9 +31,9 @@ Ghostwriter can be used in more than one browser surface:
 ## High-level flow
 
 1. Open Ghostwriter from shortcut, action, or context menu.
-2. Draft cards manually or generate from selected text.
-3. Review queued suggestions in triage mode.
-4. Build an Outbox and send cards to Anki via AnkiConnect.
+2. Draft the card manually with optional AI suggestions.
+3. Queue and review cards.
+4. Send accepted cards to Anki via AnkiConnect.
 
 ## Who this is for
 

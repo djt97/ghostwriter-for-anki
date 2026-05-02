@@ -4,20 +4,19 @@
 
 | Action | Default shortcut |
 |---|---|
-| Open overlay | Set in `chrome://extensions/` → Keyboard shortcuts |
+| Open overlay | Mac: `Option + Shift + F`; Windows/Linux: `Ctrl + Shift + F` |
 | Toggle side panel | `Ctrl/Cmd + Shift + L` |
 
 ## Editor
 
 | Action | Shortcut |
 |---|---|
-| Accept Copilot suggestion | `Tab` |
-| Trigger Copilot generation | `Ctrl/Cmd + Shift + X` |
-| AI template menu | `Ctrl/Cmd + Shift + G` |
-| Add card to Anki | Configurable in Options |
+| Accept AI autocomplete | `Tab` |
+| Request AI autocomplete | `Ctrl/Cmd + Shift + X` |
+| Queue card for review | `Ctrl/Cmd + Shift + A` |
 | Close overlay | `Esc` |
 
-## Triage mode
+## Review Queue mode
 
 | Action | Shortcut |
 |---|---|
@@ -25,17 +24,9 @@
 | Reject / skip card | `R` or `Esc` |
 | Next card | `→` or `↓` |
 | Previous card | `←` or `↑` |
-| Open JSON import | `J` |
-
-## AI template menu
-
-| Action | Shortcut |
-|---|---|
-| Navigate templates | `↑` / `↓` |
-| Select template | `Enter` |
-| Cancel | `Esc` |
+| Open advanced JSON import | `J` |
 
 ## Notes
 
-- If your overlay shortcut is set to `Ctrl/Cmd + Shift + G`, it will conflict with the AI template menu inside the overlay. Consider choosing a different overlay shortcut.
-- Triage shortcuts only apply when triage mode is active and the cursor is not in a text field.
+- Review shortcuts only apply when Review Queue mode is active and the cursor is not in a text field.
+- If a shortcut is missing after an update, repair it from `chrome://extensions/shortcuts`.

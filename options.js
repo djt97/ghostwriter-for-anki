@@ -7,28 +7,28 @@ const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const ULTIMATE_BASE_URL = "https://smart.ultimateai.org/v1";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_COPILOT_FRONT_PROMPT = `
-You autocomplete flashcard QUESTIONS.
-Continue ONLY the question fragment the user started.
-Apply minimum-information (one fact per card) and ensure the question is univocal (admits one correct answer).
-Return ≤ {{frontWordCap}} words; fewer is better. No answers, no filler.
-Prefer exact vocabulary from the Source excerpt when present. No preambles.
+Autocomplete one Anki Front field.
+Output only the text to insert. No analysis, labels, quotes, markdown, or "The user".
+Continue after the user's prefix; do not repeat, correct, or restate text already typed.
+Complete the user's prefix into one durable retrieval cue: one target, unambiguous, enough context, no answer leakage.
+Cue, don't disclose: silently identify the minimal Back answer, then write a Front that asks for it without revealing the method, formula, definition, result, name, or example.
+If the completion would need "by defining", "using", "where", "namely", or another answer-bearing phrase, stop before that phrase.
+Preserve the user's intended target; do not switch to easier source trivia.
 `.trim();
 const DEFAULT_COPILOT_BACK_PROMPT = `
-You autocomplete flashcard ANSWERS.
-Return a single, atomic answer (≤ {{backWordCap}} words).
-Follow minimum-information (one fact per card) and univocality (one correct answer).
-Ground in the Source excerpt when present; if insufficient, infer minimally from notes/question; only then use general knowledge.
-No preamble; do not repeat the question; prefer a short noun phrase or clause.
-Answer with the minimal phrase that fully answers the question; do not restate the source sentence.
-Do not append extra descriptors (e.g., weights, dates, clauses) unless they are required to disambiguate the answer.
-Bad: “Blue whales are the largest animal on earth.” Good: “Blue whales.”
+Autocomplete one Anki Back field.
+Output only the text to insert. No analysis, labels, quotes, markdown, or "The user".
+Continue after the user's prefix; do not repeat, correct, or restate text already typed.
+Answer the Front exactly. Prefer the smallest source-grounded phrase.
+Supply the missing answer the Front cues; do not turn the Back into a passage summary.
+Do not restate the passage or add background unless needed to disambiguate.
 `.trim();
 const DEFAULT_COPILOT_FRONT_FROM_BACK_PROMPT = `
-You write flashcard QUESTIONS from a provided answer.
-Apply minimum-information (one fact per card) and ensure the question is univocal (admits one correct answer).
-Ask a direct question that is univocal and answered exactly by the Back text.
-Return ≤ {{frontWordCap}} words; fewer is better. No answers, no filler.
-Prefer exact vocabulary from the Source excerpt when present. No preambles.
+Autocomplete one Anki Front field.
+Output only the text to insert. No analysis, labels, quotes, markdown, or "The user".
+Continue after the user's prefix; do not repeat, correct, or restate text already typed.
+Use the Back as the answer contract. Ask for exactly one target with enough context and no answer leakage.
+Cue, don't disclose: the Front must point at the Back answer while leaving that answer missing.
 `.trim();
 const DEFAULT_EDITOR_FIELD_CONFIG = {
   context: {
@@ -58,12 +58,12 @@ Avoid echoing the front/back text; avoid generic paraphrases.`,
 const PROVIDER_DEFAULTS = {
   ultimate: {
     baseUrl: ULTIMATE_BASE_URL,
-    model: "gpt-4o-mini",
+    model: "auto",
     keyPlaceholder: "UltimateAI API key",
   },
   openai: {
     baseUrl: DEFAULT_BASE_URL,
-    model: "gpt-4o-mini",
+    model: "gpt-4.1-mini",
     keyPlaceholder: "OpenAI API key",
   },
   gemini: {
@@ -85,15 +85,44 @@ const KNOWN_MODELS = {
     { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
   ],
   openai: [
-    { id: "gpt-4o-mini", label: "GPT-4o Mini" },
-    { id: "gpt-4o", label: "GPT-4o" },
     { id: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
     { id: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+    { id: "gpt-4o-mini", label: "GPT-4o Mini" },
+    { id: "gpt-4o", label: "GPT-4o" },
     { id: "o4-mini", label: "o4-mini" },
   ],
   ultimate: [
+    { id: "auto", label: "Auto (fast default)" },
+    { id: "task", label: "Task (low-cost grunt work)" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    { id: "gpt-5-mini", label: "GPT-5 Mini" },
+    { id: "claude-4-5-haiku", label: "Claude 4.5 Haiku" },
+    { id: "claude-latest", label: "Claude latest" },
+    { id: "chatgpt-latest", label: "ChatGPT latest" },
+    { id: "gemini-latest", label: "Gemini latest" },
+    { id: "gpt-5.5-mini", label: "GPT-5.5 Mini" },
+    { id: "gpt-5.5", label: "GPT-5.5" },
+    { id: "gpt-5.4", label: "GPT-5.4" },
+    { id: "gpt-5", label: "GPT-5" },
+    { id: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
+    { id: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+    { id: "gpt-4.1", label: "GPT-4.1" },
     { id: "gpt-4o-mini", label: "GPT-4o Mini" },
     { id: "gpt-4o", label: "GPT-4o" },
+    { id: "claude-4-6-sonnet", label: "Claude 4.6 Sonnet" },
+    { id: "claude-4-6-opus", label: "Claude 4.6 Opus" },
+    { id: "claude-4-7-opus", label: "Claude 4.7 Opus" },
+    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
+    { id: "gemini-3-flash-lite", label: "Gemini 3 Flash Lite" },
+    { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+    { id: "grok-4-1-fast-non-reasoning", label: "Grok 4.1 Fast Non-reasoning" },
+    { id: "grok-4-1-fast-reasoning", label: "Grok 4.1 Fast Reasoning" },
+    { id: "deepseek-v3.2", label: "DeepSeek V3.2" },
+    { id: "deepseek-chat", label: "DeepSeek Chat" },
+    { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+    { id: "glm-4.6", label: "GLM 4.6" },
+    { id: "kimi-k2", label: "Kimi K2" },
+    { id: "minimax-m2.1", label: "MiniMax M2.1" },
   ],
   claude: [
     { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
@@ -101,6 +130,11 @@ const KNOWN_MODELS = {
   ],
 };
 const OPTIONS_KEY = "quickflash_options";
+const FREE_TIER_KEY = "ghostwriter_free_tier";
+const FREE_TIER_LIMIT = 20;
+const FREE_TIER_DAILY_LIMIT = 10;
+const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v1";
+const SHORTCUT_COACH_KEY = "ghostwriter_onboarding_v1";
 const PERMISSION_JUSTIFICATIONS = {
   clipboardRead: {
     reason:
@@ -109,6 +143,72 @@ const PERMISSION_JUSTIFICATIONS = {
 };
 
 let currentOptionsCache = null;
+
+async function renderFreeTierStatus() {
+  const el = document.querySelector("#freeTierStatus");
+  if (!el) return;
+  try {
+    const got = await chrome.storage.local.get(FREE_TIER_KEY);
+    const state = got?.[FREE_TIER_KEY] || {};
+    const today = new Date().toISOString().slice(0, 10);
+    const dailyUsed = state.dailyDate === today ? (state.dailyUsed || 0) : 0;
+    const lifetimeRemaining = Math.max(0, FREE_TIER_LIMIT - (state.used || 0));
+    const dailyRemaining = Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed);
+    el.textContent = `Free suggestions remaining: ${Math.min(lifetimeRemaining, dailyRemaining)} today (${lifetimeRemaining} lifetime).`;
+  } catch {
+    el.textContent = "Free suggestions: quota unavailable.";
+  }
+}
+
+async function renderUpdateNotice() {
+  const noticeEl = document.querySelector("#updateNotice");
+  if (!noticeEl) return;
+  try {
+    const got = await chrome.storage.local.get(UPDATE_NOTICE_KEY);
+    const notice = got?.[UPDATE_NOTICE_KEY];
+    if (!notice || notice.dismissed) {
+      noticeEl.hidden = true;
+      return;
+    }
+
+    const title = document.querySelector("#updateNoticeTitle");
+    const message = document.querySelector("#updateNoticeMessage");
+    const list = document.querySelector("#updateNoticeList");
+    if (title) title.textContent = notice.title || "Ghostwriter updated";
+    if (message) message.textContent = notice.message || "Your settings were preserved.";
+    if (list) {
+      list.innerHTML = "";
+      const actions = Array.isArray(notice.actions) ? notice.actions : [];
+      for (const item of actions) {
+        const li = document.createElement("li");
+        li.textContent = item;
+        list.appendChild(li);
+      }
+      list.hidden = !actions.length;
+    }
+    noticeEl.hidden = false;
+  } catch {
+    noticeEl.hidden = true;
+  }
+}
+
+async function dismissUpdateNotice() {
+  try {
+    const got = await chrome.storage.local.get(UPDATE_NOTICE_KEY);
+    const notice = got?.[UPDATE_NOTICE_KEY];
+    if (notice) {
+      await chrome.storage.local.set({
+        [UPDATE_NOTICE_KEY]: {
+          ...notice,
+          dismissed: true,
+          dismissedAt: Date.now(),
+        },
+      });
+    }
+  } catch {}
+  const noticeEl = document.querySelector("#updateNotice");
+  if (noticeEl) noticeEl.hidden = true;
+}
 
 function applyOptionsViewMode(mode) {
   const html = document.documentElement;
@@ -130,6 +230,21 @@ function normalizeProvider(value) {
   return "ultimate";
 }
 
+function inferProviderFromOptions(opts) {
+  if (opts?.llmProvider) return normalizeProvider(opts.llmProvider);
+  if (opts?.openaiKey) return "openai";
+  if (opts?.ultimateKey) return "ultimate";
+  if (opts?.geminiKey) return "gemini";
+  if (opts?.claudeKey) return "claude";
+  return "openai";
+}
+
+function normalizeEditorSurface(value) {
+  if (value === "side_panel" || value === "sidePanel") return "side_panel";
+  if (value === "tab") return "tab";
+  return "overlay";
+}
+
 async function anki(action, params = {}) {
   const response = await new Promise((resolve) => {
     chrome.runtime.sendMessage(
@@ -148,7 +263,7 @@ async function anki(action, params = {}) {
 
 // Read the per-provider config from stored options
 function getProviderConfigFromOpts(opts, providerOverride) {
-  const provider = normalizeProvider(providerOverride || opts?.llmProvider);
+  const provider = providerOverride ? normalizeProvider(providerOverride) : inferProviderFromOptions(opts || {});
   const cfg = { provider, baseUrl: "", apiKey: "", model: "", streamFront: false };
 
   if (provider === "gemini") {
@@ -234,7 +349,7 @@ function updateGeminiStreamWarning() {
 // Apply the current provider selection into the UI
 function applyProviderChoiceUI(provider, optsOverride) {
   const opts = optsOverride || currentOptionsCache || {};
-  const p = normalizeProvider(provider || opts.llmProvider || "ultimate");
+  const p = provider ? normalizeProvider(provider) : inferProviderFromOptions(opts);
   const cfg = getProviderConfigFromOpts(opts, p);
 
   const preset = document.querySelector("#providerPreset");
@@ -291,7 +406,7 @@ function applyProviderChoiceUI(provider, optsOverride) {
     } else if (p === "claude") {
       modelHelp.textContent = "Used for Anthropic Claude API calls.";
     } else {
-      modelHelp.textContent = "Used for UltimateAI (OpenAI-compatible) calls.";
+      modelHelp.textContent = "Used for UltimateAI calls. Auto is the recommended fast default; Custom accepts any UltimateAI model ID.";
     }
   }
 
@@ -442,49 +557,89 @@ function upgradeResearchPaperPromptIfNeeded(templates) {
   return { updated, changed };
 }
 
-const DEFAULT_TEMPLATES = [
-  {
-    id: "concept",
-    name: "Concept",
-    prompt: buildSimpleTemplatePrompt("concept")
-  },
-  {
-    id: "definition",
-    name: "Definition",
-    prompt: buildDefinitionTemplatePrompt()
-  },
-  {
-    id: "math",
-    name: "Math formula",
-    prompt: buildSimpleTemplatePrompt("math")
-  },
-  {
-    id: "research-paper",
-    name: "Research paper (3 cards)",
-    prompt: buildResearchPaperTemplatePrompt()
-  },
-  {
-    id: "book",
-    name: "Book (2 cards)",
-    prompt: `Return ONLY valid JSON. Never include explanations or backticks.
-You are making bibliography drill cards for a book.
-Extract: book_name, authors (comma-separated), and year (YYYY).
+function buildFocusedSuggestionModePrompt(mode) {
+  const baseRules = `Rules:
+- Preserve the user's apparent target from Front/Back/Notes before using the Source.
+- Do not decide what is "important" on the user's behalf; the highlight and typed words are the signal.
+- Make one stable retrieval cue: enough context to cue the same answer months later, but no answer leakage.
+- Cue, don't disclose: the Front names the problem/context, while the Back holds the method, formula, definition, result, name, or example.
+- If a Front would need "by defining", "using", "where", "namely", or another answer-bearing phrase, stop before that phrase.
+- Avoid T1-style failures: vague context, multiple valid answers, shallow textbook lists, and passage restatement.
+- Stay grounded in the Source. If the target is unclear or unsupported, return an empty string for uncertain fields.
+- No preamble, markdown, critique, or alternatives.
+{{CONTEXT}}
 
-Output shape EXACTLY:
-{
-  "deck": "",  // optional
-  "cards": [
-    { "type":"basic", "front":"Book name: <book_name> (a, y)", "back":"Authors: <authors>\\nYear: <year>", "tags":["AI-generated"], "context":"Bibliography — canonical" },
-    { "type":"basic", "front":"Book by <authors> in <year> — name?", "back":"<book_name>", "tags":["AI-generated"], "context":"Bibliography — recall" }
-  ]
-}
+Current card:
+Front: {{FRONT}}
+Back: {{BACK}}
+Notes: {{NOTES}}
+
+Source:
+{{TEXT}}`;
+
+  switch (mode) {
+    case "complete-front":
+      return `Return ONLY valid JSON: { "front": "..." }
+Complete the user's Front for this single card. Continue their wording when possible.
+${baseRules}`;
+    case "complete-back":
+      return `Return ONLY valid JSON: { "back": "..." }
+Complete the Back for this single card. Answer the Front exactly, with the smallest stable answer.
+${baseRules}`;
+    case "rewrite-front":
+      return `Return ONLY valid JSON: { "front": "..." }
+Rewrite the Front only enough to make the user's intended target stable and answerable.
+${baseRules}`;
+    case "make-atomic":
+      return `Return ONLY valid JSON: { "front": "...", "back": "..." }
+Repair this as one atomic Anki card. Preserve the user's intended target even if another source fact is easier.
+${baseRules}`;
+    case "generate-candidate":
+    default:
+      return `Return ONLY valid JSON. Never include explanations or backticks.
+Create exactly ONE candidate Anki card only if the Source/highlight implies a specific memorable target.
+Output shape:
+{ "cards": [ { "type":"basic", "front":"...", "back":"...", "tags":["AI-suggested"], "context":"source-grounded" } ] }
 Rules:
-- In "(a, y)", use the FIRST author's last name for "a" and the year for "y".
-- Preserve capitalization of the official book title.
+- Exactly one card.
+- One target only: preserve what made the highlight worth marking, not generic trivia nearby.
+- Front is an unambiguous cue that will still work months later.
+- Front must cue the missing answer without disclosing the method/formula/definition/result/name/example.
+- Back is the minimal answer that satisfies the cue.
+- Prefer sentence-completion cues when they preserve the highlighted novelty better than generic questions.
+- Use the Source only. If no good single card can be made, return { "cards": [] }.
 {{CONTEXT}}
 
 TEXT:
-{{TEXT}}`
+{{TEXT}}`;
+  }
+}
+
+const DEFAULT_TEMPLATES = [
+  {
+    id: "complete-front",
+    name: "Complete Front",
+    prompt: buildFocusedSuggestionModePrompt("complete-front")
+  },
+  {
+    id: "complete-back",
+    name: "Complete Back",
+    prompt: buildFocusedSuggestionModePrompt("complete-back")
+  },
+  {
+    id: "rewrite-front",
+    name: "Rewrite Front",
+    prompt: buildFocusedSuggestionModePrompt("rewrite-front")
+  },
+  {
+    id: "make-atomic",
+    name: "Make Atomic",
+    prompt: buildFocusedSuggestionModePrompt("make-atomic")
+  },
+  {
+    id: "generate-candidate",
+    name: "Generate Candidate From Source",
+    prompt: buildFocusedSuggestionModePrompt("generate-candidate")
   }
 ];
 
@@ -568,6 +723,12 @@ function normalizeShortcutInput(raw) {
   return parsed;
 }
 
+function normalizeStoredQueueShortcut(value) {
+  const stored = parseShortcut(value);
+  const isLegacyDefault = stored?.meta && stored?.shift && !stored?.ctrl && !stored?.alt && stored?.key === "q";
+  return isLegacyDefault ? DEFAULT_SHORTCUT : value;
+}
+
 function normalizeEditorFieldConfig(cfg) {
   if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return null;
   const normalized = {};
@@ -604,13 +765,14 @@ async function save() {
   }
   const shortcutValue = shortcut ? serializeShortcut(shortcut) : "";
 
-  const timeoutSec = num("#copilotTimeoutSec", 30); // default 30s
+  const D = window.GHOSTWRITER_DEFAULTS || {};
+  const timeoutSec = num("#copilotTimeoutSec", Math.round((D.copilotTimeoutMs || 30000) / 1000));
 
   const { [OPTIONS_KEY]: existing } = await chrome.storage.sync.get(OPTIONS_KEY);
   const base = existing || {};
 
   const provider = normalizeProvider(
-    document.querySelector("#providerPreset")?.value || base.llmProvider || "ultimate"
+    document.querySelector("#providerPreset")?.value || base.llmProvider || "openai"
   );
 
   const providerBaseUrl = document.querySelector("#providerBaseUrl")?.value.trim() || "";
@@ -648,21 +810,24 @@ async function save() {
     autoMagicGenerate: $("#autoMagicGenerate").checked,
     manualCopilotOnly: $("#manualCopilotOnly").checked,
     copilotShortcut: $("#copilotShortcut").value.trim() || DEFAULT_COPILOT_SHORTCUT,
-    copilotFrontSystemPrompt: $("#copilotFrontSystemPrompt").value.trim(),
-    copilotBackSystemPrompt: $("#copilotBackSystemPrompt").value.trim(),
-    copilotFrontFromBackSystemPrompt: $("#copilotFrontFromBackSystemPrompt").value.trim(),
+    copilotFrontSystemPrompt: $("#copilotFrontSystemPrompt")?.value.trim() || DEFAULT_COPILOT_FRONT_PROMPT,
+    copilotBackSystemPrompt: $("#copilotBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_BACK_PROMPT,
+    copilotFrontFromBackSystemPrompt: $("#copilotFrontFromBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_FRONT_FROM_BACK_PROMPT,
     autoFillBackAI: $("#copilotAutoFillBack").checked,
-    copilotFrontWordCap: num("#copilotFrontWordCap", 20),
-    copilotBackWordCap: num("#copilotBackWordCap", 16),
-    copilotFrontMaxTokens: num("#copilotFrontMaxTokens", 1024),
-    copilotBackMaxTokens: num("#copilotBackMaxTokens", 1024),
-    copilotMinIntervalMs: num("#copilotMinIntervalMs", 1200),
+    copilotFrontWordCap: num("#copilotFrontWordCap", D.copilotFrontWordCap || 24),
+    copilotBackWordCap: num("#copilotBackWordCap", D.copilotBackWordCap || 18),
+    copilotFrontMaxTokens: num("#copilotFrontMaxTokens", D.copilotFrontMaxTokens || 48),
+    copilotBackMaxTokens: num("#copilotBackMaxTokens", D.copilotBackMaxTokens || 36),
+    copilotMinIntervalMs: num("#copilotMinIntervalMs", D.copilotMinIntervalMs || 1200),
     copilotTimeoutMs: Math.max(1000, timeoutSec * 1000),
     showMiniCopilotMode: ($("#showMiniCopilotMode").value || "off"),
     showSourceModePill: !!$("#showSourceModePill")?.checked,
-      editorViewMode: document.querySelector("#editorViewMode")?.value || base.editorViewMode || "auto",
-      // Persist any custom per-field editor configuration alongside other editor settings
-      editorFieldConfig,
+    showShortcutHints: document.querySelector("#showShortcutHints")?.checked !== false,
+    editorViewMode: document.querySelector("#editorViewMode")?.value || base.editorViewMode || "auto",
+    defaultEditorSurface: normalizeEditorSurface(document.querySelector("#defaultEditorSurface")?.value || base.defaultEditorSurface),
+    closeOverlayAfterQueue: !!document.querySelector("#closeOverlayAfterQueue")?.checked,
+    // Persist any custom per-field editor configuration alongside other editor settings
+    editorFieldConfig,
 
     // Anki defaults
     defaultDeck: $("#defaultDeck").value.trim() || "All Decks",
@@ -701,6 +866,21 @@ async function save() {
 
   currentOptionsCache = data;
   await chrome.storage.sync.set({ [OPTIONS_KEY]: data });
+  if (data.showShortcutHints !== false) {
+    try {
+      const got = await chrome.storage.local.get(SHORTCUT_COACH_KEY);
+      const state = got?.[SHORTCUT_COACH_KEY];
+      if (state?.hintsDismissed) {
+        await chrome.storage.local.set({
+          [SHORTCUT_COACH_KEY]: {
+            ...state,
+            hintsDismissed: false,
+            reenabledAt: Date.now(),
+          },
+        });
+      }
+    } catch {}
+  }
   if (!shortcutInput || shortcut) {
     $("#msg").textContent = "Saved.";
     $("#msg").className = "ok";
@@ -713,11 +893,10 @@ async function load() {
   const { [OPTIONS_KEY]: quickflash_options } = await chrome.storage.sync.get(OPTIONS_KEY);
   const opts = quickflash_options || {};
   currentOptionsCache = opts;
+  await renderFreeTierStatus();
 
-  // Infer provider for older saves based on ultimateBaseUrl, default to UltimateAI
-  const legacyBase = opts.ultimateBaseUrl || PROVIDER_DEFAULTS.ultimate.baseUrl;
-  const inferredFromBase = legacyBase.includes("ultimateai") ? "ultimate" : "openai";
-  const provider = normalizeProvider(opts.llmProvider || inferredFromBase);
+  // Infer provider for older saves; focused v2 defaults to OpenAI/free-tier proxy.
+  const provider = inferProviderFromOptions(opts);
 
   // AI provider connection UI (base URL, key, model, stream)
   applyProviderChoiceUI(provider, opts);
@@ -727,27 +906,26 @@ async function load() {
   document.querySelector("#autoMagicGenerate").checked = !!opts.autoMagicGenerate;
   document.querySelector("#manualCopilotOnly").checked = opts.manualCopilotOnly !== false;
   document.querySelector("#copilotShortcut").value = opts.copilotShortcut || DEFAULT_COPILOT_SHORTCUT;
-  const storedFront = (opts.copilotFrontSystemPrompt || "").trim();
-  const storedBack = (opts.copilotBackSystemPrompt || "").trim();
-  const storedFrontFromBack = (opts.copilotFrontFromBackSystemPrompt || "").trim();
   const defaults = getDefaultCopilotPrompts();
-  const frontPrompt = storedFront || defaults.front;
-  const backPrompt = storedBack || defaults.back;
-  const frontFromBackPrompt = storedFrontFromBack || defaults.frontFromBack;
+  const frontPrompt = defaults.front;
+  const backPrompt = defaults.back;
+  const frontFromBackPrompt = defaults.frontFromBack;
   document.querySelector("#copilotFrontSystemPrompt").value = frontPrompt;
   document.querySelector("#copilotBackSystemPrompt").value = backPrompt;
   document.querySelector("#copilotFrontFromBackSystemPrompt").value = frontFromBackPrompt;
   document.querySelector("#copilotAutoFillBack").checked = opts.autoFillBackAI !== false;
   const D = window.GHOSTWRITER_DEFAULTS || {};
-  document.querySelector("#copilotFrontWordCap").value = String(opts.copilotFrontWordCap ?? D.copilotFrontWordCap ?? 20);
-  document.querySelector("#copilotBackWordCap").value = String(opts.copilotBackWordCap ?? D.copilotBackWordCap ?? 16);
-  document.querySelector("#copilotFrontMaxTokens").value = String(opts.copilotFrontMaxTokens ?? D.copilotFrontMaxTokens ?? 1024);
-  document.querySelector("#copilotBackMaxTokens").value = String(opts.copilotBackMaxTokens ?? D.copilotBackMaxTokens ?? 1024);
+  document.querySelector("#copilotFrontWordCap").value = String(opts.copilotFrontWordCap ?? D.copilotFrontWordCap ?? 24);
+  document.querySelector("#copilotBackWordCap").value = String(opts.copilotBackWordCap ?? D.copilotBackWordCap ?? 18);
+  document.querySelector("#copilotFrontMaxTokens").value = String(opts.copilotFrontMaxTokens ?? D.copilotFrontMaxTokens ?? 48);
+  document.querySelector("#copilotBackMaxTokens").value = String(opts.copilotBackMaxTokens ?? D.copilotBackMaxTokens ?? 36);
   document.querySelector("#copilotMinIntervalMs").value = String(opts.copilotMinIntervalMs ?? D.copilotMinIntervalMs ?? 1200);
   document.querySelector("#copilotTimeoutSec").value = String(Math.round((opts.copilotTimeoutMs ?? D.copilotTimeoutMs ?? 30000) / 1000));
   document.querySelector("#showMiniCopilotMode").value = opts.showMiniCopilotMode ?? D.showMiniCopilotMode ?? "off";
   const pill = document.querySelector("#showSourceModePill");
   if (pill) pill.checked = opts.showSourceModePill !== false;
+  const shortcutHints = document.querySelector("#showShortcutHints");
+  if (shortcutHints) shortcutHints.checked = opts.showShortcutHints ?? D.showShortcutHints ?? true;
   const viewSelect = document.querySelector("#editorViewMode");
   if (viewSelect) {
     viewSelect.value = opts.editorViewMode || "auto";
@@ -756,6 +934,8 @@ async function load() {
       applyOptionsViewMode(viewSelect.value);
     });
   }
+  const surfaceSelect = document.querySelector("#defaultEditorSurface");
+  if (surfaceSelect) surfaceSelect.value = normalizeEditorSurface(opts.defaultEditorSurface);
 
   // Defaults / Anki
   document.querySelector("#defaultDeck").value  = opts.defaultDeck || "All Decks";
@@ -788,6 +968,10 @@ async function load() {
   if (debugModeCheckbox) debugModeCheckbox.checked = !!opts.debugMode;
   const appendContextCheckbox = document.querySelector("#appendContextToFrontWhenMissing");
   if (appendContextCheckbox) appendContextCheckbox.checked = !!opts.appendContextToFrontWhenMissing;
+  const closeOverlayAfterQueueCheckbox = document.querySelector("#closeOverlayAfterQueue");
+  if (closeOverlayAfterQueueCheckbox) {
+    closeOverlayAfterQueueCheckbox.checked = !!(opts.closeOverlayAfterQueue ?? D.closeOverlayAfterQueue ?? false);
+  }
 
   const templateUpdateSelect = document.querySelector("#templateUpdateMode");
   if (templateUpdateSelect) {
@@ -818,7 +1002,9 @@ async function load() {
   const effectiveEditorConfig = opts.editorFieldConfig || DEFAULT_EDITOR_FIELD_CONFIG;
   applyEditorFieldLabelsFromConfig({ ...opts, editorFieldConfig: effectiveEditorConfig });
 
-  const rawShortcut = typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_SHORTCUT;
+  const rawShortcut = normalizeStoredQueueShortcut(
+    typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_SHORTCUT
+  );
   const parsedShortcut = parseShortcut(rawShortcut);
   document.querySelector("#addShortcut").value = rawShortcut === "" ? "" : (parsedShortcut ? serializeShortcut(parsedShortcut) : "");
 }
@@ -940,7 +1126,7 @@ function renderTemplateList() {
   if (!templateState.length) {
     const empty = document.createElement("div");
     empty.className = "small";
-    empty.textContent = "No templates configured.";
+    empty.textContent = "No suggestion modes configured.";
     listEl.appendChild(empty);
     return;
   }
@@ -1010,7 +1196,7 @@ function clearTemplateForm() {
   $("#templateName").value = "";
   $("#templatePrompt").value = "";
   const saveBtn = $("#templateSave");
-  if (saveBtn) saveBtn.textContent = "Save template";
+  if (saveBtn) saveBtn.textContent = "Save mode";
 }
 
 function startEditTemplate(id) {
@@ -1022,7 +1208,7 @@ function startEditTemplate(id) {
   $("#templateName").value = tpl.name || "";
   $("#templatePrompt").value = tpl.prompt || "";
   const saveBtn = $("#templateSave");
-  if (saveBtn) saveBtn.textContent = "Update template";
+  if (saveBtn) saveBtn.textContent = "Update mode";
   setTemplateMsg(`Editing "${tpl.name || tpl.id}"`, "ok");
 }
 
@@ -1094,7 +1280,7 @@ function handleTemplateListClick(event) {
   if (btn.dataset.action === "edit") {
     startEditTemplate(id);
   } else if (btn.dataset.action === "delete") {
-    deleteTemplate(id).catch(() => setTemplateMsg("Could not delete template.", "err"));
+    deleteTemplate(id).catch(() => setTemplateMsg("Could not delete mode.", "err"));
   }
 }
 
@@ -1130,6 +1316,43 @@ async function test() {
   }
 }
 
+async function resetShortcutTips() {
+  const msg = $("#tipsResetMsg");
+  if (msg) {
+    msg.textContent = "Resetting…";
+    msg.className = "status";
+  }
+
+  try {
+    const { [OPTIONS_KEY]: existing } = await chrome.storage.sync.get(OPTIONS_KEY);
+    const next = {
+      ...(existing || {}),
+      showShortcutHints: true,
+    };
+    await chrome.storage.sync.set({ [OPTIONS_KEY]: next });
+    await chrome.storage.local.remove(SHORTCUT_COACH_KEY);
+    currentOptionsCache = next;
+    const checkbox = $("#showShortcutHints");
+    if (checkbox) checkbox.checked = true;
+    if (msg) {
+      msg.textContent = "Tips will show again in the editor.";
+      msg.className = "ok";
+    }
+  } catch (err) {
+    if (msg) {
+      msg.textContent = `Could not reset tips: ${err?.message || err}`;
+      msg.className = "err";
+    }
+  }
+
+  setTimeout(() => {
+    if (msg) {
+      msg.textContent = "";
+      msg.className = "status";
+    }
+  }, 1800);
+}
+
 window.addEventListener("resize", () => {
   const editorViewModeSelect = document.getElementById("editorViewMode");
   if (!editorViewModeSelect) return;
@@ -1138,20 +1361,80 @@ window.addEventListener("resize", () => {
   }
 });
 
+function initOptionsNavigation() {
+  const panes = Array.from(document.querySelectorAll("[data-options-pane]"));
+  const links = Array.from(document.querySelectorAll("[data-options-nav]"));
+  if (!panes.length || !links.length) return;
+
+  const ids = new Set(panes.map((pane) => pane.id));
+  const showPane = (id, { updateHash = false } = {}) => {
+    const targetId = ids.has(id) ? id : "connection";
+    panes.forEach((pane) => {
+      const active = pane.id === targetId;
+      pane.hidden = !active;
+      if (active) {
+        const topDetails = pane.querySelector(":scope > details");
+        if (topDetails) topDetails.open = true;
+      }
+    });
+    links.forEach((link) => {
+      const active = link.dataset.optionsNav === targetId;
+      if (active) {
+        link.setAttribute("aria-current", "page");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    });
+    if (updateHash && window.location.hash !== `#${targetId}`) {
+      window.history.replaceState(null, "", `#${targetId}`);
+    }
+  };
+
+  links.forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      showPane(link.dataset.optionsNav, { updateHash: true });
+    });
+  });
+
+  document.querySelectorAll(".section-accordion > summary").forEach((summary) => {
+    summary.addEventListener("click", (event) => {
+      event.preventDefault();
+    });
+  });
+
+  const initial = window.location.hash ? window.location.hash.slice(1) : "connection";
+  showPane(initial);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  initOptionsNavigation();
+  renderUpdateNotice();
+  const dismissNotice = document.querySelector("#dismissUpdateNotice");
+  if (dismissNotice) dismissNotice.addEventListener("click", (e) => {
+    e.preventDefault();
+    dismissUpdateNotice();
+  });
   $("#save").addEventListener("click", save);
   $("#test").addEventListener("click", test);
+  const resetTips = $("#resetShortcutTips");
+  if (resetTips) {
+    resetTips.addEventListener("click", (e) => {
+      e.preventDefault();
+      resetShortcutTips();
+    });
+  }
   const templateSave = $("#templateSave");
   if (templateSave) templateSave.addEventListener("click", (e) => {
     e.preventDefault();
-    handleTemplateSubmit().catch(() => setTemplateMsg("Could not save template.", "err"));
+    handleTemplateSubmit().catch(() => setTemplateMsg("Could not save mode.", "err"));
   });
   const templateClear = $("#templateClear");
   if (templateClear) templateClear.addEventListener("click", (e) => { e.preventDefault(); clearTemplateForm(); });
   const templateReset = $("#templateReset");
   if (templateReset) templateReset.addEventListener("click", (e) => {
     e.preventDefault();
-    handleTemplateReset().catch(() => setTemplateMsg("Could not reset templates.", "err"));
+    handleTemplateReset().catch(() => setTemplateMsg("Could not reset modes.", "err"));
   });
   const templateList = $("#templateList");
   if (templateList) templateList.addEventListener("click", handleTemplateListClick);

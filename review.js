@@ -1,6 +1,7 @@
 // review.js — Ghostwriter for Anki Review Queue
 
 const SAVED_KEY = "ghostwriter_saved_items";
+const TRIAGE_KEY = "quickflash_triage_v1";
 const OUTBOX_KEY = "quickflash_outbox_v1";
 
 const state = {
@@ -8,7 +9,11 @@ const state = {
   index: 0,
   accepted: [],    // items ready to send
   decks: [],
+  undoStack: [],
 };
+
+const REVIEW_UNDO_LIMIT = 25;
+let persistQueue = Promise.resolve();
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -17,8 +22,11 @@ const headerMeta = $("#headerMeta");
 const emptyState = $("#emptyState");
 const container = $("#reviewContainer");
 const actionsBar = $("#actionsBar");
+const navGroup = $(".nav-group");
+const sendGroup = $(".send-group");
 const shortcutsHint = $("#shortcutsHint");
 const statusBar = $("#statusBar");
+const statusPill = $("#statusPill");
 
 const sourceText = $("#sourceText");
 const sourceTitle = $("#sourceTitle");
@@ -39,6 +47,89 @@ const btnAccept = $("#btnAccept");
 const btnSkip = $("#btnSkip");
 const btnDelete = $("#btnDelete");
 const btnSend = $("#btnSend");
+const btnUndo = $("#btnUndo");
+
+function titleCase(value) {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function cloneReviewItem(item) {
+  if (!item) return null;
+  if (typeof structuredClone === "function") return structuredClone(item);
+  return JSON.parse(JSON.stringify(item));
+}
+
+function clampIndex(index, length) {
+  return Math.max(0, Math.min(Number(index) || 0, Math.max(0, length)));
+}
+
+function normalizeReviewStatus(item) {
+  const status = item?.review_status || item?._status || "pending";
+  return ["pending", "accepted", "skipped", "deleted", "sent"].includes(status) ? status : "pending";
+}
+
+function setReviewStatus(item, status) {
+  if (!item) return item;
+  const normalized = ["pending", "accepted", "skipped", "deleted", "sent"].includes(status) ? status : "pending";
+  item.review_status = normalized;
+  item._status = normalized;
+  return item;
+}
+
+function normalizeTags(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).join(" ");
+  return String(value || "");
+}
+
+function toReviewItem(raw, source) {
+  const item = { ...(raw || {}) };
+  const status = normalizeReviewStatus(item);
+  item.id = item.id || crypto.randomUUID();
+  item.highlight = item.source_highlight || item.source_excerpt || item.highlight || item.source || "";
+  item.pageTitle = item.source_title || item.pageTitle || item.source_label || item.sourceLabel || "";
+  item.pageUrl = item.source_url || item.pageUrl || item.sourceUrl || "";
+  item.textFragmentUrl = item.source_text_fragment_url || item.sourceUrl || "";
+  item.capturedAt = item.captured_at || item.capturedAt || "";
+  item.front = item.front || "";
+  item.back = item.back || "";
+  item.context = Array.isArray(item.context) ? item.context.join(" | ") : (item.context || "");
+  item.tags = normalizeTags(item.tags);
+  item.deck = item.deck || "";
+  item.modelName = item.model || item.modelName || "";
+  item.draft_origin = item.draft_origin || (item.ai_suggestion_count ? "ai_assisted" : "user_written");
+  item.ai_suggestion_count = Number(item.ai_suggestion_count) || 0;
+  item.created_note_ids = Array.isArray(item.created_note_ids) ? item.created_note_ids : [];
+  item._source = source;
+  setReviewStatus(item, status);
+  return item;
+}
+
+function fromReviewItem(item) {
+  const tags = normalizeTags(item.tags).split(/\s+/).filter(Boolean);
+  const out = {
+    ...item,
+    tags,
+    source_highlight: item.highlight || item.source_highlight || "",
+    source_title: item.pageTitle || item.source_title || "",
+    source_url: item.pageUrl || item.source_url || "",
+    source_text_fragment_url: item.textFragmentUrl || item.source_text_fragment_url || "",
+    captured_at: item.capturedAt || item.captured_at || new Date().toISOString(),
+    model: item.modelName || item.model || "",
+    review_status: normalizeReviewStatus(item),
+    created_note_ids: Array.isArray(item.created_note_ids) ? item.created_note_ids : [],
+  };
+  delete out._source;
+  delete out._status;
+  delete out.highlight;
+  delete out.pageTitle;
+  delete out.pageUrl;
+  delete out.textFragmentUrl;
+  delete out.capturedAt;
+  delete out.modelName;
+  return out;
+}
 
 // --- Anki helpers ---
 async function ankiRequest(action, params = {}) {
@@ -88,55 +179,99 @@ function getBestModel(item) {
 
 // --- Load items ---
 async function loadItems() {
-  const got = await chrome.storage.local.get([SAVED_KEY, OUTBOX_KEY]);
+  const got = await chrome.storage.local.get([SAVED_KEY, TRIAGE_KEY, OUTBOX_KEY]);
   const saved = (got?.[SAVED_KEY] || []).map((item) => ({
-    ...item,
-    _source: "saved",
-    front: item.front || "",
-    back: item.back || item.highlight || "",
-    context: item.context || "",
-    tags: item.tags || "",
-    deck: item.deck || "",
-    _status: item._status || "pending",
+    ...toReviewItem(item, "saved"),
+    back: item.back || "",
   }));
+
+  const triageRaw = got?.[TRIAGE_KEY] || {};
+  const triageAccepted = new Set(Array.isArray(triageRaw.acceptedIds) ? triageRaw.acceptedIds : []);
+  const triageSkipped = new Set(Array.isArray(triageRaw.skippedIds) ? triageRaw.skippedIds : []);
+  const triage = (Array.isArray(triageRaw.cards) ? triageRaw.cards : []).map((card) => {
+    const item = toReviewItem(card, "triage");
+    if (triageAccepted.has(item.id)) setReviewStatus(item, "accepted");
+    else if (triageSkipped.has(item.id)) setReviewStatus(item, "skipped");
+    return item;
+  });
 
   const outboxRaw = got?.[OUTBOX_KEY];
   const outboxCards = Array.isArray(outboxRaw) ? outboxRaw : (outboxRaw?.cards || []);
-  const outbox = outboxCards.map((card) => ({
-    id: card.id || crypto.randomUUID(),
-    highlight: card.source || card.back || "",
-    pageTitle: card.sourceLabel || "",
-    pageUrl: card.sourceUrl || "",
-    capturedAt: card.capturedAt || "",
-    front: card.front || "",
-    back: card.back || "",
-    context: card.context || "",
-    tags: card.tags || "",
-    deck: card.deck || "",
-    _source: "outbox",
-    _status: card._status || "pending",
-  }));
+  const outbox = outboxCards.map((card) => {
+    const item = toReviewItem(card, "outbox");
+    if (normalizeReviewStatus(item) === "pending") setReviewStatus(item, "accepted");
+    return item;
+  });
 
-  state.items = [...saved, ...outbox].filter((item) => item._status !== "deleted");
+  const byId = new Map();
+  for (const item of [...saved, ...triage, ...outbox]) {
+    if (normalizeReviewStatus(item) === "deleted" || normalizeReviewStatus(item) === "sent") continue;
+    const existing = byId.get(item.id);
+    if (!existing || existing._source !== "outbox") byId.set(item.id, item);
+  }
+  state.items = Array.from(byId.values());
   state.index = 0;
-  state.accepted = state.items.filter((item) => item._status === "accepted");
+  state.accepted = state.items.filter((item) => normalizeReviewStatus(item) === "accepted");
+}
+
+function setActionsEmptyMode(enabled) {
+  if (!actionsBar) return;
+  if (enabled) actionsBar.dataset.mode = "undo-only";
+  else delete actionsBar.dataset.mode;
+  if (navGroup) navGroup.hidden = enabled;
+  if (sendGroup) sendGroup.hidden = enabled;
+}
+
+function updateUndoButton() {
+  if (!btnUndo) return;
+  btnUndo.disabled = state.undoStack.length === 0;
+}
+
+function pushUndo(action) {
+  if (!action?.item) return;
+  state.undoStack.push({
+    ...action,
+    item: cloneReviewItem(action.item),
+  });
+  if (state.undoStack.length > REVIEW_UNDO_LIMIT) {
+    state.undoStack.splice(0, state.undoStack.length - REVIEW_UNDO_LIMIT);
+  }
+  updateUndoButton();
+}
+
+function describeUndoAction(type) {
+  if (type === "accept") return "accept";
+  if (type === "reject") return "reject";
+  return "delete";
+}
+
+function queuePersistItems() {
+  persistQueue = persistQueue
+    .catch(() => {})
+    .then(() => persistItems())
+    .catch((err) => {
+      console.warn("Failed to persist review queue", err);
+      showStatus("Could not save the review queue. Try again.");
+    });
+  return persistQueue;
 }
 
 // --- Render ---
 function render() {
   const total = state.items.length;
-  const pending = state.items.filter((i) => i._status === "pending" || i._status === "skipped").length;
-  const accepted = state.items.filter((i) => i._status === "accepted").length;
+  const accepted = state.items.filter((i) => normalizeReviewStatus(i) === "accepted").length;
 
   headerMeta.textContent = total > 0
-    ? `${state.index + 1} of ${total} cards · ${accepted} accepted`
+    ? `Card ${state.index + 1} of ${total} · ${accepted} accepted`
     : "No cards";
 
   if (total === 0) {
     emptyState.hidden = false;
     container.hidden = true;
-    actionsBar.hidden = true;
+    actionsBar.hidden = state.undoStack.length === 0;
     shortcutsHint.hidden = true;
+    setActionsEmptyMode(state.undoStack.length > 0);
+    updateUndoButton();
     return;
   }
 
@@ -144,20 +279,24 @@ function render() {
   container.hidden = false;
   actionsBar.hidden = false;
   shortcutsHint.hidden = false;
+  setActionsEmptyMode(false);
+  updateUndoButton();
 
   const item = state.items[state.index];
   if (!item) return;
+  const status = normalizeReviewStatus(item);
 
   // Source panel
-  sourceText.textContent = item.highlight || "(no highlight)";
+  sourceText.textContent = item.highlight || "No source captured.";
   sourceTitle.textContent = item.pageTitle || "";
-  if (item.pageUrl) {
+  const linkUrl = item.textFragmentUrl || item.pageUrl;
+  if (linkUrl) {
     try {
-      sourceUrl.textContent = new URL(item.pageUrl).hostname;
+      sourceUrl.textContent = new URL(linkUrl).hostname;
     } catch {
-      sourceUrl.textContent = item.pageUrl;
+      sourceUrl.textContent = linkUrl;
     }
-    sourceUrl.href = item.pageUrl;
+    sourceUrl.href = linkUrl;
     sourceUrl.hidden = false;
   } else {
     sourceUrl.hidden = true;
@@ -171,10 +310,16 @@ function render() {
   }
 
   // Draft origin
-  if (item._source === "saved") {
-    draftOrigin.textContent = item.front ? "AI-drafted from highlight" : "Saved highlight — needs a card";
-  } else {
-    draftOrigin.textContent = "From card editor";
+  const originLabel = {
+    highlight_triggered: "Highlight-triggered draft",
+    ai_assisted: "AI-assisted draft",
+    user_written: "User-written draft",
+  }[item.draft_origin] || "Card draft";
+  const aiBit = item.ai_suggestion_count ? ` · ${item.ai_suggestion_count} AI suggestion${item.ai_suggestion_count === 1 ? "" : "s"}` : "";
+  draftOrigin.textContent = `${originLabel}${aiBit}`;
+  if (statusPill) {
+    statusPill.textContent = status === "skipped" ? "Rejected" : titleCase(status);
+    statusPill.dataset.status = status;
   }
 
   // Card fields
@@ -184,11 +329,13 @@ function render() {
   cardTags.value = item.tags || "";
   if (item.deck && cardDeck.querySelector(`option[value="${CSS.escape(item.deck)}"]`)) {
     cardDeck.value = item.deck;
+  } else if (cardDeck.options.length) {
+    cardDeck.value = cardDeck.options[0].value;
   }
 
   // Accepted indicator
-  if (item._status === "accepted") {
-    btnAccept.textContent = "Accepted ✓";
+  if (status === "accepted") {
+    btnAccept.textContent = "Accepted";
     btnAccept.disabled = true;
   } else {
     btnAccept.textContent = "Accept";
@@ -200,8 +347,8 @@ function render() {
   btnNext.disabled = state.index >= total - 1;
 
   // Send count
-  const readyCount = state.items.filter((i) => i._status === "accepted").length;
-  sendCount.textContent = readyCount > 0 ? `${readyCount} card${readyCount === 1 ? "" : "s"} ready` : "";
+  const readyCount = state.items.filter((i) => normalizeReviewStatus(i) === "accepted").length;
+  sendCount.textContent = readyCount > 0 ? `${readyCount} ready` : "";
   btnSend.disabled = readyCount === 0;
 }
 
@@ -230,34 +377,75 @@ function saveCurrentFields() {
 function acceptCurrent() {
   saveCurrentFields();
   const item = state.items[state.index];
-  if (!item || item._status === "accepted") return;
-  item._status = "accepted";
-  persistItems();
+  if (!item || normalizeReviewStatus(item) === "accepted") return;
+  pushUndo({
+    type: "accept",
+    item,
+    index: state.index,
+  });
+  setReviewStatus(item, "accepted");
+  item._source = "outbox";
+  queuePersistItems();
   advanceToNext();
+  showStatus("Accepted card. Undo is available.");
 }
 
-function skipCurrent() {
+function rejectCurrent() {
+  removeCurrent({ type: "reject" });
+}
+
+function removeCurrent({ type = "delete" } = {}) {
   saveCurrentFields();
   const item = state.items[state.index];
   if (!item) return;
-  item._status = "skipped";
-  persistItems();
-  advanceToNext();
+  const index = state.index;
+  pushUndo({
+    type,
+    item,
+    index,
+  });
+  setReviewStatus(item, "deleted");
+  state.items.splice(index, 1);
+  if (state.index >= state.items.length) state.index = Math.max(0, state.items.length - 1);
+  queuePersistItems();
+  render();
+  showStatus(type === "reject" ? "Rejected card. Undo is available." : "Deleted card. Undo is available.");
 }
 
 function deleteCurrent() {
-  const item = state.items[state.index];
-  if (!item) return;
-  state.items.splice(state.index, 1);
-  if (state.index >= state.items.length) state.index = Math.max(0, state.items.length - 1);
-  persistItems();
+  removeCurrent({ type: "delete" });
+}
+
+function undoLastAction() {
+  const action = state.undoStack.pop();
+  if (!action) {
+    updateUndoButton();
+    showStatus("Nothing to undo.");
+    return;
+  }
+
+  const restored = cloneReviewItem(action.item);
+  if (!restored) {
+    updateUndoButton();
+    showStatus("Could not restore the previous action.");
+    return;
+  }
+
+  const existingIndex = state.items.findIndex((item) => item.id === restored.id);
+  if (existingIndex !== -1) state.items.splice(existingIndex, 1);
+
+  const insertIndex = clampIndex(action.index, state.items.length);
+  state.items.splice(insertIndex, 0, restored);
+  state.index = insertIndex;
+  queuePersistItems();
   render();
+  showStatus(`Undid ${describeUndoAction(action.type)}.`);
 }
 
 function advanceToNext() {
   // Find next pending/skipped item
   for (let i = state.index + 1; i < state.items.length; i++) {
-    if (state.items[i]._status === "pending" || state.items[i]._status === "skipped") {
+    if (["pending", "skipped"].includes(normalizeReviewStatus(state.items[i]))) {
       state.index = i;
       render();
       return;
@@ -265,7 +453,7 @@ function advanceToNext() {
   }
   // Wrap around
   for (let i = 0; i < state.index; i++) {
-    if (state.items[i]._status === "pending" || state.items[i]._status === "skipped") {
+    if (["pending", "skipped"].includes(normalizeReviewStatus(state.items[i]))) {
       state.index = i;
       render();
       return;
@@ -292,7 +480,7 @@ function goToNext() {
 }
 
 async function sendToAnki() {
-  const accepted = state.items.filter((i) => i._status === "accepted");
+  const accepted = state.items.filter((i) => normalizeReviewStatus(i) === "accepted");
   if (!accepted.length) return;
 
   showStatus("Sending cards...");
@@ -314,7 +502,7 @@ async function sendToAnki() {
 
       const tags = (item.tags || "").split(/\s+/).filter(Boolean);
 
-      await ankiRequest("addNote", {
+      const noteId = await ankiRequest("addNote", {
         note: {
           deckName: deck,
           modelName,
@@ -323,7 +511,11 @@ async function sendToAnki() {
           options: { allowDuplicate: false },
         },
       });
-      item._status = "sent";
+      setReviewStatus(item, "sent");
+      item.created_note_ids = [
+        ...(Array.isArray(item.created_note_ids) ? item.created_note_ids : []),
+        noteId,
+      ].filter(Boolean);
       sent++;
     } catch (err) {
       console.warn("Failed to send card:", err);
@@ -332,10 +524,10 @@ async function sendToAnki() {
   }
 
   // Remove sent items
-  state.items = state.items.filter((i) => i._status !== "sent");
+  state.items = state.items.filter((i) => normalizeReviewStatus(i) !== "sent");
   if (state.index >= state.items.length) state.index = Math.max(0, state.items.length - 1);
 
-  persistItems();
+  queuePersistItems();
   updateBadge();
   render();
 
@@ -349,10 +541,13 @@ async function sendToAnki() {
 async function persistItems() {
   const saved = state.items
     .filter((i) => i._source === "saved")
-    .map(({ _source, ...rest }) => rest);
+    .map(fromReviewItem);
+  const triageCards = state.items
+    .filter((i) => ["pending", "skipped"].includes(normalizeReviewStatus(i)))
+    .map(fromReviewItem);
   const outbox = state.items
-    .filter((i) => i._source === "outbox")
-    .map(({ _source, ...rest }) => rest);
+    .filter((i) => normalizeReviewStatus(i) === "accepted")
+    .map(fromReviewItem);
 
   // Preserve existing lastSend data so panel.js undo still works
   const existing = await chrome.storage.local.get(OUTBOX_KEY);
@@ -361,6 +556,14 @@ async function persistItems() {
 
   await chrome.storage.local.set({
     [SAVED_KEY]: saved,
+    [TRIAGE_KEY]: {
+      cards: triageCards,
+      i: Math.min(state.index, Math.max(0, triageCards.length - 1)),
+      acceptedIds: [],
+      skippedIds: triageCards.filter((card) => card.review_status === "skipped").map((card) => card.id),
+      deck: "",
+      fingerprints: [],
+    },
     [OUTBOX_KEY]: { cards: outbox, lastSend },
   });
 }
@@ -381,15 +584,24 @@ document.addEventListener("keydown", (e) => {
   // Don't intercept when typing in fields
   const tag = e.target.tagName;
   if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+  const key = (e.key || "").toLowerCase();
+  const isUndoShortcut = key === "z" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+  if (isUndoShortcut || (key === "u" && !e.metaKey && !e.ctrlKey && !e.altKey)) {
+    e.preventDefault();
+    undoLastAction();
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
 
   switch (e.key) {
     case "a": case "A":
       e.preventDefault();
       acceptCurrent();
       break;
+    case "r": case "R":
     case "s": case "S":
       e.preventDefault();
-      skipCurrent();
+      rejectCurrent();
       break;
     case "d": case "D":
       e.preventDefault();
@@ -418,9 +630,10 @@ document.addEventListener("keydown", (e) => {
 btnPrev.addEventListener("click", goToPrev);
 btnNext.addEventListener("click", goToNext);
 btnAccept.addEventListener("click", acceptCurrent);
-btnSkip.addEventListener("click", skipCurrent);
+btnSkip.addEventListener("click", rejectCurrent);
 btnDelete.addEventListener("click", deleteCurrent);
 btnSend.addEventListener("click", sendToAnki);
+btnUndo.addEventListener("click", undoLastAction);
 
 // Save fields when navigating away
 cardFront.addEventListener("blur", saveCurrentFields);

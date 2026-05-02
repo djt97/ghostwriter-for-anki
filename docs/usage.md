@@ -4,56 +4,43 @@
 
 You can open Ghostwriter using:
 
-- Keyboard shortcuts (default includes `Ctrl/Cmd+Shift+F` for overlay command)
+- Keyboard shortcuts (default includes `Option+Shift+F` on Mac or `Ctrl+Shift+F` on Windows/Linux for the overlay command)
 - Extension action / side panel action
 - Context menu actions after selecting text
 
-## Manual workflow (Copilot-first)
+## Highlight workflow
 
-1. Open the panel/overlay.
+1. Highlight a passage on a web page.
+2. Open Ghostwriter from the extension icon, context menu, or shortcut.
+3. The editor opens directly with Source filled and Front focused.
+4. Write the Front and Back.
+5. Type the first few words of the card you mean to write, then use AI suggestions only when helpful.
+6. Queue the card for review with `Ctrl/Cmd+Shift+A` or the **Queue card** button.
+
+## Manual workflow
+
+1. Open the overlay, side panel, or standalone tab.
 2. Pick deck and note model.
 3. Type a prompt/question in **Front**.
-4. Use Copilot suggestion when shown:
+4. Request an AI suggestion when useful:
    - `Tab` to accept inline suggestion
    - or click accept controls
 5. Fill/review **Back**.
-6. Add card to Outbox.
+6. Queue the card with `Ctrl/Cmd+Shift+A` or the **Queue card** button.
 
-## Smart Generation workflow
-
-1. Highlight a text passage on any web page.
-2. Trigger **Smart Gen** or a template action.
-3. Ghostwriter generates candidate cards.
-4. Review in triage mode.
-
-## Triage mode shortcuts
+## Review Queue shortcuts
 
 Common shortcuts used in queue review:
 
-- `A` — Accept current card to Outbox
+- `A` — Accept current card to Ready to Send
 - `R` — Reject/Skip current card
 - `←` / `→` — Navigate queue
-- `J` — Open JSON import for bulk card input
 
-## Outbox workflow
+## Ready to Send workflow
 
 - **Edit** any outbox card to return it to the editor.
 - **Send outbox to Anki** to create notes through AnkiConnect.
 - Use undo controls (if available in current UI state) for last sent batch.
-
-## Bulk generation with Custom GPTs
-
-You can generate large batches of flashcards using purpose-built GPTs, then import them into Ghostwriter for review:
-
-1. Open one of the Custom GPTs:
-   - **ChatGPT**: https://chatgpt.com/g/g-690faa9681448191b2700ca01abdeca6-flashcardgpt
-   - **Gemini**: https://gemini.google.com/gem/1E1OquFI0cH_ohhvADJQ61qKYdjJ55Jcq
-2. Paste your source material and let the GPT generate cards.
-3. Copy the JSON output.
-4. In Ghostwriter's triage mode, press `J` to open JSON import and paste the cards.
-5. Review, accept/reject, and send to Anki as usual.
-
-This is useful for processing long readings, lecture notes, or textbook chapters where you want many cards at once.
 
 ## Source and context behavior
 
@@ -71,7 +58,7 @@ Use Quick Options in the editor to toggle helpers such as:
 
 ## Best-practice usage tips
 
-- Keep front sides concise to improve recall quality.
-- Use one concept per card where possible.
-- Increase token limits for reasoning-heavy models if responses truncate.
-- Validate generated cards in triage instead of sending raw output directly.
+- Let your first few words name the thing you actually want to remember.
+- Prefer one target per card.
+- Reject suggestions that drift toward generic trivia, vague context, or passage restatement.
+- Review queued cards instead of sending raw output directly.

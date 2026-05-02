@@ -24,16 +24,15 @@ npm run lint    # Warnings only, no errors
 
 These verify nothing is broken by the refactoring.
 
-- [ ] **Open overlay** — Cmd+Shift+F on any webpage. Overlay appears, panel
+- [ ] **Open overlay** — Option+Shift+F on Mac or Ctrl+Shift+F on Windows/Linux. Overlay appears, panel
   loads, deck/model dropdowns populate.
-- [ ] **Create a card** — Type a front and back, click "Add to Anki". Card
-  appears in Anki.
-- [ ] **Copilot autocomplete** — Start typing a front with source text
-  selected. Copilot suggestion appears (ghost text).
+- [ ] **Create a card** — Type a front and back, queue it with Cmd+Shift+A or
+  **Queue card**, then accept/send it from the Review Queue.
+- [ ] **AI suggestion** — Start typing a front with source text
+  selected. An AI continuation appears (ghost text).
 - [ ] **Accept suggestion** — Tab to accept. Back field auto-fills if
   auto-fill-back is enabled.
-- [ ] **Triage queue** — Use AI Generate to create cards. Triage through
-  them (accept/skip). Send accepted cards via outbox.
+- [ ] **Review Queue** — Queue cards, accept/skip them, then send accepted cards to Anki.
 - [ ] **Side panel** — Click the extension icon. Side panel opens with the
   same UI.
 - [ ] **Options page** — Right-click extension → Options. All settings load
@@ -55,7 +54,7 @@ These verify nothing is broken by the refactoring.
 
 - [ ] Select **Anthropic Claude** as provider in Options.
 - [ ] Enter a valid Anthropic API key.
-- [ ] Open the overlay, type a front with selected text — Copilot should
+- [ ] Open the overlay, type a front with selected text — AI suggestions should
   generate a suggestion via Claude.
 - [ ] If no API key: should show "Anthropic API key missing" error in
   console, not crash.
@@ -78,12 +77,11 @@ These verify the code splits didn't break anything.
 - [ ] Create a card with **LaTeX** (e.g., `\(x^2 + y^2\)`). Should render
   correctly in preview and in Anki.
 
-### panel-ai-templates.js extraction
+### focused AI suggestions
 
-- [ ] Open the AI Generate panel (editor mode). Template dropdown should
-  show: Concept, Definition, Math formula, Research paper, Book.
-- [ ] Generate cards with "Research paper" template — should produce 3
-  bibliography cards.
+- [ ] Type the first few words of a Front/Back field and request a suggestion.
+- [ ] The suggestion continues the user's target rather than generating an unrelated card.
+- [ ] "Draft from Source" remains hidden unless explicitly enabled for debugging.
 
 ### chromeCall removal (L10)
 
@@ -92,10 +90,10 @@ These verify the code splits didn't break anything.
 
 ### callFrontLLM refactor (L9)
 
-- [ ] Copilot works on the **front** field (streaming if using Gemini with
+- [ ] AI suggestions work on the **front** field (streaming if using Gemini with
   streaming enabled, non-streaming otherwise).
-- [ ] Copilot works on the **back** field.
-- [ ] Copilot respects word cap (front ≤20 words, back ≤16 words by default).
+- [ ] AI suggestions work on the **back** field.
+- [ ] AI suggestions return a short continuation without clipping useful context.
 
 ## 5. Things NOT Changed
 
@@ -104,7 +102,7 @@ These should work exactly as before:
 - [ ] LPCG (Lyrics/Poetry) import mode
 - [ ] Dashboard (knowledge graph) — full build only
 - [ ] MathJax preview toggle
-- [ ] Keyboard shortcuts (Cmd+Shift+F, Cmd+Shift+L, etc.)
+- [ ] Keyboard shortcuts (`Option+Shift+F` on Mac or `Ctrl+Shift+F` on Windows/Linux activates the overlay-first editor flow)
 - [ ] Context menu ("Ghostwriter for Anki: Open panel")
 
 ## Quick Reference

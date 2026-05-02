@@ -14,15 +14,13 @@ Keep Anki running whenever you send cards.
 
 ## Option A: Install from release ZIP (recommended)
 
-1. Download a release bundle:
-   - `ghostwriter-lite.zip` (smaller, no dashboard/embedding features)
-   - `ghostwriter-full.zip` (includes dashboard/embedding features)
+1. Download the standard Ghostwriter release bundle.
 2. Unzip to a folder.
 3. Open `chrome://extensions` (or `edge://extensions`).
 4. Enable **Developer mode**.
 5. Click **Load unpacked**.
 6. Select the unzipped extension folder.
-7. Optional: set keyboard shortcuts at `chrome://extensions/shortcuts`.
+7. The default opener is **Open Ghostwriter for Anki Overlay** at `Option+Shift+F` on Mac and `Ctrl+Shift+F` on Windows/Linux. The side panel toggle shortcut is `Ctrl/Cmd+Shift+L`.
 
 ---
 
@@ -40,26 +38,19 @@ npm ci
 npm run build:release
 ```
 
-This creates:
-
-- `dist/full` + `dist/ghostwriter-full.zip`
-- `dist/lite` + `dist/ghostwriter-lite.zip`
+This creates the packaged extension under `dist/`.
 
 ### 3) Load unpacked extension
 
-You can load either:
-
-- Repository root (`manifest.json`) for iterative development, or
-- `dist/full` / `dist/lite` to validate packaged variants.
+You can load either the repository root (`manifest.json`) for iterative development or the packaged extension under `dist/`.
 
 ---
 
 ## Post-install setup
 
 1. Open extension **Options**.
-2. Choose provider (UltimateAI, OpenAI, or Gemini).
-3. Enter API key and model.
-4. Verify AnkiConnect section points to your Anki endpoint (default `http://127.0.0.1:8765`).
+2. Optional: add your own OpenAI API key for continued AI suggestions after the free quota.
+3. Verify AnkiConnect points to your Anki endpoint (default `http://127.0.0.1:8765`).
 
 ---
 

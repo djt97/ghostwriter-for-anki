@@ -11,6 +11,7 @@ const EXCLUDES = [
   '.github',
   '.claude',
   '.codex',
+  '.DS_Store',
   'dist',
   'node_modules',
   'mathjax-entry.js',
@@ -19,6 +20,8 @@ const EXCLUDES = [
   'mathjax-config.js',
   'libs/mathjax/tex-mml-chtml.js',
   'tests',
+  'test-results',
+  'playwright-report',
   'playwright.config.ts',
   'package.json',
   'package-lock.json',
@@ -26,11 +29,14 @@ const EXCLUDES = [
   'audit',
   'explainer-video',
   'docs',
+  'AGENTS.md',
   'CLAUDE.md',
+  'eslint.config.js',
   'LISTING.md',
   'GHOSTWRITER_V2_PLAN.md',
   'README.md',
-  'licences'
+  'licences',
+  'vendor/.DS_Store'
 ];
 
 function normalizePath(value) {

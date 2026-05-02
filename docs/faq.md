@@ -8,10 +8,9 @@ Yes. Ghostwriter sends notes through AnkiConnect, which runs with desktop Anki.
 
 Chrome and Edge are the primary targets (Manifest V3 extension).
 
-## What is the difference between lite and full?
+## Which release should I install?
 
-- **Lite**: smaller package, no dashboard/embedding stack.
-- **Full**: includes dashboard/embedding/graph assets and dependencies.
+Install the standard Ghostwriter release unless you are testing a specific development build.
 
 ## Can I use OpenAI-compatible providers besides UltimateAI?
 
@@ -21,20 +20,17 @@ Yes, if they support compatible chat/completions semantics and you configure bas
 
 Ghostwriter sends prompts/requests to your configured AI provider and sends notes to your configured AnkiConnect endpoint. Review provider and Anki deployment privacy policies for details.
 
-## Why is Copilot suggestion delayed?
+## Why is an AI suggestion delayed?
 
 Possible causes include high model latency, strict request interval settings, low token caps, and network/API performance.
 
-## Can I customize generation templates?
+## Can I customize AI behavior?
 
-Yes. Use the Templates section in Options, including placeholders such as `{{TEXT}}` and `{{CONTEXT}}`.
+Yes. Basic AI suggestions work out of the box for a limited quota. Advanced provider and model settings live in Options; prompt/template editing is hidden in focused v2.
 
-## How do I generate cards in bulk?
+## Does Ghostwriter generate cards in bulk?
 
-Use one of the Custom GPTs to generate a batch of cards from long source material, then import the JSON output into Ghostwriter's triage queue by pressing `J`:
-
-- **ChatGPT**: https://chatgpt.com/g/g-690faa9681448191b2700ca01abdeca6-flashcardgpt
-- **Gemini**: https://gemini.google.com/gem/1E1OquFI0cH_ohhvADJQ61qKYdjJ55Jcq
+Ghostwriter is optimized for writing and reviewing cards from highlights, not bulk auto-generation.
 
 ## Is there automated UI testing?
 

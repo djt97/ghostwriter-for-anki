@@ -1,88 +1,34 @@
 # Configuration Reference
 
-The Options page (`options.html`) is organized into sections including Connection, Copilot, Templates, Editor, Defaults, AnkiConnect, Clipboard, Debugging, Permissions, and Privacy.
+Ghostwriter's Options page is intentionally small in focused v2. The editor is the product; settings should only change the daily writing path when they clearly need to. A left-side menu shows one settings pane at a time, with Connection shown first by default.
 
-## 1) Provider connection
+## 1) Connection
 
-### Provider choice
+- Free first-run AI suggestions use the Ghostwriter OpenAI proxy.
+- Bring-your-own-key settings live under **Advanced provider settings**.
+- Provider/model/base URL choices are advanced controls, not part of the normal writing flow.
 
-- UltimateAI
-- OpenAI
-- Google Gemini
+## 2) AI suggestions
 
-### Per-provider values
+- AI suggestions can be turned on or off.
+- Suggestions are manually requested with the configured shortcut.
+- Ghostwriter completes the field the user is writing; it does not expose public prompt/template editing in the main Options page.
+- Default editor surface can be Overlay, Side panel, or standalone Tab.
 
-- API base URL
-- API key
-- Default model
-- Streaming toggle (where applicable)
+## 3) Defaults
 
-### Recommended defaults
+- Default deck
+- Visible secondary fields: Notes, Context, Source
+- Optional append-context behavior
+- Queue-card shortcut
 
-- OpenAI/UltimateAI model: `gpt-4o-mini`
-- Gemini model: lightweight flash model for low-latency drafting
+## 4) Setup
 
-## 2) Manual helper toggles
+- Local AnkiConnect endpoint
+- Extension origin for CORS configuration
+- Connection check
+- Default Ghostwriter tag
 
-- Auto-tag with AI
-- Auto-context generation
-- Auto preview in manual editor
+## 5) Privacy
 
-These toggles affect both manual and generated workflows where noted.
-
-## 3) Copilot behavior
-
-### Assistance settings
-
-- Master Copilot on/off
-- Manual Copilot mode (shortcut-only behavior)
-- Editor layout mode (`auto`, `desktop`, `mobile`)
-
-### Copilot tuning
-
-- Front/Back word caps
-- Front/Back max tokens
-- Min interval between requests
-- Request timeout
-- Compact copilot button mode
-- Auto-fill Back from Front edits
-- Source mode pill visibility
-
-### Prompt customization
-
-You can edit system prompts for:
-
-- Front suggestion
-- Back suggestion
-- Front-from-back suggestion
-
-## 4) Templates
-
-Template manager lets you customize generation prompts. Supported placeholders include:
-
-- `{{TEXT}}` — source passage
-- `{{CONTEXT}}` — optional page/context label
-
-## 5) AnkiConnect settings
-
-Key values include:
-
-- Base endpoint (default local AnkiConnect)
-- Connection checks for deck/model/field discovery
-- Origin/cors guidance for remote AnkiConnect configurations
-
-## 6) Theme and UI preferences
-
-Theme mode is configurable as:
-
-- System
-- Dark
-- Light
-
-## 7) Storage model
-
-Ghostwriter stores preferences in extension storage (primarily sync/local storage depending on setting type). If settings appear out-of-date:
-
-1. Save in Options.
-2. Reload extension.
-3. Reopen panel surfaces.
+Ghostwriter stores settings and draft cards locally. If AI suggestions are enabled, the selected source text and current card text are sent to the configured AI endpoint.
