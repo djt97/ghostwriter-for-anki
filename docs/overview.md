@@ -1,6 +1,6 @@
 # Overview
 
-Ghostwriter for Anki is a Chrome/Edge Manifest V3 extension that helps you turn web highlights into reviewed Anki cards through AnkiConnect.
+Ghostwriter for Anki is a Chrome/Edge Manifest V3 extension that helps you turn web highlights into Anki cards through AnkiConnect.
 
 ## Core capabilities
 
@@ -10,9 +10,9 @@ Ghostwriter for Anki is a Chrome/Edge Manifest V3 extension that helps you turn 
 - **Manual card authoring with AI suggestions**
   - Draft cards manually in Front/Back fields.
   - Request short AI suggestions manually, then accept or ignore them.
-- **Review Queue + Ready to Send workflow**
-  - Queue cards locally while reading.
-  - Review and send accepted cards in batches to Anki.
+- **Direct Anki send workflow**
+  - Write one card in a focused editor.
+  - Send it directly to Anki when the Front and Back are ready.
 - **LaTeX/MathJax and Markdown preview**
   - Render math and formatted text in cards before sending to Anki.
 - **Multiple AI providers**
@@ -32,8 +32,8 @@ Ghostwriter can be used in more than one browser surface:
 
 1. Open Ghostwriter from shortcut, action, or context menu.
 2. Draft the card manually with optional AI suggestions.
-3. Queue and review cards.
-4. Send accepted cards to Anki via AnkiConnect.
+3. Edit the suggestion until the card is ready.
+4. Add the card directly to Anki via AnkiConnect.
 
 ## Who this is for
 

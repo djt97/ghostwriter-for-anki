@@ -32,7 +32,7 @@ describe('panel-markdown.js', () => {
 
     it('returns a source link for valid http URL', () => {
       const html = makeBackLinkHTML('https://example.com', 'Example');
-      assert.ok(html.includes('href="https://example.com"'));
+      assert.ok(html.includes('href="https://example.com/"'));
       assert.ok(html.includes('Example'));
       assert.ok(html.includes('target="_blank"'));
     });
@@ -45,9 +45,15 @@ describe('panel-markdown.js', () => {
       assert.equal(makeBackLinkHTML('data:text/html,<h1>hi</h1>', 'bad'), '');
     });
 
-    it('escapes angle brackets in title', () => {
-      const html = makeBackLinkHTML('https://example.com', '<script>alert(1)</script>');
+    it('escapes source link labels', () => {
+      const html = makeBackLinkHTML('https://example.com', '<script>alert("x")</script>');
       assert.ok(!html.includes('<script>'));
+      assert.ok(html.includes('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;'));
+    });
+
+    it('normalizes and escapes source hrefs', () => {
+      const html = makeBackLinkHTML('https://example.com/?q="x"&ok=1', 'Example');
+      assert.ok(html.includes('href="https://example.com/?q=%22x%22&amp;ok=1"'));
     });
   });
 
@@ -93,6 +99,13 @@ describe('panel-markdown.js', () => {
       const restored = restoreMathSegments(text, segments);
       assert.equal(restored, original);
     });
+
+    it('escapes HTML inside restored math segments', () => {
+      const { text, segments } = extractMathSegments('See \\(<img src=x onerror=alert(1)>\\)');
+      const restored = restoreMathSegments(text, segments);
+      assert.equal(restored, 'See \\(&lt;img src=x onerror=alert(1)&gt;\\)');
+      assert.ok(!restored.includes('<img'));
+    });
   });
 
   describe('renderMarkdownToHtml', () => {
@@ -112,6 +125,12 @@ describe('panel-markdown.js', () => {
     it('preserves math segments through rendering', () => {
       const result = renderMarkdownToHtml('The formula \\(x^2\\) is important');
       assert.ok(result.includes('\\(x^2\\)'));
+    });
+
+    it('does not emit raw HTML from math segments', () => {
+      const result = renderMarkdownToHtml('The formula \\(<svg onload=alert(1)>\\)');
+      assert.ok(result.includes('&lt;svg onload=alert(1)&gt;'));
+      assert.ok(!result.includes('<svg'));
     });
   });
 

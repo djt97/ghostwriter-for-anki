@@ -4,12 +4,13 @@
 Ghostwriter for Anki is a browser extension that helps you turn source text into flashcards. The extension keeps your settings and card drafts in your browser and only sends data out when you choose features that require it.
 
 ## Data We Store Locally
-- **Extension settings** (provider choice, model names, prompt tuning, UI preferences) are stored in browser storage so your preferences persist between sessions. If you have browser sync enabled, these settings may sync via `chrome.storage.sync`.
-- **API keys** you enter for AI providers are stored locally in browser storage so the extension can authenticate requests. If you have browser sync enabled, these keys may sync via `chrome.storage.sync`.
+- **Extension settings** (provider choice, model names, prompt tuning, UI preferences) are stored in browser storage so your preferences persist between sessions. If you have browser sync enabled, non-secret settings may sync via `chrome.storage.sync`.
+- **API keys** you enter for AI providers are stored in local extension storage and are not written to browser sync storage.
 - **Draft flashcard content** (front/back text, tags, context, selected source text) is stored locally while you are working in the editor.
-- **Review Queue drafts** created from highlighted text are stored locally in `chrome.storage.local`.
+- **Clipboard source text**, when clipboard fallback is enabled, is read only to populate the Source field or Copilot source context when no page selection is available. Ghostwriter does not monitor clipboard changes in the background.
+- **Legacy review drafts**, if present from older builds, are stored locally in `chrome.storage.local`.
 - **Free-tier usage counter** — a per-install UUID, lifetime usage count, and daily usage count are stored locally to track free AI suggestion limits.
-- **Local product metrics** — first draft/queue/send timestamps and local counts for queued cards, sent cards, and AI suggestions are stored locally to help you inspect whether the workflow is useful. These metrics are not sent to Ghostwriter servers.
+- **Local product metrics** — first draft/send timestamps and local counts for sent cards and AI suggestions are stored locally to help you inspect whether the workflow is useful. These metrics are not sent to Ghostwriter servers.
 
 Ghostwriter for Anki does **not** run background analytics or collect usage telemetry.
 
@@ -26,7 +27,7 @@ The extension may connect to the following endpoints, depending on user settings
 - `http://127.0.0.1:*`, `http://localhost:*` — Local AnkiConnect endpoint for creating flashcards in the user's desktop Anki instance.
 - `https://ghostwriter-proxy.djthornton97.workers.dev` — Free-tier suggestion proxy for first-time users (20 lifetime suggestions, capped at 10 per day, no API key required).
 - `https://api.openai.com` — OpenAI API requests when the user selects the OpenAI provider.
-- `https://smart.ultimateai.org` — UltimateAI OpenAI-compatible API requests when the user selects the UltimateAI provider.
+- `https://smart.ultimateai.org` — UltimateAI OpenAI-compatible API requests when the user selects the UltimateAI provider. `https://chat.ultimateai.org` may also be used if the user enters that endpoint manually.
 - `https://generativelanguage.googleapis.com` — Google Gemini API requests when the user selects the Gemini provider.
 - `https://api.anthropic.com` — Anthropic Claude API requests when the user selects the Claude provider.
 

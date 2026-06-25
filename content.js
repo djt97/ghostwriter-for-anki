@@ -15,6 +15,27 @@ if (window.__QUICKFLASH_INJECTED__) {
   const OPTIONS_KEY = 'quickflash_options';
   const DEFAULT_QUEUE_SHORTCUT = 'Meta+Shift+A';
 
+  async function localGetSafe(keys) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'quickflash:contentStorageGet',
+        keys,
+      });
+      return response?.ok ? (response.values || {}) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  async function localSetSafe(values) {
+    try {
+      await chrome.runtime.sendMessage({
+        type: 'quickflash:contentStorageSet',
+        values,
+      });
+    } catch {}
+  }
+
   const popoverState = {
     host: null,
     shadow: null,
@@ -36,6 +57,8 @@ if (window.__QUICKFLASH_INJECTED__) {
     lastOpenFailureReason: '',
     queueShortcut: null,
   };
+  let lastImageSelectionTarget = null;
+  let lastImageSelectionAt = 0;
 
   function parseShortcutSpec(value) {
     if (!value || typeof value !== 'string') return null;
@@ -456,13 +479,13 @@ if (window.__QUICKFLASH_INJECTED__) {
 
   function persistOverlaySize(size) {
     try {
-      chrome.storage.local.set({ [OVERLAY_SIZE_KEY]: size });
+      localSetSafe({ [OVERLAY_SIZE_KEY]: size });
     } catch {}
   }
 
   async function refreshOverlaySize() {
     try {
-      const stored = await chrome.storage.local.get(OVERLAY_SIZE_KEY);
+      const stored = await localGetSafe(OVERLAY_SIZE_KEY);
       if (stored?.[OVERLAY_SIZE_KEY]) {
         applyOverlaySize(stored[OVERLAY_SIZE_KEY]);
       }
@@ -654,6 +677,111 @@ if (window.__QUICKFLASH_INJECTED__) {
     return "";
   }
 
+  function getNearestHeadingForElement(element) {
+    try {
+      let node = element;
+      while (node && node !== document.body && node !== document.documentElement) {
+        if (node.nodeType === Node.ELEMENT_NODE && node.matches?.("h1,h2,h3,h4,h5,h6")) {
+          const text = (node.textContent || "").trim();
+          if (text) return text;
+        }
+        const labelledBy = node.getAttribute?.("aria-labelledby");
+        if (labelledBy) {
+          const label = document.getElementById(labelledBy);
+          const text = (label?.textContent || "").trim();
+          if (text) return text;
+        }
+        node = node.parentElement;
+      }
+      const headings = [...document.querySelectorAll("h1,h2,h3,h4,h5,h6")];
+      let nearest = "";
+      const imageRect = element?.getBoundingClientRect?.();
+      for (const heading of headings) {
+        const rect = heading.getBoundingClientRect();
+        if (!imageRect || rect.top > imageRect.top) break;
+        const text = (heading.textContent || "").trim();
+        if (text) nearest = text;
+      }
+      return nearest;
+    } catch {
+      return "";
+    }
+  }
+
+  function findSelectedImageElement(selectionObj) {
+    try {
+      if (selectionObj?.rangeCount) {
+        const range = selectionObj.getRangeAt(0);
+        const nodes = [];
+        const addElement = (node) => {
+          if (!node) return;
+          const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+          if (el) nodes.push(el);
+        };
+        addElement(range.commonAncestorContainer);
+        addElement(range.startContainer);
+        addElement(range.endContainer);
+        for (const node of nodes) {
+          const direct = node.matches?.("img,figure,picture,[role='img']") ? node : null;
+          const nested = node.querySelector?.("img,figure,picture,[role='img']");
+          const closest = node.closest?.("img,figure,picture,[role='img']");
+          const candidate = direct || nested || closest;
+          if (candidate) return candidate;
+        }
+      }
+      if (
+        lastImageSelectionTarget &&
+        document.contains(lastImageSelectionTarget) &&
+        Date.now() - lastImageSelectionAt < 30000
+      ) {
+        return lastImageSelectionTarget;
+      }
+    } catch {}
+    return null;
+  }
+
+  function getImageSelectionTarget(target) {
+    try {
+      const el = target?.nodeType === Node.ELEMENT_NODE ? target : target?.parentElement;
+      return el?.closest?.("img,figure,picture,[role='img']") || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function captureImageMetadata(candidate, rawUrl) {
+    try {
+      if (!candidate) return null;
+      const root = candidate.matches?.("figure,picture,[role='img']") ? candidate : candidate.closest?.("figure,picture,[role='img']") || candidate;
+      const img = candidate.matches?.("img") ? candidate : root?.querySelector?.("img");
+      if (!img && !root?.matches?.("[role='img']")) return null;
+      const caption = (root?.querySelector?.("figcaption")?.textContent || "").replace(/\s+/g, " ").trim();
+      const alt = (img?.getAttribute?.("alt") || root?.getAttribute?.("aria-label") || "").replace(/\s+/g, " ").trim();
+      const title = (img?.getAttribute?.("title") || root?.getAttribute?.("title") || "").replace(/\s+/g, " ").trim();
+      const src = img ? new URL(img.currentSrc || img.src || img.getAttribute("src") || "", rawUrl || location.href).toString() : "";
+      const heading = getNearestHeadingForElement(root || img);
+      return {
+        src,
+        alt,
+        title,
+        caption,
+        nearestHeading: heading,
+        pageTitle: document.title || "",
+        pageUrl: rawUrl || location.href,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  document.addEventListener("pointerup", (event) => {
+    const imageTarget = getImageSelectionTarget(event.target);
+    if (imageTarget) {
+      lastImageSelectionTarget = imageTarget;
+      lastImageSelectionAt = Date.now();
+    }
+  }, true);
+
   function waitForPanelReady(frame, timeoutMs = 800) {
     if (!frame?.contentWindow) return Promise.resolve(false);
     if (popoverState.panelReady) return Promise.resolve(true);
@@ -692,15 +820,20 @@ if (window.__QUICKFLASH_INJECTED__) {
     const headingText = getNearestHeadingForSelection();
     const sourceLabel = headingText || document.title || (rawUrl ? new URL(rawUrl).hostname : "");
     const sourceUrl = buildTextFragmentUrl(rawUrl, selection, headingText);
+    const selectedImage = !selection.trim()
+      ? captureImageMetadata(findSelectedImageElement(selectionObj), rawUrl)
+      : null;
     return {
       selectionObj,
       context: {
         selection,
+        selectionKind: selectedImage ? "image" : "text",
+        selectedImages: selectedImage ? [selectedImage] : [],
         url: rawUrl,
         title: document.title || '',
         meta: qf_scrapePageMeta(),
         sourceUrl,
-        sourceLabel,
+        sourceLabel: selectedImage?.caption || selectedImage?.alt || selectedImage?.title || selectedImage?.nearestHeading || sourceLabel,
       },
     };
   }
@@ -732,7 +865,7 @@ if (window.__QUICKFLASH_INJECTED__) {
 
     try {
       const { selectionObj, context } = gatherPageContext();
-      await chrome.storage.local.set({ quickflash_lastDraft: context });
+      await localSetSafe({ quickflash_lastDraft: context });
       frame?.contentWindow?.postMessage(
         {
           type: 'quickflash:context',
@@ -773,6 +906,8 @@ if (window.__QUICKFLASH_INJECTED__) {
       } catch {
         sendResponse({
           selection: '',
+          selectionKind: 'text',
+          selectedImages: [],
           url: location.href,
           title: document.title || '',
           meta: qf_scrapePageMeta(),

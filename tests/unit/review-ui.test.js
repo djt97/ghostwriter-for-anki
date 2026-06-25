@@ -60,4 +60,17 @@ describe('review queue UI', () => {
     assert.match(reviewJs, /function undoLastAction\(\)/);
     assert.match(reviewJs, /btnUndo\.addEventListener\("click", undoLastAction\)/);
   });
+
+  it('loads the shared Markdown/Anki conversion helpers before review.js', () => {
+    assert.match(reviewHtml, /<script src="libs\/markdown-it\.min\.js"><\/script>\s*<script src="panel-markdown\.js"><\/script>\s*<script src="review\.js"><\/script>/);
+  });
+
+  it('builds Anki notes from actual model fields instead of hard-coding Front and Back only', () => {
+    assert.match(reviewJs, /async function getModelFields\(modelName\)/);
+    assert.match(reviewJs, /async function buildReviewNote\(item, deckName, modelName\)/);
+    assert.match(reviewJs, /const fieldNames = await getModelFields\(modelName\)/);
+    assert.ok(reviewJs.includes('"Text" in fields'));
+    assert.ok(reviewJs.includes('"Source" in fields'));
+    assert.match(reviewJs, /const note = await buildReviewNote\(item, deck, modelName\)/);
+  });
 });

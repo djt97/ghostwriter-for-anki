@@ -3,13 +3,15 @@
 
 function makeBackLinkHTML(url, title) {
   if (!url) return "";
+  let href;
   try {
-    const protocol = new URL(url).protocol;
-    if (!["http:", "https:"].includes(protocol)) return "";
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) return "";
+    href = parsed.href;
   } catch { return ""; }
-  const safeTitle = (title || url).replace(/[<>]/g, "");
-  const href = url.replace(/"/g, "&quot;");
-  return `<div class="quickflash-source" style="margin-top:8px;font-size:12px;color:#666">Source: <a href="${href}" target="_blank" rel="noopener noreferrer">${safeTitle}</a></div>`;
+  const safeTitle = escapeHtml(title || href);
+  const safeHref = escapeHtml(href);
+  return `<div class="quickflash-source" style="margin-top:8px;font-size:12px;color:#666">Source: <a href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeTitle}</a></div>`;
 }
 
 const markdownRendererState = { instance: null };
@@ -59,12 +61,12 @@ function restoreMathSegments(text, mathSegments) {
     .replace(/@@QF_MATH_BLOCK_(\d+)@@/g, (_m, idxStr) => {
       const seg = mathSegments[Number(idxStr)];
       if (!seg) return "";
-      return `\\[${seg.body.trim()}\\]`;
+      return `\\[${escapeHtml(seg.body.trim())}\\]`;
     })
     .replace(/@@QF_MATH_INLINE_(\d+)@@/g, (_m, idxStr) => {
       const seg = mathSegments[Number(idxStr)];
       if (!seg) return "";
-      return `\\(${seg.body.trim()}\\)`;
+      return `\\(${escapeHtml(seg.body.trim())}\\)`;
     });
 }
 

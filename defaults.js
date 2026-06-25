@@ -10,10 +10,10 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
   showMiniCopilotMode: "off",
   showSourceModePill: true,
   copilotShortcut: "Cmd+Shift+X",
-  copilotFrontWordCap: 24,
-  copilotBackWordCap: 18,
-  copilotFrontMaxTokens: 48,
-  copilotBackMaxTokens: 36,
+  copilotFrontWordCap: 18,
+  copilotBackWordCap: 14,
+  copilotFrontMaxTokens: 40,
+  copilotBackMaxTokens: 30,
   copilotMinIntervalMs: 1200,
   copilotTimeoutMs: 30000,
 
@@ -29,6 +29,7 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
   manualAutoTag: true,
   manualAutoContext: true,
   manualAutoPreview: false,
+  clipboardFallback: true,
 
   // Field visibility
   showContextField: true,

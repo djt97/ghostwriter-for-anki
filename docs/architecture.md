@@ -8,7 +8,6 @@ Ghostwriter is implemented as a Manifest V3 extension with these main pieces:
 - `content.js` — page integration, overlay host, selection/context capture
 - `panel.html` + `panel.js` — main authoring/review UI
 - `options.html` + `options.js` — settings UI and persistence
-- `dashboard.*` + `embeddings.js` + `force-graph.js` — dashboard/knowledge graph features (full build)
 
 ## Control flow overview
 
@@ -34,25 +33,9 @@ Common message categories:
 - Temporary card draft/queue state managed by panel runtime.
 - Outbox exists as UI-level staging before Anki submission.
 
-## Build variants
+## Release build
 
-### Full
-
-Includes:
-
-- Dashboard UI
-- Embedding and graph dependencies
-- Hugging Face and ONNX artifacts
-
-### Lite
-
-Excludes:
-
-- Dashboard and embeddings files
-- Large vendor model/runtime assets
-- Related CSP connect-src entries
-
-Variant generation is automated by `scripts/build-release.js`.
+`scripts/build-release.js` builds the bundled MathJax asset, copies the extension into `dist/ghostwriter/`, excludes development-only files, and creates `dist/ghostwriter.zip`.
 
 ## Security and permissions
 
@@ -64,10 +47,8 @@ Host permissions include:
 
 - Localhost AnkiConnect
 - Selected AI provider domains
-- Model hosting domains needed for full features
 
 ## External integrations
 
 - **AnkiConnect** for note creation and metadata lookup
 - **AI providers** for Copilot and template generation
-- Optional local/vendor model assets for dashboard features

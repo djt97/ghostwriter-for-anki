@@ -10,6 +10,7 @@ tests/.pw-user/
 
 # Screenshot artifacts
 tests/screenshots/*.png
+tests/evals/reports/
 
 # Build output (use GitHub Releases for distribution zips)
 /dist/

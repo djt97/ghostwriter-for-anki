@@ -6,6 +6,11 @@ const OPTIONS_KEY = "quickflash_options";
 // Free-tier proxy: subsidized first-run AI suggestions. The proxy must also
 // enforce these limits server-side; local state is only for UX/status.
 const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton97.workers.dev/v1";
+const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
+const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
@@ -56,6 +61,7 @@ const PANEL_PAGE_URL = chrome.runtime.getURL("panel.html");
 function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
   if (value === "openai") return "openai";
+  if (value === "openrouter") return "openrouter";
   if (value === "claude") return "claude";
   return "ultimate";
 }
@@ -63,11 +69,13 @@ function normalizeProvider(value) {
 function inferProviderFromOptions(opts) {
   if (opts?.llmProvider) return normalizeProvider(opts.llmProvider);
   if (opts?.openaiKey) return "openai";
+  if (opts?.openrouterKey) return "openrouter";
   if (opts?.ultimateKey) return "ultimate";
   if (opts?.geminiKey) return "gemini";
   if (opts?.claudeKey) return "claude";
   if (/ultimateai/i.test(String(opts?.ultimateBaseUrl || ""))) return "ultimate";
   if (/api\.openai\.com/i.test(String(opts?.openaiBaseUrl || ""))) return "openai";
+  if (/openrouter\.ai/i.test(String(opts?.openrouterBaseUrl || ""))) return "openrouter";
   return "openai";
 }
 
@@ -77,6 +85,13 @@ function normalizeEditorSurface(value) {
   return "overlay";
 }
 
+function normalizeUltimateBaseUrl(value) {
+  const raw = String(value || ULTIMATE_BASE_URL).trim().replace(/\/+$/g, "");
+  if (!raw) return ULTIMATE_BASE_URL;
+  if (ULTIMATE_HOST_RE.test(raw)) return `${raw}/v1`;
+  return raw;
+}
+
 function getOpenAIProviderConfig(opts, overrideProvider) {
   const provider = overrideProvider ? normalizeProvider(overrideProvider) : inferProviderFromOptions(opts || {});
   if (provider === "openai") {
@@ -84,16 +99,74 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
       provider,
       baseUrl: (opts.openaiBaseUrl || "https://api.openai.com/v1").replace(/\/+$/g, ""),
       apiKey: opts.openaiKey || "",
-      model: opts.openaiModel || opts.ultimateModel || "gpt-4.1-mini",
+      model: opts.openaiModel || opts.ultimateModel || OPENAI_DEFAULT_MODEL,
+    };
+  }
+  if (provider === "openrouter") {
+    return {
+      provider,
+      baseUrl: (opts.openrouterBaseUrl || OPENROUTER_BASE_URL).replace(/\/+$/g, ""),
+      apiKey: opts.openrouterKey || "",
+      model: opts.openrouterModel || "openrouter/auto",
     };
   }
 
   return {
     provider: "ultimate",
-    baseUrl: (opts.ultimateBaseUrl || "https://smart.ultimateai.org/v1").replace(/\/+$/g, ""),
+    baseUrl: normalizeUltimateBaseUrl(opts.ultimateBaseUrl),
     apiKey: opts.ultimateKey || "",
-    model: opts.ultimateModel || "auto",
+    model: opts.ultimateModel || ULTIMATE_DEFAULT_MODEL,
   };
+}
+
+const AI_PROVIDER_HOST_PERMISSION_ORIGINS = new Set([
+  "https://api.openai.com/*",
+  "https://openrouter.ai/*",
+  "https://api.ultimateai.org/*",
+  "https://smart.ultimateai.org/*",
+  "https://chat.ultimateai.org/*",
+  "https://generativelanguage.googleapis.com/*",
+  "https://api.anthropic.com/*",
+]);
+
+function buildOpenAICompatibleHeaders(provider, apiKey, extra = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    ...extra,
+  };
+  if (provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://github.com/djt97/ghostwriter-for-anki";
+    headers["X-OpenRouter-Title"] = "Ghostwriter for Anki";
+  }
+  return headers;
+}
+
+function getKnownAiHostPermissionOrigin(baseUrl) {
+  try {
+    const origin = `${new URL(String(baseUrl || "")).origin}/*`;
+    return AI_PROVIDER_HOST_PERMISSION_ORIGINS.has(origin) ? origin : "";
+  } catch {
+    return "";
+  }
+}
+
+async function assertAiHostPermission({ provider, baseUrl } = {}) {
+  if (!baseUrl || provider === "free-tier" || !chrome.permissions?.contains) return;
+  const origin = getKnownAiHostPermissionOrigin(baseUrl);
+  if (!origin) return;
+  let granted = true;
+  try {
+    granted = await chrome.permissions.contains({ origins: [origin] });
+  } catch {
+    return;
+  }
+  if (!granted) {
+    throw new Error(
+      `Chrome has not granted Ghostwriter permission to contact ${origin}. ` +
+      `Open Ghostwriter Settings, click Save, and accept the AI provider permission prompt.`
+    );
+  }
 }
 
 function readChatMessageContent(message) {
@@ -131,7 +204,7 @@ function getChatCompletionText(data, requestedModel) {
 async function getQuickflashOptions() {
   try {
     const { [OPTIONS_KEY]: options } = await chrome.storage.sync.get(OPTIONS_KEY);
-    return options || {};
+    return await mergeProviderSecrets(options || {});
   } catch {
     return {};
   }
@@ -308,6 +381,8 @@ function openSidePanelCommandFromUserGesture(tab) {
   if (isSidePanelMarkedOpen({ tabId, windowId }) && closeSidePanelCommandFromUserGesture({ tabId, windowId })) {
     return;
   }
+
+  clearLastDraftContext();
 
   if (typeof tabId === "number" && chrome.sidePanel.setOptions) {
     chrome.sidePanel
@@ -546,6 +621,12 @@ async function seedLastDraftFromTab(activeId) {
   return null;
 }
 
+function clearLastDraftContext() {
+  try {
+    chrome.storage.local.remove("quickflash_lastDraft").catch(() => {});
+  } catch {}
+}
+
 async function openOverlayCommand({ tabId, windowId } = {}) {
   await configureSidePanelBehavior(false);
   const activeId = typeof tabId === "number" ? tabId : await resolveActiveTabId({ tabId, windowId });
@@ -560,6 +641,7 @@ async function openPanel({ tabId, windowId, pasteSelection = false, preferredSur
 
   if (surface === "side_panel") {
     try {
+      clearLastDraftContext();
       await openSidePanelForTab(activeId);
       seedLastDraftFromTab(activeId).catch(() => {});
       return;
@@ -577,6 +659,7 @@ async function openPanel({ tabId, windowId, pasteSelection = false, preferredSur
   if (await showOverlay({ tabId: activeId, windowId, pasteSelection, skipCapturePopover: true })) return;
 
   try {
+    clearLastDraftContext();
     await openSidePanelForTab(activeId);
     console.info("openPanel fallback: side-panel", { reason: "overlay-failed" });
     return;
@@ -620,21 +703,25 @@ const ARCHIVE_KEY = "quickflash_archive_v1";
 const ARCHIVE_BACKUP_KEY = "quickflash_archive_backup_v1";
 const LAST_VER_KEY = "qf_lastVersion";
 const OPTIONS_BACKUP_KEY = "ghostwriter_options_backup_v1";
-const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v1";
+const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v2";
 const OPTIONS_SCHEMA_VERSION = 2;
 const DEFAULT_QUEUE_SHORTCUT = "Meta+Shift+A";
-const PROVIDER_KEY_FIELDS = ["openaiKey", "ultimateKey", "geminiKey", "claudeKey"];
+const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
+const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey"];
 const PROVIDER_CONFIG_FIELDS = [
   ...PROVIDER_KEY_FIELDS,
   "openaiBaseUrl",
+  "openrouterBaseUrl",
   "ultimateBaseUrl",
   "geminiBaseUrl",
   "claudeBaseUrl",
   "openaiModel",
+  "openrouterModel",
   "ultimateModel",
   "geminiModel",
   "claudeModel",
 ];
+const CONTENT_STORAGE_KEYS = new Set(["quickflash_overlay_size", "quickflash_lastDraft"]);
 
 async function storeArchiveBackup({ trigger = "update", prev = "" } = {}) {
   try {
@@ -658,6 +745,55 @@ async function storeArchiveBackup({ trigger = "update", prev = "" } = {}) {
 function hasStoredValue(opts, key) {
   return typeof opts?.[key] === "string" ? !!opts[key].trim() : opts?.[key] !== undefined && opts?.[key] !== null;
 }
+
+function sanitizeOptionsForSync(options = {}) {
+  const clean = { ...(options || {}) };
+  for (const key of PROVIDER_KEY_FIELDS) delete clean[key];
+  return clean;
+}
+
+async function restrictProviderSecretStorage() {
+  try {
+    await chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" });
+  } catch {}
+}
+
+async function getProviderSecrets() {
+  await restrictProviderSecretStorage();
+  try {
+    const got = await chrome.storage.local.get(PROVIDER_SECRETS_KEY);
+    const raw = got?.[PROVIDER_SECRETS_KEY] || {};
+    const out = {};
+    for (const key of PROVIDER_KEY_FIELDS) {
+      if (typeof raw[key] === "string") out[key] = raw[key];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function mergeProviderSecrets(options = {}) {
+  return { ...(options || {}), ...(await getProviderSecrets()) };
+}
+
+async function migrateProviderSecretsFromSync(options = {}) {
+  const nextSecrets = await getProviderSecrets();
+  let changed = false;
+  for (const key of PROVIDER_KEY_FIELDS) {
+    const value = typeof options[key] === "string" ? options[key].trim() : "";
+    if (value) {
+      nextSecrets[key] = value;
+      changed = true;
+    }
+  }
+  if (changed) {
+    await chrome.storage.local.set({ [PROVIDER_SECRETS_KEY]: nextSecrets });
+  }
+  return changed;
+}
+
+restrictProviderSecretStorage();
 
 function hasProviderConfig(opts) {
   return PROVIDER_CONFIG_FIELDS.some((key) => hasStoredValue(opts, key));
@@ -692,6 +828,10 @@ function migrateOptionsForFocusedV2(existingOptions = {}) {
     next.llmProvider = inferProviderFromOptions(next);
   }
 
+  if (next.ultimateBaseUrl !== undefined) {
+    next.ultimateBaseUrl = normalizeUltimateBaseUrl(next.ultimateBaseUrl);
+  }
+
   if (next.defaultEditorSurface !== undefined) {
     next.defaultEditorSurface = normalizeEditorSurface(next.defaultEditorSurface);
   } else {
@@ -703,6 +843,15 @@ function migrateOptionsForFocusedV2(existingOptions = {}) {
   }
 
   if (next.manualCopilotOnly === undefined) next.manualCopilotOnly = true;
+  if (next.clipboardFallback === undefined) {
+    if (typeof next.clipboardAsSourceIfNoSelection === "boolean") {
+      next.clipboardFallback = next.clipboardAsSourceIfNoSelection;
+    } else if (typeof next.pasteClipboardIfNoSelection === "boolean") {
+      next.clipboardFallback = next.pasteClipboardIfNoSelection;
+    } else {
+      next.clipboardFallback = true;
+    }
+  }
   if (next.autoMagicGenerate === undefined) next.autoMagicGenerate = false;
   if (next.ghostwriterSchemaVersion !== OPTIONS_SCHEMA_VERSION) {
     next.ghostwriterSchemaVersion = OPTIONS_SCHEMA_VERSION;
@@ -718,20 +867,20 @@ function migrateOptionsForFocusedV2(existingOptions = {}) {
 function buildUpdateNotice({ previousVersion = "", currentVersion = "", preservedCredentials = {} } = {}) {
   const preservedCount = Object.values(preservedCredentials || {}).filter(Boolean).length;
   return {
-    id: `focused-v2-${currentVersion || "unknown"}`,
-    kind: "focused-v2",
+    id: `focused-direct-${currentVersion || "unknown"}`,
+    kind: "focused-direct",
     previousVersion: previousVersion || null,
     currentVersion: currentVersion || null,
     createdAt: Date.now(),
     dismissed: false,
     title: `Ghostwriter updated to ${currentVersion || "the latest version"}`,
     message: preservedCount
-      ? "Your API keys and Anki settings were preserved. Ghostwriter now defaults to the focused highlight -> overlay -> queue workflow."
-      : "Ghostwriter now defaults to the focused highlight -> overlay -> queue workflow. Add an API key any time, or keep writing manually.",
+      ? "Your API keys and Anki settings were preserved. Ghostwriter now defaults to focused one-off card creation with direct Add to Anki."
+      : "Ghostwriter now defaults to focused one-off card creation with direct Add to Anki. Add an API key any time, or keep writing manually.",
     actions: [
-      "Review Queue is now the canonical place for drafts.",
-      "Overlay is the default editor surface; side panel is still available in Settings.",
-      "Manual AI suggestions are the default, with existing provider keys left untouched.",
+      "Add to Anki sends the current card directly through AnkiConnect.",
+      "Overlay is the default editor surface; side panel and tab views are still available in Settings.",
+      "Manual AI suggestions remain the default, with existing provider keys left untouched.",
     ],
     preservedCredentials,
   };
@@ -760,12 +909,15 @@ async function runFocusedV2CompatibilityUpdate({ reason = "update", previousVers
   if (reason !== "update" && reason !== "startup") return null;
   const currentVersion = chrome.runtime.getManifest().version;
   const got = await chrome.storage.sync.get(OPTIONS_KEY);
-  const existingOptions = got?.[OPTIONS_KEY] || {};
+  const syncOptions = got?.[OPTIONS_KEY] || {};
+  const existingOptions = await mergeProviderSecrets(syncOptions);
   const migrated = migrateOptionsForFocusedV2(existingOptions);
+  const syncMigratedOptions = sanitizeOptionsForSync(migrated.options);
 
   await backupOptionsBeforeMigration(existingOptions, { previousVersion, currentVersion });
-  if (migrated.changed) {
-    await chrome.storage.sync.set({ [OPTIONS_KEY]: migrated.options });
+  const movedSecrets = await migrateProviderSecretsFromSync(syncOptions);
+  if (migrated.changed || movedSecrets || JSON.stringify(syncMigratedOptions) !== JSON.stringify(syncOptions)) {
+    await chrome.storage.sync.set({ [OPTIONS_KEY]: syncMigratedOptions });
   }
 
   const notice = buildUpdateNotice({
@@ -963,7 +1115,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const { action, params } = message;
       try {
         // 1) Load configured Anki base URL from sync storage
-        const { quickflash_options } = await chrome.storage.sync.get("quickflash_options");
+        const quickflash_options = await getQuickflashOptions();
         const rawBase = (quickflash_options?.ankiBaseUrl || "http://127.0.0.1:8765").trim() || "http://127.0.0.1:8765";
 
         // Normalize + construct host candidates (127.0.0.1 <-> localhost swap, preserve port)
@@ -1026,6 +1178,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "ghostwriter:requestHostPermission") {
       const ALLOWED_ORIGINS = [
         "https://api.openai.com/*",
+        "https://openrouter.ai/*",
+        "https://api.ultimateai.org/*",
+        "https://chat.ultimateai.org/*",
         "https://smart.ultimateai.org/*",
         "https://generativelanguage.googleapis.com/*",
         "https://api.anthropic.com/*",
@@ -1045,10 +1200,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message.type === "quickflash:contentStorageGet") {
+      try {
+        const requested = Array.isArray(message.keys) ? message.keys : [message.keys];
+        const safeKeys = requested.filter((key) => CONTENT_STORAGE_KEYS.has(key));
+        if (!safeKeys.length) {
+          sendResponse({ ok: true, values: {} });
+          return;
+        }
+        const values = await chrome.storage.local.get(safeKeys);
+        sendResponse({ ok: true, values });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+      return;
+    }
+
+    if (message.type === "quickflash:contentStorageSet") {
+      try {
+        const values = message.values && typeof message.values === "object" ? message.values : {};
+        const safeValues = {};
+        for (const [key, value] of Object.entries(values)) {
+          if (CONTENT_STORAGE_KEYS.has(key)) safeValues[key] = value;
+        }
+        if (Object.keys(safeValues).length) {
+          await chrome.storage.local.set(safeValues);
+        }
+        sendResponse({ ok: true });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+      return;
+    }
+
     if (message.type === "quickflash:getOptions") {
       try {
-        const { quickflash_options } = await chrome.storage.sync.get("quickflash_options");
-        sendResponse({ ok: true, options: quickflash_options || {} });
+        const { [OPTIONS_KEY]: quickflash_options } = await chrome.storage.sync.get(OPTIONS_KEY);
+        sendResponse({ ok: true, options: sanitizeOptionsForSync(quickflash_options || {}) });
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });
       }
@@ -1100,8 +1288,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "quickflash:ultimateChatJSON") {
       const { prompt, model } = message;
       try {
-        const { quickflash_options } = await chrome.storage.sync.get("quickflash_options");
-        const opts = quickflash_options || {};
+        const opts = await getQuickflashOptions();
         const { provider, baseUrl, apiKey, model: defaultModel } = getOpenAIProviderConfig(opts);
         const mdl = model || defaultModel;
 
@@ -1110,6 +1297,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let usingFreeTier = false;
 
         if (!apiKey) {
+          if (provider === "openrouter") {
+            throw new Error("OpenRouter API key missing. Add your OpenRouter key in Settings to use this provider.");
+          }
           // Check free-tier quota
           const ftState = await getFreeTierState();
           if (ftState.remaining > 0) {
@@ -1121,9 +1311,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         }
 
+        await assertAiHostPermission({
+          provider: usingFreeTier ? "free-tier" : provider,
+          baseUrl: effectiveBaseUrl,
+        });
         const r = await fetch(`${effectiveBaseUrl}/chat/completions`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${effectiveApiKey}` },
+          headers: buildOpenAICompatibleHeaders(provider, effectiveApiKey),
           body: JSON.stringify({
             model: mdl,
             temperature: 0.2,

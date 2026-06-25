@@ -1,0 +1,229 @@
+{
+  "name": "Simple Wikipedia facts autocomplete eval",
+  "schemaVersion": 2,
+  "source": {
+    "title": "Simple Wikipedia facts",
+    "url": "https://en.wikipedia.org/wiki/Main_Page",
+    "fixtureCreatedAt": "2026-06-18",
+    "fixtureReviewedAt": "2026-06-18",
+    "licenseNote": "Short factual excerpts from Wikipedia-style pages are used as local eval fixtures for flashcard generation review."
+  },
+  "cases": [
+    {
+      "id": "paris-capital",
+      "section": "Paris",
+      "tags": ["capital", "geography", "basic"],
+      "sourceText": "Paris is the capital and largest city of France.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A simple entity-value fact with one obvious answer.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the capital of France?",
+            "back": "Paris"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is Paris?",
+            "back": "the capital and largest city of France",
+            "whyBad": "The Front is too broad and asks for a definition rather than the highlighted capital fact."
+          }
+        ]
+      }
+    },
+    {
+      "id": "jupiter-largest-planet",
+      "section": "Jupiter",
+      "tags": ["astronomy", "largest", "basic"],
+      "sourceText": "Jupiter is the fifth planet from the Sun and the largest in the Solar System.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A clean superlative fact with a single short answer.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the largest planet in the Solar System?",
+            "back": "Jupiter"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is Jupiter?",
+            "back": "the fifth planet from the Sun and the largest in the Solar System",
+            "whyBad": "The answer restates the whole source sentence instead of the minimal target."
+          }
+        ]
+      }
+    },
+    {
+      "id": "everest-highest",
+      "section": "Mount Everest",
+      "tags": ["geography", "mountain", "basic"],
+      "sourceText": "Mount Everest is Earth's highest mountain above sea level, located in the Mahalangur Himal sub-range of the Himalayas.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A single named-entity answer; the location is extra context, not the target.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is Earth's highest mountain above sea level?",
+            "back": "Mount Everest"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is Mount Everest?",
+            "back": "Earth's highest mountain above sea level",
+            "whyBad": "It flips the obvious target when the user likely wants the name."
+          }
+        ]
+      }
+    },
+    {
+      "id": "blue-whale-largest-animal",
+      "section": "Blue whale",
+      "tags": ["biology", "largest", "basic"],
+      "sourceText": "The blue whale is the largest animal known ever to have existed.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A simple superlative with a minimal answer.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the largest animal known ever to have existed?",
+            "back": "the blue whale"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is the blue whale?",
+            "back": "the largest animal known ever to have existed",
+            "whyBad": "The Front gives away the entity when the highlighted fact should cue it."
+          }
+        ]
+      }
+    },
+    {
+      "id": "marie-curie-first-woman-nobel",
+      "section": "Marie Curie",
+      "tags": ["history", "nobel", "basic"],
+      "sourceText": "Marie Curie was the first woman to win a Nobel Prize and the first person to win Nobel Prizes in two scientific fields.",
+      "frontPrefix": "Who was",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The prefix asks for a person, and the source gives one clear person answer.",
+        "plausibleUserPrefixes": ["Who was"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "Who was the first woman to win a Nobel Prize?",
+            "back": "Marie Curie"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Who was Marie Curie?",
+            "back": "the first woman to win a Nobel Prize",
+            "whyBad": "The Front includes the answer and turns the card into a broad biography cue."
+          }
+        ]
+      }
+    },
+    {
+      "id": "canberra-capital",
+      "section": "Canberra",
+      "tags": ["capital", "geography", "basic"],
+      "sourceText": "Canberra is the capital city of Australia.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A direct capital fact with one short answer.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the capital city of Australia?",
+            "back": "Canberra"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is Canberra?",
+            "back": "the capital city of Australia",
+            "whyBad": "The Front names the answer instead of cueing it."
+          }
+        ]
+      }
+    },
+    {
+      "id": "nile-mediterranean",
+      "section": "Nile",
+      "tags": ["river", "geography", "basic"],
+      "sourceText": "The Nile is a major north-flowing river in northeastern Africa. It flows into the Mediterranean Sea.",
+      "frontPrefix": "Where does",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The prefix and source identify one destination answer.",
+        "plausibleUserPrefixes": ["Where does"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "Where does the Nile flow into?",
+            "back": "the Mediterranean Sea"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Where does the Nile flow?",
+            "back": "northeastern Africa",
+            "whyBad": "It targets the region rather than the destination stated in the second sentence."
+          }
+        ]
+      }
+    },
+    {
+      "id": "water-formula",
+      "section": "Water",
+      "tags": ["chemistry", "formula", "basic"],
+      "sourceText": "Water is an inorganic compound with the chemical formula H2O.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A short formula answer with no plausible alternative.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the chemical formula for water?",
+            "back": "H2O"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is water?",
+            "back": "an inorganic compound with the chemical formula H2O",
+            "whyBad": "Too broad and more definition-like than the highlighted formula fact."
+          }
+        ]
+      }
+    }
+  ]
+}

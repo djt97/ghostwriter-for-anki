@@ -6,6 +6,7 @@
     "build:release": "node scripts/build-release.js",
     "test": "node --test tests/unit/*.test.js",
     "lint": "eslint .",
+    "eval:copilot": "node scripts/run-copilot-eval.js",
     "test:ui": "playwright test -c playwright.config.ts --grep @screenshots",
     "test:install": "playwright install --with-deps chromium",
     "test:screenshots": "playwright test -c playwright.config.ts --grep @screenshots",

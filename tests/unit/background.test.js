@@ -35,23 +35,39 @@ const normalizeEditorSurface = new Function(`
 
 // getOpenAIProviderConfig (depends on normalizeProvider)
 const getOpenAIProviderConfig = new Function(`
+  const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+  const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
+  const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+  const ULTIMATE_HOST_RE = /^https:\\/\\/(?:api|smart|chat)\\.ultimateai\\.org$/i;
+  const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
   ${extractFunction(bgSource, 'normalizeProvider')}
   ${extractFunction(bgSource, 'inferProviderFromOptions')}
+  ${extractFunction(bgSource, 'normalizeUltimateBaseUrl')}
   ${extractFunction(bgSource, 'getOpenAIProviderConfig')}
   return getOpenAIProviderConfig;
+`)();
+
+const buildOpenAICompatibleHeaders = new Function(`
+  ${extractFunction(bgSource, 'buildOpenAICompatibleHeaders')}
+  return buildOpenAICompatibleHeaders;
 `)();
 
 const migrateOptionsForFocusedV2 = new Function(`
   const OPTIONS_SCHEMA_VERSION = 2;
   const DEFAULT_QUEUE_SHORTCUT = "Meta+Shift+A";
-  const PROVIDER_KEY_FIELDS = ["openaiKey", "ultimateKey", "geminiKey", "claudeKey"];
+  const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
+  const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+  const ULTIMATE_HOST_RE = /^https:\\/\\/(?:api|smart|chat)\\.ultimateai\\.org$/i;
+  const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey"];
   const PROVIDER_CONFIG_FIELDS = [
     ...PROVIDER_KEY_FIELDS,
     "openaiBaseUrl",
+    "openrouterBaseUrl",
     "ultimateBaseUrl",
     "geminiBaseUrl",
     "claudeBaseUrl",
     "openaiModel",
+    "openrouterModel",
     "ultimateModel",
     "geminiModel",
     "claudeModel",
@@ -63,6 +79,7 @@ const migrateOptionsForFocusedV2 = new Function(`
   ${extractFunction(bgSource, 'hasProviderConfig')}
   ${extractFunction(bgSource, 'getPreservedCredentialSummary')}
   ${extractFunction(bgSource, 'normalizeQueueShortcutForUpdate')}
+  ${extractFunction(bgSource, 'normalizeUltimateBaseUrl')}
   ${extractFunction(bgSource, 'migrateOptionsForFocusedV2')}
   return migrateOptionsForFocusedV2;
 `)();
@@ -98,6 +115,10 @@ describe('background.js pure functions', () => {
       assert.equal(normalizeProvider('openai'), 'openai');
     });
 
+    it('returns "openrouter" for "openrouter"', () => {
+      assert.equal(normalizeProvider('openrouter'), 'openrouter');
+    });
+
     it('returns "ultimate" for "ultimate"', () => {
       assert.equal(normalizeProvider('ultimate'), 'ultimate');
     });
@@ -120,6 +141,11 @@ describe('background.js pure functions', () => {
 
     it('infers UltimateAI for older saves with only an UltimateAI key', () => {
       assert.equal(inferProviderFromOptions({ ultimateKey: 'ua-key' }), 'ultimate');
+    });
+
+    it('infers OpenRouter from key or base URL', () => {
+      assert.equal(inferProviderFromOptions({ openrouterKey: 'or-key' }), 'openrouter');
+      assert.equal(inferProviderFromOptions({ openrouterBaseUrl: 'https://openrouter.ai/api/v1' }), 'openrouter');
     });
 
     it('infers UltimateAI from a legacy UltimateAI base URL', () => {
@@ -183,8 +209,61 @@ describe('background.js pure functions', () => {
       const config = getOpenAIProviderConfig(opts);
       assert.equal(config.provider, 'ultimate');
       assert.equal(config.apiKey, 'ultimate-key');
+      assert.equal(config.baseUrl, 'https://api.ultimateai.org/v1');
+      assert.equal(config.model, 'gemini-flash-lite');
+    });
+
+    it('returns OpenRouter config when provider is openrouter', () => {
+      const config = getOpenAIProviderConfig({
+        llmProvider: 'openrouter',
+        openrouterKey: 'or-test',
+      });
+      assert.equal(config.provider, 'openrouter');
+      assert.equal(config.apiKey, 'or-test');
+      assert.equal(config.baseUrl, 'https://openrouter.ai/api/v1');
+      assert.equal(config.model, 'openrouter/auto');
+    });
+
+    it('strips trailing slashes from OpenRouter baseUrl and preserves custom model', () => {
+      const config = getOpenAIProviderConfig({
+        llmProvider: 'openrouter',
+        openrouterBaseUrl: 'https://openrouter.ai/api/v1///',
+        openrouterModel: 'anthropic/claude-3.5-haiku',
+      });
+      assert.equal(config.baseUrl, 'https://openrouter.ai/api/v1');
+      assert.equal(config.model, 'anthropic/claude-3.5-haiku');
+    });
+
+    it('preserves the documented UltimateAI API host when configured', () => {
+      const config = getOpenAIProviderConfig({
+        llmProvider: 'ultimate',
+        ultimateBaseUrl: 'https://api.ultimateai.org/v1',
+      });
+      assert.equal(config.baseUrl, 'https://api.ultimateai.org/v1');
+    });
+
+    it('adds /v1 for the documented UltimateAI API host when omitted', () => {
+      const config = getOpenAIProviderConfig({
+        llmProvider: 'ultimate',
+        ultimateBaseUrl: 'https://api.ultimateai.org',
+      });
+      assert.equal(config.baseUrl, 'https://api.ultimateai.org/v1');
+    });
+
+    it('adds /v1 for the legacy account-page UltimateAI host when omitted', () => {
+      const config = getOpenAIProviderConfig({
+        llmProvider: 'ultimate',
+        ultimateBaseUrl: 'https://smart.ultimateai.org',
+      });
       assert.equal(config.baseUrl, 'https://smart.ultimateai.org/v1');
-      assert.equal(config.model, 'auto');
+    });
+
+    it('adds /v1 for the alternate UltimateAI host when omitted', () => {
+      const config = getOpenAIProviderConfig({
+        llmProvider: 'ultimate',
+        ultimateBaseUrl: 'https://chat.ultimateai.org',
+      });
+      assert.equal(config.baseUrl, 'https://chat.ultimateai.org/v1');
     });
 
     it('respects overrideProvider parameter', () => {
@@ -202,6 +281,19 @@ describe('background.js pure functions', () => {
 	      const opts = { llmProvider: 'ultimate', ultimateBaseUrl: 'https://custom.ai/v1' };
       const config = getOpenAIProviderConfig(opts);
       assert.equal(config.baseUrl, 'https://custom.ai/v1');
+    });
+  });
+
+  describe('buildOpenAICompatibleHeaders', () => {
+    it('adds OpenRouter attribution headers only for OpenRouter', () => {
+      const headers = buildOpenAICompatibleHeaders('openrouter', 'or-test');
+      assert.equal(headers.Authorization, 'Bearer or-test');
+      assert.equal(headers['HTTP-Referer'], 'https://github.com/djt97/ghostwriter-for-anki');
+      assert.equal(headers['X-OpenRouter-Title'], 'Ghostwriter for Anki');
+
+      const openaiHeaders = buildOpenAICompatibleHeaders('openai', 'sk-test');
+      assert.equal(openaiHeaders['HTTP-Referer'], undefined);
+      assert.equal(openaiHeaders['X-OpenRouter-Title'], undefined);
     });
   });
 
@@ -236,13 +328,22 @@ describe('background.js pure functions', () => {
       const result = migrateOptionsForFocusedV2({});
       assert.equal(result.options.defaultEditorSurface, 'overlay');
       assert.equal(result.options.manualCopilotOnly, true);
+      assert.equal(result.options.clipboardFallback, true);
       assert.equal(result.options.autoMagicGenerate, false);
       assert.equal(result.options.ghostwriterSchemaVersion, 2);
+    });
+
+    it('preserves explicit clipboard fallback opt-out during migration', () => {
+      assert.equal(migrateOptionsForFocusedV2({ clipboardFallback: false }).options.clipboardFallback, false);
+      assert.equal(
+        migrateOptionsForFocusedV2({ clipboardAsSourceIfNoSelection: false }).options.clipboardFallback,
+        false
+      );
     });
   });
 
   describe('buildUpdateNotice', () => {
-    it('mentions preserved credentials when keys exist', () => {
+    it('mentions preserved credentials and the direct Add to Anki flow when keys exist', () => {
       const notice = buildUpdateNotice({
         previousVersion: '0.3.2',
         currentVersion: '0.3.3',
@@ -250,8 +351,11 @@ describe('background.js pure functions', () => {
       });
       assert.match(notice.title, /0\.3\.3/);
       assert.match(notice.message, /API keys/);
+      assert.match(notice.message, /direct Add to Anki/);
       assert.equal(notice.dismissed, false);
       assert.ok(notice.actions.length >= 2);
+      assert.ok(notice.actions.some((action) => action.includes('directly through AnkiConnect')));
+      assert.doesNotMatch(`${notice.message} ${notice.actions.join(' ')}`, /Review Queue|queue workflow/i);
     });
   });
 
@@ -324,6 +428,14 @@ describe('background.js pure functions', () => {
       assert.ok(start >= 0, 'Could not find direct side-panel command helper');
       assert.ok(open > start, 'Could not find sidePanel.open in command helper');
       assert.ok(!/\bawait\b/.test(bgSource.slice(start, open)));
+    });
+
+    it('clears stale stored page context before opening the side panel', () => {
+      assert.ok(bgSource.includes('function clearLastDraftContext'));
+      const start = bgSource.indexOf('function openSidePanelCommandFromUserGesture');
+      const open = bgSource.indexOf('chrome.sidePanel.open(openOptions)', start);
+      const beforeOpen = bgSource.slice(start, open);
+      assert.match(beforeOpen, /clearLastDraftContext\(\)/);
     });
   });
 });

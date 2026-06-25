@@ -1,58 +1,38 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
 
-// prompts.js assigns to window.QUICKFLASH_PROMPTS, so we simulate that.
 const window = {};
-const fn = new Function('window', require('fs').readFileSync(
-  require('path').resolve(__dirname, '../../prompts.js'), 'utf8'
+const fn = new Function('window', fs.readFileSync(
+  path.resolve(__dirname, '../../prompts.js'), 'utf8'
 ) + '\nreturn window.QUICKFLASH_PROMPTS;');
 const PROMPTS = fn(window);
 
 describe('prompts.js', () => {
-  describe('frontSystem', () => {
-    it('is a non-empty string', () => {
+  describe('system prompts', () => {
+    it('keeps Front autocomplete short and focused on continuing the cue', () => {
       assert.equal(typeof PROMPTS.frontSystem, 'string');
-      assert.ok(PROMPTS.frontSystem.length > 20);
-    });
-
-    it('anchors suggestions to the user wording', () => {
-      assert.ok(PROMPTS.frontSystem.includes("user's prefix"));
-      assert.ok(PROMPTS.frontSystem.includes("Preserve the user's intended target"));
-    });
-
-    it('tells Front autocomplete to cue without disclosing the answer', () => {
+      assert.ok(PROMPTS.frontSystem.includes("Continue after the user's prefix"));
+      assert.ok(PROMPTS.frontSystem.includes('durable retrieval cue'));
       assert.ok(PROMPTS.frontSystem.includes("Cue, don't disclose"));
-      assert.ok(PROMPTS.frontSystem.includes('silently identify the minimal Back answer'));
-      assert.ok(PROMPTS.frontSystem.includes('by defining'));
+      assert.ok(!PROMPTS.frontSystem.includes('Protected Back answer'));
+      assert.ok(PROMPTS.frontSystem.length < 950);
     });
-  });
 
-  describe('backSystem', () => {
-    it('is a non-empty string', () => {
+    it('keeps Back autocomplete minimal and answer-only', () => {
       assert.equal(typeof PROMPTS.backSystem, 'string');
-      assert.ok(PROMPTS.backSystem.length > 20);
+      assert.ok(PROMPTS.backSystem.includes('Return exactly one atomic answer'));
+      assert.ok(PROMPTS.backSystem.includes('Do not restate the Front'));
+      assert.ok(PROMPTS.backSystem.includes('Do not append unasked dates'));
+      assert.ok(PROMPTS.backSystem.length < 950);
     });
 
-    it('treats the Front as the answer contract', () => {
-      assert.ok(PROMPTS.backSystem.includes('Answer the Front exactly'));
-      assert.ok(PROMPTS.backSystem.includes('Do not restate the passage'));
-    });
-
-    it('forbids meta narration', () => {
-      assert.ok(PROMPTS.backSystem.includes('No analysis'));
-      assert.ok(PROMPTS.backSystem.includes('"The user"'));
-    });
-  });
-
-  describe('frontFromBackSystem', () => {
-    it('is a non-empty string', () => {
+    it('keeps Back-to-Front generation plain and answer-aware', () => {
       assert.equal(typeof PROMPTS.frontFromBackSystem, 'string');
-      assert.ok(PROMPTS.frontFromBackSystem.length > 10);
-    });
-
-    it('uses the Back as a protected answer slot', () => {
-      assert.ok(PROMPTS.frontFromBackSystem.includes('Back as the answer contract'));
-      assert.ok(PROMPTS.frontFromBackSystem.includes("Cue, don't disclose"));
+      assert.ok(PROMPTS.frontFromBackSystem.includes('from an existing Back answer'));
+      assert.ok(PROMPTS.frontFromBackSystem.includes('answer contract'));
+      assert.ok(PROMPTS.frontFromBackSystem.length < 650);
     });
   });
 
@@ -66,90 +46,66 @@ describe('prompts.js', () => {
       caps: { frontWordCap: 20, backWordCap: 16 },
     };
 
-    it('is a function', () => {
-      assert.equal(typeof PROMPTS.buildUserPrompt, 'function');
-    });
-
-    it('returns a non-empty string', () => {
+    it('returns a compact prompt with source and card context', () => {
       const result = PROMPTS.buildUserPrompt(baseMeta);
       assert.equal(typeof result, 'string');
-      assert.ok(result.length > 50);
-    });
-
-    it('includes the front text when fieldId is "back"', () => {
-      const result = PROMPTS.buildUserPrompt(baseMeta);
+      assert.ok(result.includes('Complete BACK'));
       assert.ok(result.includes('What is the capital of France?'));
-    });
-
-    it('includes source excerpt when provided', () => {
-      const result = PROMPTS.buildUserPrompt(baseMeta);
       assert.ok(result.includes('Paris is the capital of France'));
-    });
-
-    it('includes page title without leaking url into the prompt', () => {
-      const result = PROMPTS.buildUserPrompt(baseMeta);
       assert.ok(result.includes('Geography'));
       assert.ok(!result.includes('example.com'));
     });
 
-    it('includes memory-prompt rules', () => {
-      const result = PROMPTS.buildUserPrompt(baseMeta);
-      assert.ok(result.includes('Preserve the user'));
-      assert.ok(result.includes('FRONT: one atomic cue'));
-      assert.ok(result.includes("FRONT cue-don't-disclose"));
-      assert.ok(result.includes('BACK: minimal answer'));
-      assert.ok(result.includes('unsupported or unclear'));
-    });
-
-    it('avoids source-only generation language when no existing text', () => {
-      const result = PROMPTS.buildUserPrompt(baseMeta);
-      assert.ok(result.includes('Complete BACK'));
-    });
-
-    it('passes the current field prefix when existing text is present', () => {
-      const result = PROMPTS.buildUserPrompt({ ...baseMeta, existing: 'Par' });
-      assert.ok(result.includes('Prefix:'));
-      assert.ok(result.includes('Par'));
-    });
-
-    it('omits source excerpt section when no selection', () => {
-      const meta = { ...baseMeta, page: { ...baseMeta.page, selection: '' } };
-      const result = PROMPTS.buildUserPrompt(meta);
-      assert.ok(!result.includes('Source excerpt'));
-    });
-
-    it('omits notes section when empty', () => {
-      const result = PROMPTS.buildUserPrompt(baseMeta);
-      assert.ok(!result.includes('Additional notes'));
-    });
-
-    it('includes notes when provided', () => {
-      const meta = { ...baseMeta, notes: 'This is about European capitals' };
-      const result = PROMPTS.buildUserPrompt(meta);
-      assert.ok(result.includes('Notes'));
-      assert.ok(result.includes('European capitals'));
-    });
-
-    it('handles front fieldId correctly', () => {
-      const meta = { ...baseMeta, fieldId: 'front', other: 'Paris' };
-      const result = PROMPTS.buildUserPrompt(meta);
+    it('tells Front completion to continue without repeating existing text', () => {
+      const result = PROMPTS.buildUserPrompt({
+        ...baseMeta,
+        fieldId: 'front',
+        existing: 'What do',
+        other: '',
+      });
       assert.ok(result.includes('Complete FRONT'));
+      assert.ok(result.includes('Prefix: What do'));
+      assert.ok(result.includes('Continue after Prefix'));
+      assert.ok(result.includes('one atomic cue'));
+      assert.ok(result.endsWith('Output:'));
     });
 
-    it('clips long selection text to the compact source cap', () => {
-      const longSelection = 'word '.repeat(200); // 1000 chars
-      const meta = { ...baseMeta, page: { ...baseMeta.page, selection: longSelection } };
-      const result = PROMPTS.buildUserPrompt(meta);
-      // The full 1000-char selection should NOT appear verbatim
+    it('tells Back completion to answer the Front without restating it', () => {
+      const result = PROMPTS.buildUserPrompt(baseMeta);
+      assert.ok(result.includes('one atomic answer <= 16 words'));
+      assert.ok(result.includes('do not restate the Front'));
+    });
+
+    it('includes notes when present and omits them when empty', () => {
+      assert.ok(!PROMPTS.buildUserPrompt(baseMeta).includes('Notes:'));
+      const result = PROMPTS.buildUserPrompt({ ...baseMeta, notes: 'Use the geography source.' });
+      assert.ok(result.includes('Notes: Use the geography source.'));
+    });
+
+    it('clips long source text', () => {
+      const longSelection = 'word '.repeat(200);
+      const result = PROMPTS.buildUserPrompt({
+        ...baseMeta,
+        page: { ...baseMeta.page, selection: longSelection },
+      });
       assert.ok(!result.includes(longSelection));
-      // But a truncated version should be present
-      const clipped = longSelection.replace(/\s+/g, ' ').trim().slice(0, 320);
-      assert.ok(result.includes(clipped));
+      assert.ok(result.includes(longSelection.replace(/\s+/g, ' ').trim().slice(0, 360)));
+    });
+
+    it('tells the model to preserve source TeX when math is present', () => {
+      const result = PROMPTS.buildUserPrompt({
+        ...baseMeta,
+        page: {
+          ...baseMeta.page,
+          selection: 'The equation is $$\\frac{\\partial u}{\\partial x}=\\frac{\\partial v}{\\partial y}$$.',
+        },
+      });
+      assert.ok(result.includes('preserve exact source TeX spans'));
+      assert.ok(result.includes('Do not convert them to Unicode or plaintext'));
     });
 
     it('handles null page gracefully', () => {
-      const meta = { ...baseMeta, page: null };
-      const result = PROMPTS.buildUserPrompt(meta);
+      const result = PROMPTS.buildUserPrompt({ ...baseMeta, page: null });
       assert.equal(typeof result, 'string');
       assert.ok(result.length > 0);
     });

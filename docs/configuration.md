@@ -20,7 +20,7 @@ Ghostwriter's Options page is intentionally small in focused v2. The editor is t
 - Default deck
 - Visible secondary fields: Notes, Context, Source
 - Optional append-context behavior
-- Queue-card shortcut
+- Add to Anki shortcut
 
 ## 4) Setup
 

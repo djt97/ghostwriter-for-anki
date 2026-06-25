@@ -1,0 +1,641 @@
+{
+  "name": "Deep learning Wikipedia autocomplete eval",
+  "schemaVersion": 2,
+  "source": {
+    "title": "Deep learning",
+    "url": "https://en.wikipedia.org/wiki/Deep_learning",
+    "fixtureCreatedAt": "2026-05-04",
+    "fixtureReviewedAt": "2026-05-05",
+    "licenseNote": "Short excerpts from Wikipedia are used as local eval fixtures for flashcard generation review."
+  },
+  "cases": [
+    {
+      "id": "dl-definition",
+      "section": "Lead",
+      "tags": ["definition", "what-is", "skip"],
+      "sourceText": "In machine learning, deep learning (DL) focuses on utilizing multilayered neural networks to perform tasks such as classification, regression, and representation learning.",
+      "frontPrefix": "What does",
+      "carding": {
+        "verdict": "skip",
+        "rationale": "The sentence is introductory and tempting, but a basic card like 'What is deep learning?' is too vague. A focus/task-list card would mostly ask the learner to recite a list without much conceptual payoff.",
+        "plausibleUserPrefixes": ["What does", "What are"],
+        "preferredCards": [],
+        "alternateCards": [
+          {
+            "type": "cloze",
+            "text": "In machine learning, deep learning focuses on utilizing multilayered neural networks to perform tasks such as {{c1::classification}}, {{c2::regression}}, and {{c3::representation learning}}.",
+            "rationale": "Only if the user really wants to memorize the task examples; still not a very high-value card."
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is deep learning?",
+            "back": "a machine learning approach that uses multilayered neural networks",
+            "whyBad": "Too broad; likely to invite a generic answer rather than the highlighted detail."
+          },
+          {
+            "type": "basic",
+            "front": "What does deep learning focus on?",
+            "back": "utilizing multilayered neural networks to perform tasks",
+            "whyBad": "Text-faithful but not very useful for long-term recall."
+          }
+        ]
+      }
+    },
+    {
+      "id": "deep-means-layers",
+      "section": "Lead",
+      "tags": ["term-origin", "definition", "worth-remembering"],
+      "sourceText": "The adjective \"deep\" refers to the use of multiple layers (ranging from three to several hundred or thousands) in the network.",
+      "frontPrefix": "What does",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A compact, stable term-origin detail. The word 'adjective' is redundant in the Front.",
+        "plausibleUserPrefixes": ["What does"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What does the \"deep\" in deep learning refer to?",
+            "back": "the use of multiple layers in the network"
+          },
+          {
+            "type": "basic",
+            "front": "What does \"deep\" refer to in deep learning?",
+            "back": "the use of multiple layers in the network"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What does the adjective \"deep\" refer to in deep learning?",
+            "back": "the use of multiple layers",
+            "whyBad": "Acceptable but slightly wordier than needed."
+          }
+        ]
+      }
+    },
+    {
+      "id": "learning-methods",
+      "section": "Lead",
+      "tags": ["list", "classification", "maybe"],
+      "sourceText": "Methods used can be supervised, semi-supervised or unsupervised.",
+      "frontPrefix": "What are",
+      "carding": {
+        "verdict": "maybe",
+        "rationale": "A raw list card is weak, but this can be salvaged if the Front names the organizing axis: levels of supervision.",
+        "plausibleUserPrefixes": ["What are"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What are the three levels of supervision in deep learning?",
+            "back": "supervised, semi-supervised, and unsupervised"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What kinds of methods can deep learning use?",
+            "back": "supervised, semi-supervised, or unsupervised methods",
+            "whyBad": "Too broad: 'methods' does not specify methods of supervision."
+          }
+        ]
+      }
+    },
+    {
+      "id": "common-architectures",
+      "section": "Lead",
+      "tags": ["list", "architectures", "skip"],
+      "sourceText": "Some common deep learning network architectures include fully connected networks, deep belief networks, recurrent neural networks, convolutional neural networks, generative adversarial networks, transformers, and neural radiance fields.",
+      "frontPrefix": "Name some",
+      "carding": {
+        "verdict": "skip",
+        "rationale": "This is a long, arbitrary list. It may be useful as reference material, but it is not a good basic flashcard target.",
+        "plausibleUserPrefixes": ["Name some"],
+        "preferredCards": [],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Name some common deep learning architectures.",
+            "back": "fully connected networks, deep belief networks, RNNs, CNNs, GANs, transformers, and neural radiance fields",
+            "whyBad": "Solicits an arbitrary list and is likely to be frustrating months later."
+          }
+        ]
+      }
+    },
+    {
+      "id": "brain-inspiration",
+      "section": "Lead",
+      "tags": ["history", "inspiration", "maybe"],
+      "sourceText": "Early forms of neural networks were inspired by information processing and distributed communication nodes in biological systems, particularly the human brain.",
+      "frontPrefix": "What inspired",
+      "carding": {
+        "verdict": "maybe",
+        "rationale": "The historical detail may be worth remembering for some readers, but the highlighted wording is broad and not very vivid.",
+        "plausibleUserPrefixes": ["What inspired", "Early neural"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What inspired early neural networks?",
+            "back": "the human brain"
+          }
+        ],
+        "alternateCards": [
+          {
+            "type": "basic",
+            "front": "What biological system inspired early neural networks?",
+            "back": "the human brain",
+            "rationale": "Acceptable, but a little category-shaped compared with the user's more ordinary cue."
+          },
+          {
+            "type": "basic",
+            "front": "What inspired early forms of neural networks?",
+            "back": "information processing and distributed communication nodes in biological systems, particularly the human brain",
+            "rationale": "Long, but acceptable for a 'What inspired...' cue because it answers the broader relation the user started."
+          }
+        ],
+        "prefixCards": [
+          {
+            "prefix": "What inspired",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "What inspired early neural networks?",
+                "back": "the human brain"
+              }
+            ],
+            "alternateCards": [
+              {
+                "type": "basic",
+                "front": "What biological system inspired early neural networks?",
+                "back": "the human brain",
+                "rationale": "Acceptable, but a little category-shaped compared with the user's more ordinary cue."
+              },
+              {
+                "type": "basic",
+                "front": "What inspired early forms of neural networks?",
+                "back": "information processing and distributed communication nodes in biological systems, particularly the human brain",
+                "rationale": "Long, but acceptable for a 'What inspired...' cue because it answers the broader relation the user started."
+              }
+            ]
+          },
+          {
+            "prefix": "Early neural",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "Early neural networks were inspired by...",
+                "back": "the human brain"
+              }
+            ]
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "not-brain-models",
+      "section": "Lead",
+      "tags": ["contrast", "caveat", "worth-remembering"],
+      "sourceText": "However, current neural networks do not intend to model the brain function of organisms, and are generally seen as low-quality models for that purpose.",
+      "frontPrefix": "Do current",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A yes/no card is not ideal, but this prefix has a clear intended contrast: current neural networks are not intended as brain-function models.",
+        "plausibleUserPrefixes": ["Do current"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "Do current neural networks intend to model the brain function of organisms?",
+            "back": "No."
+          }
+        ],
+        "alternateCards": [
+          {
+            "type": "basic",
+            "front": "Do current neural networks aim to model organism brain function?",
+            "back": "No; they are generally seen as low-quality models for that purpose."
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Do current neural networks intend to model?",
+            "back": "the brain function of organisms",
+            "whyBad": "Malformed target: the prefix implies yes/no, but the Back supplies an object."
+          },
+          {
+            "type": "basic",
+            "front": "Do current neural networks as models of brain function?",
+            "back": "not intend to model brain function",
+            "whyBad": "Malformed yes/no Front."
+          }
+        ]
+      }
+    },
+    {
+      "id": "hierarchy-abstraction",
+      "section": "Overview",
+      "tags": ["mechanism", "how", "maybe"],
+      "sourceText": "Fundamentally, deep learning refers to a class of machine learning algorithms in which a hierarchy of layers is used to transform input data into a progressively more abstract and composite representation.",
+      "frontPrefix": "In deep",
+      "carding": {
+        "verdict": "maybe",
+        "rationale": "The original 'How does deep learning transform input data?' is a little generic, but the idea can be salvaged by targeting the representational progression across layers.",
+        "plausibleUserPrefixes": ["In deep", "What happens"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "In deep learning, what happens to representations across successive layers?",
+            "back": "they become progressively more abstract and composite"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "How does deep learning transform input data?",
+            "back": "by using a hierarchy of layers",
+            "whyBad": "Too generic; it misses the remembered detail that representations become more abstract and composite."
+          }
+        ]
+      }
+    },
+    {
+      "id": "feature-learning",
+      "section": "Overview",
+      "tags": ["contrast", "answer-shape", "worth-remembering"],
+      "sourceText": "In the deep learning approach, features are not hand-crafted and the model discovers useful feature representations from the data automatically.",
+      "frontPrefix": "In the deep",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A source-stem card preserves the useful contrast: features are not hand-crafted; the model discovers representations automatically.",
+        "plausibleUserPrefixes": ["In the deep", "In deep"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "In the deep learning approach, features are not hand-crafted...",
+            "back": "the model discovers useful feature representations from the data automatically"
+          }
+        ],
+        "prefixCards": [
+          {
+            "prefix": "In the deep",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "In the deep learning approach, features are not hand-crafted...",
+                "back": "the model discovers useful feature representations from the data automatically"
+              }
+            ]
+          },
+          {
+            "prefix": "In deep",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "In deep learning, features are not hand-crafted; rather...",
+                "back": "the model discovers useful feature representations from the data automatically"
+              }
+            ]
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "In deep learning, how are features obtained?",
+            "back": "they are discovered automatically from the data",
+            "whyBad": "Plausible but underspecified; the contrast with hand-crafted feature engineering is doing most of the work."
+          }
+        ]
+      }
+    },
+    {
+      "id": "cap-definition",
+      "section": "Overview",
+      "tags": ["definition", "abbreviation", "maybe"],
+      "sourceText": "The CAP is the chain of transformations from input to output. CAPs describe potentially causal connections between input and output.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "maybe",
+        "rationale": "Worthwhile only if the reader is actually tracking the CAP concept; otherwise it is jargon from a broad article.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is a credit assignment path (CAP)?",
+            "back": "the chain of transformations from input to output"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is CAP in deep learning?",
+            "back": "the chain of transformations from input to output",
+            "whyBad": "Mostly okay, but weaker because it does not expand the abbreviation."
+          }
+        ]
+      }
+    },
+    {
+      "id": "deep-cap-depth",
+      "section": "Overview",
+      "tags": ["threshold", "definition", "worth-remembering"],
+      "sourceText": "No universally agreed-upon threshold of depth divides shallow learning from deep learning, but most researchers agree that deep learning involves CAP depth higher than two.",
+      "frontPrefix": "What CAP",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A compact threshold fact, as long as the Front avoids overstating consensus.",
+        "plausibleUserPrefixes": ["What CAP"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What CAP depth do most researchers associate with deep learning?",
+            "back": "higher than two"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What CAP depth is generally agreed to indicate deep learning?",
+            "back": "CAP depth higher than two",
+            "whyBad": "Overstates consensus; the source says there is no universally agreed threshold."
+          }
+        ]
+      }
+    },
+    {
+      "id": "unsupervised-benefit",
+      "section": "Overview",
+      "tags": ["why", "advantage", "worth-remembering"],
+      "sourceText": "Deep learning algorithms can be applied to unsupervised learning tasks. This is an important benefit because unlabeled data is more abundant than labeled data.",
+      "frontPrefix": "Why is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "This highlight contains two possible targets: that deep learning can be applied to unsupervised tasks, and why unsupervised methods matter.",
+        "plausibleUserPrefixes": ["Why is", "Deep learning"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "Why is it important to have methods for unsupervised learning tasks?",
+            "back": "because unlabeled data is more abundant than labeled data"
+          }
+        ],
+        "prefixCards": [
+          {
+            "prefix": "Why is",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "Why is it important to have methods for unsupervised learning tasks?",
+                "back": "because unlabeled data is more abundant than labeled data"
+              }
+            ]
+          },
+          {
+            "prefix": "Deep learning",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "Deep learning algorithms can be applied to...",
+                "back": "unsupervised learning tasks"
+              }
+            ],
+            "alternateCards": [
+              {
+                "type": "basic",
+                "front": "Deep learning algorithms can be applied to what kind of learning tasks?",
+                "back": "unsupervised learning tasks"
+              }
+            ]
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Why is deep learning important for unsupervised learning tasks?",
+            "back": "it can use unlabeled data",
+            "whyBad": "Slightly reverses the emphasis; the highlighted benefit is the abundance of unlabeled data."
+          }
+        ]
+      }
+    },
+    {
+      "id": "term-introduction",
+      "section": "Overview",
+      "tags": ["who", "history", "worth-remembering"],
+      "sourceText": "The term deep learning was introduced to the machine learning community by Rina Dechter in 1986, and to artificial neural networks by Igor Aizenberg and colleagues in 2000.",
+      "frontPrefix": "Who introduced",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A specific historical attribution. The source contains two related attributions, so the Front must specify which community it asks about.",
+        "plausibleUserPrefixes": ["Who introduced"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "Who introduced the term \"deep learning\" to the machine learning community?",
+            "back": "Rina Dechter"
+          },
+          {
+            "type": "basic",
+            "front": "Who introduced the term \"deep learning\" to artificial neural networks?",
+            "back": "Igor Aizenberg and colleagues"
+          }
+        ],
+        "alternateCards": [
+          {
+            "type": "basic",
+            "front": "In what year did Rina Dechter introduce the term \"deep learning\" to the machine learning community?",
+            "back": "1986"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Who introduced the term \"deep learning\" to the machine learning community?",
+            "back": "Rina Dechter in 1986",
+            "whyBad": "The Front asks who, but the Back answers who and when. Make the date a separate card if it matters."
+          }
+        ]
+      }
+    },
+    {
+      "id": "dnn-definition",
+      "section": "Deep neural networks",
+      "tags": ["definition", "what-is", "worth-remembering"],
+      "sourceText": "A deep neural network (DNN) is an artificial neural network with multiple layers between the input and output layers.",
+      "frontPrefix": "What is",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A compact definition of a recurring technical term.",
+        "plausibleUserPrefixes": ["What is"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is a deep neural network (DNN)?",
+            "back": "an artificial neural network with multiple layers between the input and output layers"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "nonlinear-relationships",
+      "section": "Deep neural networks",
+      "tags": ["capability", "answer-shape", "skip"],
+      "sourceText": "DNNs can model complex non-linear relationships.",
+      "frontPrefix": "What can",
+      "carding": {
+        "verdict": "skip",
+        "rationale": "Too generic and unsurprising to be a durable memory prompt by itself.",
+        "plausibleUserPrefixes": ["What can"],
+        "preferredCards": [],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What can DNNs model?",
+            "back": "complex non-linear relationships",
+            "whyBad": "Generic capability trivia; likely too easy or too low-value."
+          }
+        ]
+      }
+    },
+    {
+      "id": "extra-layers",
+      "section": "Deep neural networks",
+      "tags": ["advantage", "mechanism", "maybe"],
+      "sourceText": "The extra layers enable composition of features from lower layers, potentially modeling complex data with fewer units than a similarly performing shallow network.",
+      "frontPrefix": "What do",
+      "carding": {
+        "verdict": "maybe",
+        "rationale": "The mechanism is interesting, but the sentence contains two targets. A good prompt should pick one: feature composition or fewer units than shallow networks.",
+        "plausibleUserPrefixes": ["What do", "What advantage"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What do extra layers enable in DNNs?",
+            "back": "composition of features from lower layers"
+          },
+          {
+            "type": "basic",
+            "front": "What advantage can extra layers give DNNs over similarly performing shallow networks?",
+            "back": "they can model complex data with fewer units"
+          }
+        ],
+        "prefixCards": [
+          {
+            "prefix": "What do",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "What do extra layers enable in DNNs?",
+                "back": "composition of features from lower layers"
+              }
+            ]
+          },
+          {
+            "prefix": "What advantage",
+            "preferredCards": [
+              {
+                "type": "basic",
+                "front": "What advantage can extra layers give DNNs over similarly performing shallow networks?",
+                "back": "they can model complex data with fewer units"
+              }
+            ]
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What do advantage do extra layers in deep learning provide over a similarly performing shallow network?",
+            "back": "they enable composition of lower-layer features",
+            "whyBad": "Malformed Front and mixed target."
+          }
+        ]
+      }
+    },
+    {
+      "id": "cnn-use",
+      "section": "Deep neural networks",
+      "tags": ["application", "cnn", "maybe"],
+      "sourceText": "Convolutional neural networks (CNNs) are used in computer vision. CNNs also have been applied to acoustic modeling for automatic speech recognition (ASR).",
+      "frontPrefix": "What are",
+      "carding": {
+        "verdict": "maybe",
+        "rationale": "Useful for a novice, but a broad application list is not ideal. If carded, the Front should specify whether it asks for the primary use or another application.",
+        "plausibleUserPrefixes": ["What are"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What are CNNs primarily used for?",
+            "back": "computer vision"
+          },
+          {
+            "type": "basic",
+            "front": "Besides computer vision, what speech-related task have CNNs been applied to?",
+            "back": "acoustic modeling for automatic speech recognition"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What are some applications of CNNs?",
+            "back": "computer vision and acoustic modeling for ASR",
+            "whyBad": "A vague list card; the learner may not know how many examples are expected."
+          }
+        ]
+      }
+    },
+    {
+      "id": "dropout-overfitting",
+      "section": "Challenges",
+      "tags": ["how", "answer-shape", "worth-remembering"],
+      "sourceText": "Alternatively dropout regularization randomly omits units from the hidden layers during training. This helps to exclude rare dependencies.",
+      "frontPrefix": "How does",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A useful mechanism-effect relation. The Front should cue overfitting or rare dependencies without putting the whole answer on the Front.",
+        "plausibleUserPrefixes": ["How does"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "How does dropout regularization help exclude rare dependencies?",
+            "back": "by randomly omitting units from hidden layers during training"
+          },
+          {
+            "type": "basic",
+            "front": "How does dropout regularization help combat overfitting?",
+            "back": "by randomly omitting units from hidden layers during training, which helps exclude rare dependencies"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "How does dropout regularization help during training?",
+            "back": "it helps exclude rare dependencies",
+            "whyBad": "Asks for effect while hiding the mechanism; too vague for the highlighted detail."
+          }
+        ]
+      }
+    },
+    {
+      "id": "training-parameters",
+      "section": "Challenges",
+      "tags": ["list", "training", "worth-remembering"],
+      "sourceText": "DNNs must consider many training parameters, such as the size (number of layers and number of units per layer), the learning rate, and initial weights.",
+      "frontPrefix": "What training",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A short, bounded list that is reasonably stable because the Front specifies the category.",
+        "plausibleUserPrefixes": ["What training"],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What training parameters must DNNs consider?",
+            "back": "size, learning rate, and initial weights"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    }
+  ]
+}

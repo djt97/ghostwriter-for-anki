@@ -40,6 +40,7 @@ describe('defaults.js', () => {
     assert.ok('manualAutoTag' in DEFAULTS);
     assert.ok('manualAutoContext' in DEFAULTS);
     assert.ok('manualAutoPreview' in DEFAULTS);
+    assert.ok('clipboardFallback' in DEFAULTS);
   });
 
   it('has all expected field visibility keys', () => {
@@ -69,13 +70,17 @@ describe('defaults.js', () => {
       assert.equal(DEFAULTS.manualAutoContext, true);
     });
 
+    it('clipboard fallback defaults to on', () => {
+      assert.equal(DEFAULTS.clipboardFallback, true);
+    });
+
     it('copilotMinIntervalMs defaults to 1200', () => {
       assert.equal(DEFAULTS.copilotMinIntervalMs, 1200);
     });
 
     it('copilot token budgets default to autocomplete-sized values', () => {
-      assert.equal(DEFAULTS.copilotFrontMaxTokens, 48);
-      assert.equal(DEFAULTS.copilotBackMaxTokens, 36);
+      assert.equal(DEFAULTS.copilotFrontMaxTokens, 40);
+      assert.equal(DEFAULTS.copilotBackMaxTokens, 30);
     });
 
     it('showMiniCopilotMode defaults to "off"', () => {

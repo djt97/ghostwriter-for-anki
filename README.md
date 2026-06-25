@@ -2,7 +2,7 @@
 
 **Current Version:** `0.3.3`
 
-Ghostwriter for Anki helps you turn web highlights into reviewed Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional AI suggestions, queue the card, then review and send to Anki.
+Ghostwriter for Anki helps you turn web highlights into Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional AI suggestions, then send the card straight to Anki.
 
 ## Documentation
 
@@ -26,7 +26,7 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 2. Install AnkiConnect in desktop Anki (add-on ID `2055492159`).
 3. Highlight text on a page and open Ghostwriter from the extension icon, context menu, or shortcut.
 4. Write the card in the overlay; press the AI suggestion shortcut when useful.
-5. Queue the card, review it, then send accepted cards to Anki.
+5. Add the card directly to Anki.
 
 ## Build commands
 

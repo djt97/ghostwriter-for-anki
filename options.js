@@ -4,31 +4,39 @@ const $ = (sel) => document.querySelector(sel);
 const DEFAULT_SHORTCUT = "Meta+Shift+A";
 const DEFAULT_COPILOT_SHORTCUT = "Cmd+Shift+X";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
-const ULTIMATE_BASE_URL = "https://smart.ultimateai.org/v1";
+const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
+const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
+const CLAUDE_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_COPILOT_FRONT_PROMPT = `
 Autocomplete one Anki Front field.
 Output only the text to insert. No analysis, labels, quotes, markdown, or "The user".
 Continue after the user's prefix; do not repeat, correct, or restate text already typed.
-Complete the user's prefix into one durable retrieval cue: one target, unambiguous, enough context, no answer leakage.
-Cue, don't disclose: silently identify the minimal Back answer, then write a Front that asks for it without revealing the method, formula, definition, result, name, or example.
-If the completion would need "by defining", "using", "where", "namely", or another answer-bearing phrase, stop before that phrase.
-Preserve the user's intended target; do not switch to easier source trivia.
+Complete the prefix into one durable retrieval cue: one target, unambiguous, enough context, no answer leakage.
+Cue, don't disclose: identify the minimal Back answer, then leave that answer missing from the Front.
+If the completion would need an answer-bearing phrase such as "by defining", "using", "where", or "namely", stop before that phrase.
+Prefer a direct question. If the user started a source sentence, a short sentence-completion cue ending in "..." is allowed.
+Keep the full Front <= {{frontWordCap}} words. Preserve the user's target; do not switch to easier source trivia.
 `.trim();
 const DEFAULT_COPILOT_BACK_PROMPT = `
 Autocomplete one Anki Back field.
 Output only the text to insert. No analysis, labels, quotes, markdown, or "The user".
 Continue after the user's prefix; do not repeat, correct, or restate text already typed.
-Answer the Front exactly. Prefer the smallest source-grounded phrase.
-Supply the missing answer the Front cues; do not turn the Back into a passage summary.
-Do not restate the passage or add background unless needed to disambiguate.
+Return exactly one atomic answer. Obey this length cap strictly: <= {{backWordCap}} words.
+In most cases the answer should be a bare noun phrase, name, term, value, or short clause.
+Use a full sentence only if the Front explicitly asks for a definition, explanation, or sentence completion.
+Answer exactly what the Front asks. Do not restate the Front or turn the Back into a passage summary.
+Do not append unasked dates, locations, relative clauses, or descriptors unless required to disambiguate.
 `.trim();
 const DEFAULT_COPILOT_FRONT_FROM_BACK_PROMPT = `
-Autocomplete one Anki Front field.
+Autocomplete one Anki Front field from an existing Back answer.
 Output only the text to insert. No analysis, labels, quotes, markdown, or "The user".
 Continue after the user's prefix; do not repeat, correct, or restate text already typed.
 Use the Back as the answer contract. Ask for exactly one target with enough context and no answer leakage.
-Cue, don't disclose: the Front must point at the Back answer while leaving that answer missing.
+Keep the full Front <= {{frontWordCap}} words. Cue the Back answer while leaving that answer missing.
 `.trim();
 const DEFAULT_EDITOR_FIELD_CONFIG = {
   context: {
@@ -58,13 +66,18 @@ Avoid echoing the front/back text; avoid generic paraphrases.`,
 const PROVIDER_DEFAULTS = {
   ultimate: {
     baseUrl: ULTIMATE_BASE_URL,
-    model: "auto",
+    model: ULTIMATE_DEFAULT_MODEL,
     keyPlaceholder: "UltimateAI API key",
   },
   openai: {
     baseUrl: DEFAULT_BASE_URL,
-    model: "gpt-4.1-mini",
+    model: OPENAI_DEFAULT_MODEL,
     keyPlaceholder: "OpenAI API key",
+  },
+  openrouter: {
+    baseUrl: OPENROUTER_BASE_URL,
+    model: "openrouter/auto",
+    keyPlaceholder: "OpenRouter API key",
   },
   gemini: {
     baseUrl: GEMINI_BASE_URL,
@@ -73,10 +86,21 @@ const PROVIDER_DEFAULTS = {
   },
   claude: {
     baseUrl: "https://api.anthropic.com",
-    model: "claude-sonnet-4-6",
+    model: CLAUDE_DEFAULT_MODEL,
     keyPlaceholder: "Anthropic API key",
   },
 };
+const PROVIDER_HOST_PERMISSION_ORIGINS = Object.freeze({
+  ultimate: [
+    "https://api.ultimateai.org/*",
+    "https://smart.ultimateai.org/*",
+    "https://chat.ultimateai.org/*",
+  ],
+  openai: ["https://api.openai.com/*"],
+  openrouter: ["https://openrouter.ai/*"],
+  gemini: ["https://generativelanguage.googleapis.com/*"],
+  claude: ["https://api.anthropic.com/*"],
+});
 const KNOWN_MODELS = {
   gemini: [
     { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
@@ -85,55 +109,69 @@ const KNOWN_MODELS = {
     { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
   ],
   openai: [
-    { id: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
-    { id: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
-    { id: "gpt-4o-mini", label: "GPT-4o Mini" },
-    { id: "gpt-4o", label: "GPT-4o" },
-    { id: "o4-mini", label: "o4-mini" },
+    { id: "gpt-4.1-mini", label: "GPT-4.1 Mini (recommended)" },
+    { id: "gpt-4o", label: "GPT-4o (reliable fallback)" },
+    { id: "gpt-4o-mini", label: "GPT-4o Mini (cheap fallback)" },
+    { id: "gpt-4.1-nano", label: "GPT-4.1 Nano (test first)" },
+    { id: "o4-mini", label: "o4-mini (avoid for autocomplete)" },
+  ],
+  openrouter: [
+    { id: "openrouter/auto", label: "Auto Router (test first)" },
   ],
   ultimate: [
-    { id: "auto", label: "Auto (fast default)" },
+    { id: "gemini-flash-lite", label: "Gemini Flash Lite (recommended)" },
+    { id: "Claude 4.5 Haiku", label: "Claude 4.5 Haiku (backup)" },
+    { id: "auto", label: "Auto Router (not recommended)" },
     { id: "task", label: "Task (low-cost grunt work)" },
-    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-    { id: "gpt-5-mini", label: "GPT-5 Mini" },
-    { id: "claude-4-5-haiku", label: "Claude 4.5 Haiku" },
+    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite (may be unavailable)" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini (avoid for autocomplete)" },
+    { id: "gpt-5.5-mini", label: "GPT-5.5 Mini (avoid for autocomplete)" },
+    { id: "Gemini 2.5 Flash Lite", label: "Gemini 2.5 Flash Lite (alias)" },
+    { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
     { id: "claude-latest", label: "Claude latest" },
     { id: "chatgpt-latest", label: "ChatGPT latest" },
     { id: "gemini-latest", label: "Gemini latest" },
-    { id: "gpt-5.5-mini", label: "GPT-5.5 Mini" },
     { id: "gpt-5.5", label: "GPT-5.5" },
     { id: "gpt-5.4", label: "GPT-5.4" },
-    { id: "gpt-5", label: "GPT-5" },
-    { id: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
-    { id: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
-    { id: "gpt-4.1", label: "GPT-4.1" },
-    { id: "gpt-4o-mini", label: "GPT-4o Mini" },
-    { id: "gpt-4o", label: "GPT-4o" },
-    { id: "claude-4-6-sonnet", label: "Claude 4.6 Sonnet" },
-    { id: "claude-4-6-opus", label: "Claude 4.6 Opus" },
-    { id: "claude-4-7-opus", label: "Claude 4.7 Opus" },
-    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
-    { id: "gemini-3-flash-lite", label: "Gemini 3 Flash Lite" },
-    { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
-    { id: "grok-4-1-fast-non-reasoning", label: "Grok 4.1 Fast Non-reasoning" },
+    { id: "Claude 4.6 Sonnet", label: "Claude 4.6 Sonnet" },
+    { id: "Claude 4.6 Opus", label: "Claude 4.6 Opus" },
+    { id: "Claude 4.7 Opus", label: "Claude 4.7 Opus" },
+    { id: "Gemini 3 Flash", label: "Gemini 3 Flash" },
+    { id: "Gemini 3.0 Pro", label: "Gemini 3.0 Pro" },
+    { id: "Gemini 3.1 Pro", label: "Gemini 3.1 Pro" },
     { id: "grok-4-1-fast-reasoning", label: "Grok 4.1 Fast Reasoning" },
     { id: "deepseek-v3.2", label: "DeepSeek V3.2" },
-    { id: "deepseek-chat", label: "DeepSeek Chat" },
-    { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
-    { id: "glm-4.6", label: "GLM 4.6" },
-    { id: "kimi-k2", label: "Kimi K2" },
-    { id: "minimax-m2.1", label: "MiniMax M2.1" },
+    { id: "deepseek-v3.2-speciale", label: "DeepSeek V3.2 Speciale" },
+    { id: "Deepseek-Reasoner", label: "DeepSeek Reasoner" },
+    { id: "MiniMax-M2.5", label: "MiniMax M2.5" },
+    { id: "MiniMax-M2.7", label: "MiniMax M2.7" },
+    { id: "flashcard-generator", label: "Flashcard Generator" },
   ],
   claude: [
-    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-    { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+    { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (recommended)" },
+    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (alias)" },
+    { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (use for harder cards)" },
   ],
 };
+const PROVIDER_MODEL_HELP = Object.freeze({
+  gemini:
+    "Recommended: Gemini 2.5 Flash Lite. Direct Gemini 2.0 models may require billing/quota; use Flash or Pro only if Lite misses simple facts.",
+  openai:
+    "Recommended: GPT-4.1 Mini. It was clean in live simple-fact tests and has no reasoning step; use GPT-4o if Mini misses context. Avoid o-series/reasoning models for autocomplete.",
+  openrouter:
+    "Recommended: choose a specific fast non-reasoning model instead of Auto Router. Good custom picks are Gemini Flash Lite, GPT-4o, or Claude Haiku when your account exposes them.",
+  claude:
+    "Recommended: Claude Haiku 4.5 for short, low-latency completions. Use Sonnet only when Haiku is missing facts or context.",
+  ultimate:
+    "Recommended: Gemini Flash Lite. Live tests found Auto, GPT-5 mini variants, and MiniMax unreliable for simple card autocomplete.",
+});
 const OPTIONS_KEY = "quickflash_options";
+const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
+const PROVIDER_KEY_FIELDS = Object.freeze(["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey"]);
 const FREE_TIER_KEY = "ghostwriter_free_tier";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
-const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v1";
+const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v2";
 const SHORTCUT_COACH_KEY = "ghostwriter_onboarding_v1";
 const PERMISSION_JUSTIFICATIONS = {
   clipboardRead: {
@@ -143,6 +181,55 @@ const PERMISSION_JUSTIFICATIONS = {
 };
 
 let currentOptionsCache = null;
+
+function sanitizeOptionsForSync(options = {}) {
+  const clean = { ...(options || {}) };
+  for (const key of PROVIDER_KEY_FIELDS) delete clean[key];
+  return clean;
+}
+
+async function restrictProviderSecretStorage() {
+  try {
+    await chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" });
+  } catch {}
+}
+
+async function getProviderSecrets() {
+  try {
+    const got = await chrome.storage.local.get(PROVIDER_SECRETS_KEY);
+    const raw = got?.[PROVIDER_SECRETS_KEY] || {};
+    const out = {};
+    for (const key of PROVIDER_KEY_FIELDS) {
+      if (typeof raw[key] === "string") out[key] = raw[key];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function setProviderSecretsFromOptions(options = {}) {
+  const existing = await getProviderSecrets();
+  const next = { ...existing };
+  for (const key of PROVIDER_KEY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(options, key)) {
+      const value = String(options[key] || "").trim();
+      if (value) next[key] = value;
+      else delete next[key];
+    }
+  }
+  await chrome.storage.local.set({ [PROVIDER_SECRETS_KEY]: next });
+  return next;
+}
+
+async function loadOptionsWithSecrets() {
+  await restrictProviderSecretStorage();
+  const [{ [OPTIONS_KEY]: quickflash_options }, secrets] = await Promise.all([
+    chrome.storage.sync.get(OPTIONS_KEY),
+    getProviderSecrets(),
+  ]);
+  return { ...(quickflash_options || {}), ...secrets };
+}
 
 async function renderFreeTierStatus() {
   const el = document.querySelector("#freeTierStatus");
@@ -226,6 +313,7 @@ function applyOptionsViewMode(mode) {
 function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
   if (value === "openai") return "openai";
+  if (value === "openrouter") return "openrouter";
   if (value === "claude") return "claude";
   return "ultimate";
 }
@@ -233,10 +321,18 @@ function normalizeProvider(value) {
 function inferProviderFromOptions(opts) {
   if (opts?.llmProvider) return normalizeProvider(opts.llmProvider);
   if (opts?.openaiKey) return "openai";
+  if (opts?.openrouterKey) return "openrouter";
   if (opts?.ultimateKey) return "ultimate";
   if (opts?.geminiKey) return "gemini";
   if (opts?.claudeKey) return "claude";
+  if (/openrouter\.ai/i.test(String(opts?.openrouterBaseUrl || ""))) return "openrouter";
   return "openai";
+}
+
+function normalizeMiniCopilotMode(value) {
+  if (value === "always") return "on";
+  if (value === "on" || value === "auto" || value === "off") return value;
+  return "off";
 }
 
 function normalizeEditorSurface(value) {
@@ -276,18 +372,73 @@ function getProviderConfigFromOpts(opts, providerOverride) {
     cfg.apiKey = opts.openaiKey || "";
     // fallback to ultimateModel for older saves
     cfg.model = opts.openaiModel || opts.ultimateModel || PROVIDER_DEFAULTS.openai.model;
+  } else if (provider === "openrouter") {
+    cfg.baseUrl = opts.openrouterBaseUrl || PROVIDER_DEFAULTS.openrouter.baseUrl;
+    cfg.apiKey = opts.openrouterKey || "";
+    cfg.model = opts.openrouterModel || PROVIDER_DEFAULTS.openrouter.model;
   } else if (provider === "claude") {
     cfg.baseUrl = opts.claudeBaseUrl || PROVIDER_DEFAULTS.claude.baseUrl;
     cfg.apiKey = opts.claudeKey || "";
     cfg.model = opts.claudeModel || PROVIDER_DEFAULTS.claude.model;
   } else {
     // UltimateAI (open-source / hosted)
-    cfg.baseUrl = opts.ultimateBaseUrl || PROVIDER_DEFAULTS.ultimate.baseUrl;
+    cfg.baseUrl = normalizeUltimateBaseUrl(opts.ultimateBaseUrl);
     cfg.apiKey = opts.ultimateKey || "";
     cfg.model = opts.ultimateModel || PROVIDER_DEFAULTS.ultimate.model;
   }
 
   return cfg;
+}
+
+function normalizeUltimateBaseUrl(value) {
+  const raw = String(value || PROVIDER_DEFAULTS.ultimate.baseUrl).trim().replace(/\/+$/g, "");
+  if (!raw) return PROVIDER_DEFAULTS.ultimate.baseUrl;
+  if (ULTIMATE_HOST_RE.test(raw)) return `${raw}/v1`;
+  return raw;
+}
+
+function providerHostPermissionOrigins(provider, baseUrl = "") {
+  const p = normalizeProvider(provider);
+  const known = PROVIDER_HOST_PERMISSION_ORIGINS[p] || PROVIDER_HOST_PERMISSION_ORIGINS.ultimate;
+  const rawBase = String(baseUrl || "").trim();
+  if (!rawBase) return known.slice();
+
+  try {
+    const origin = `${new URL(rawBase).origin}/*`;
+    if (known.includes(origin)) return [origin];
+  } catch {}
+
+  return known.slice();
+}
+
+async function requestProviderHostPermissions(provider, baseUrl = "") {
+  const origins = providerHostPermissionOrigins(provider, baseUrl);
+  if (!origins.length || !chrome.permissions?.request) {
+    return { ok: true, granted: true, origins };
+  }
+
+  const missing = [];
+  for (const origin of origins) {
+    try {
+      const granted = await chrome.permissions.contains({ origins: [origin] });
+      if (!granted) missing.push(origin);
+    } catch {
+      missing.push(origin);
+    }
+  }
+  if (!missing.length) return { ok: true, granted: true, origins };
+
+  try {
+    const granted = await chrome.permissions.request({ origins: missing });
+    return { ok: true, granted, origins: missing };
+  } catch (err) {
+    return {
+      ok: false,
+      granted: false,
+      origins: missing,
+      error: err?.message || String(err),
+    };
+  }
 }
 
 async function storePermissionJustifications() {
@@ -324,13 +475,17 @@ function writeProviderConfigToData(data, base, provider, ui) {
     data.openaiBaseUrl = baseUrl || base.openaiBaseUrl || PROVIDER_DEFAULTS.openai.baseUrl;
     data.openaiKey = apiKey;
     data.openaiModel = model || base.openaiModel || base.ultimateModel || PROVIDER_DEFAULTS.openai.model;
+  } else if (p === "openrouter") {
+    data.openrouterBaseUrl = baseUrl || base.openrouterBaseUrl || PROVIDER_DEFAULTS.openrouter.baseUrl;
+    data.openrouterKey = apiKey;
+    data.openrouterModel = model || base.openrouterModel || PROVIDER_DEFAULTS.openrouter.model;
   } else if (p === "claude") {
     data.claudeBaseUrl = baseUrl || base.claudeBaseUrl || PROVIDER_DEFAULTS.claude.baseUrl;
     data.claudeKey = apiKey;
     data.claudeModel = model || base.claudeModel || PROVIDER_DEFAULTS.claude.model;
   } else {
     // ultimate
-    data.ultimateBaseUrl = baseUrl || base.ultimateBaseUrl || PROVIDER_DEFAULTS.ultimate.baseUrl;
+    data.ultimateBaseUrl = normalizeUltimateBaseUrl(baseUrl || base.ultimateBaseUrl);
     data.ultimateKey = apiKey;
     data.ultimateModel = model || base.ultimateModel || PROVIDER_DEFAULTS.ultimate.model;
   }
@@ -399,15 +554,7 @@ function applyProviderChoiceUI(provider, optsOverride) {
   }
 
   if (modelHelp) {
-    if (p === "gemini") {
-      modelHelp.textContent = "Used when Google Gemini is selected.";
-    } else if (p === "openai") {
-      modelHelp.textContent = "Used for direct OpenAI calls.";
-    } else if (p === "claude") {
-      modelHelp.textContent = "Used for Anthropic Claude API calls.";
-    } else {
-      modelHelp.textContent = "Used for UltimateAI calls. Auto is the recommended fast default; Custom accepts any UltimateAI model ID.";
-    }
+    modelHelp.textContent = PROVIDER_MODEL_HELP[p] || PROVIDER_MODEL_HELP.ultimate;
   }
 
   if (streamField) {
@@ -451,7 +598,7 @@ Output shape:
 Rules:
 - Keep answers atomic; fronts univocal.
 - Prefer short, precise wording; include minimal necessary notation/units.
-- STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). ALWAYS use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.
+- STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). If the Source contains TeX/LaTeX, preserve the exact source TeX spans instead of converting them to Unicode or plaintext. Otherwise use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.
 {{CONTEXT}}
 
 TEXT:
@@ -475,7 +622,7 @@ Rules:
 - Card 2 back is the word.
 - Use the best part of speech if known; otherwise use "term".
 - Prefer short, precise wording; include minimal necessary notation/units.
-- STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). ALWAYS use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.
+- STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). If the Source contains TeX/LaTeX, preserve the exact source TeX spans instead of converting them to Unicode or plaintext. Otherwise use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.
 {{CONTEXT}}
 
 TEXT:
@@ -768,11 +915,8 @@ async function save() {
   const D = window.GHOSTWRITER_DEFAULTS || {};
   const timeoutSec = num("#copilotTimeoutSec", Math.round((D.copilotTimeoutMs || 30000) / 1000));
 
-  const { [OPTIONS_KEY]: existing } = await chrome.storage.sync.get(OPTIONS_KEY);
-  const base = existing || {};
-
   const provider = normalizeProvider(
-    document.querySelector("#providerPreset")?.value || base.llmProvider || "openai"
+    document.querySelector("#providerPreset")?.value || "openai"
   );
 
   const providerBaseUrl = document.querySelector("#providerBaseUrl")?.value.trim() || "";
@@ -781,6 +925,14 @@ async function save() {
   const modelCustomVal = document.querySelector("#providerModelCustom")?.value.trim() || "";
   const providerModel = modelSelectVal === "__custom__" ? modelCustomVal : modelSelectVal;
   const providerStreamFront = document.querySelector("#providerStreamFront")?.value === "true";
+  const permissionResultPromise = providerApiKey
+    ? requestProviderHostPermissions(
+        provider,
+        providerBaseUrl || (PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.ultimate).baseUrl
+      )
+    : Promise.resolve({ ok: true, granted: true, origins: [] });
+
+  const base = await loadOptionsWithSecrets();
 
   // Parse custom editor field config (optional)
   let editorFieldConfig = base.editorFieldConfig || null;
@@ -814,13 +966,13 @@ async function save() {
     copilotBackSystemPrompt: $("#copilotBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_BACK_PROMPT,
     copilotFrontFromBackSystemPrompt: $("#copilotFrontFromBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_FRONT_FROM_BACK_PROMPT,
     autoFillBackAI: $("#copilotAutoFillBack").checked,
-    copilotFrontWordCap: num("#copilotFrontWordCap", D.copilotFrontWordCap || 24),
-    copilotBackWordCap: num("#copilotBackWordCap", D.copilotBackWordCap || 18),
-    copilotFrontMaxTokens: num("#copilotFrontMaxTokens", D.copilotFrontMaxTokens || 48),
-    copilotBackMaxTokens: num("#copilotBackMaxTokens", D.copilotBackMaxTokens || 36),
+    copilotFrontWordCap: num("#copilotFrontWordCap", D.copilotFrontWordCap || 18),
+    copilotBackWordCap: num("#copilotBackWordCap", D.copilotBackWordCap || 14),
+    copilotFrontMaxTokens: num("#copilotFrontMaxTokens", D.copilotFrontMaxTokens || 40),
+    copilotBackMaxTokens: num("#copilotBackMaxTokens", D.copilotBackMaxTokens || 30),
     copilotMinIntervalMs: num("#copilotMinIntervalMs", D.copilotMinIntervalMs || 1200),
     copilotTimeoutMs: Math.max(1000, timeoutSec * 1000),
-    showMiniCopilotMode: ($("#showMiniCopilotMode").value || "off"),
+    showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "off"),
     showSourceModePill: !!$("#showSourceModePill")?.checked,
     showShortcutHints: document.querySelector("#showShortcutHints")?.checked !== false,
     editorViewMode: document.querySelector("#editorViewMode")?.value || base.editorViewMode || "auto",
@@ -864,8 +1016,11 @@ async function save() {
   data.manualAutoContext = document.querySelector("#manualAutoContext").value === "true";
   data.manualAutoPreview = document.querySelector("#manualAutoPreview").value === "true";
 
-  currentOptionsCache = data;
-  await chrome.storage.sync.set({ [OPTIONS_KEY]: data });
+  const providerSecrets = await setProviderSecretsFromOptions(data);
+  const syncData = sanitizeOptionsForSync(data);
+  currentOptionsCache = { ...syncData, ...providerSecrets };
+  await chrome.storage.sync.set({ [OPTIONS_KEY]: syncData });
+  const permissionResult = await permissionResultPromise;
   if (data.showShortcutHints !== false) {
     try {
       const got = await chrome.storage.local.get(SHORTCUT_COACH_KEY);
@@ -882,16 +1037,22 @@ async function save() {
     } catch {}
   }
   if (!shortcutInput || shortcut) {
-    $("#msg").textContent = "Saved.";
-    $("#msg").className = "ok";
+    if (permissionResult.granted === false) {
+      const originText = (permissionResult.origins || []).join(", ");
+      const reason = permissionResult.error ? ` (${permissionResult.error})` : "";
+      $("#msg").textContent = `Saved, but Chrome did not grant AI host permission for ${originText}${reason}. AI calls may fail until permission is granted.`;
+      $("#msg").className = "err";
+    } else {
+      $("#msg").textContent = "Saved.";
+      $("#msg").className = "ok";
+    }
   }
-  setTimeout(() => { $("#msg").textContent=""; $("#msg").className=""; }, 1600);
+  setTimeout(() => { $("#msg").textContent=""; $("#msg").className=""; }, permissionResult.granted === false ? 7000 : 1600);
   if (shortcut) $("#addShortcut").value = serializeShortcut(shortcut);
 }
 
 async function load() {
-  const { [OPTIONS_KEY]: quickflash_options } = await chrome.storage.sync.get(OPTIONS_KEY);
-  const opts = quickflash_options || {};
+  const opts = await loadOptionsWithSecrets();
   currentOptionsCache = opts;
   await renderFreeTierStatus();
 
@@ -915,13 +1076,15 @@ async function load() {
   document.querySelector("#copilotFrontFromBackSystemPrompt").value = frontFromBackPrompt;
   document.querySelector("#copilotAutoFillBack").checked = opts.autoFillBackAI !== false;
   const D = window.GHOSTWRITER_DEFAULTS || {};
-  document.querySelector("#copilotFrontWordCap").value = String(opts.copilotFrontWordCap ?? D.copilotFrontWordCap ?? 24);
-  document.querySelector("#copilotBackWordCap").value = String(opts.copilotBackWordCap ?? D.copilotBackWordCap ?? 18);
-  document.querySelector("#copilotFrontMaxTokens").value = String(opts.copilotFrontMaxTokens ?? D.copilotFrontMaxTokens ?? 48);
-  document.querySelector("#copilotBackMaxTokens").value = String(opts.copilotBackMaxTokens ?? D.copilotBackMaxTokens ?? 36);
+  document.querySelector("#copilotFrontWordCap").value = String(opts.copilotFrontWordCap ?? D.copilotFrontWordCap ?? 18);
+  document.querySelector("#copilotBackWordCap").value = String(opts.copilotBackWordCap ?? D.copilotBackWordCap ?? 14);
+  document.querySelector("#copilotFrontMaxTokens").value = String(opts.copilotFrontMaxTokens ?? D.copilotFrontMaxTokens ?? 40);
+  document.querySelector("#copilotBackMaxTokens").value = String(opts.copilotBackMaxTokens ?? D.copilotBackMaxTokens ?? 30);
   document.querySelector("#copilotMinIntervalMs").value = String(opts.copilotMinIntervalMs ?? D.copilotMinIntervalMs ?? 1200);
   document.querySelector("#copilotTimeoutSec").value = String(Math.round((opts.copilotTimeoutMs ?? D.copilotTimeoutMs ?? 30000) / 1000));
-  document.querySelector("#showMiniCopilotMode").value = opts.showMiniCopilotMode ?? D.showMiniCopilotMode ?? "off";
+  document.querySelector("#showMiniCopilotMode").value = normalizeMiniCopilotMode(
+    opts.showMiniCopilotMode ?? D.showMiniCopilotMode ?? "off"
+  );
   const pill = document.querySelector("#showSourceModePill");
   if (pill) pill.checked = opts.showSourceModePill !== false;
   const shortcutHints = document.querySelector("#showShortcutHints");
@@ -981,7 +1144,11 @@ async function load() {
   const inferredFallback =
     (typeof opts.clipboardFallback === "boolean")
       ? opts.clipboardFallback
-      : !!(opts.clipboardAsSourceIfNoSelection ?? opts.pasteClipboardIfNoSelection ?? true);
+      : (typeof opts.clipboardAsSourceIfNoSelection === "boolean")
+        ? opts.clipboardAsSourceIfNoSelection
+        : (typeof opts.pasteClipboardIfNoSelection === "boolean")
+          ? opts.pasteClipboardIfNoSelection
+          : D.clipboardFallback !== false;
   document.querySelector("#clipboardFallback").checked = inferredFallback;
 
   // Custom editor field config + shortcut handling as you already had
@@ -1324,12 +1491,12 @@ async function resetShortcutTips() {
   }
 
   try {
-    const { [OPTIONS_KEY]: existing } = await chrome.storage.sync.get(OPTIONS_KEY);
+    const existing = await loadOptionsWithSecrets();
     const next = {
       ...(existing || {}),
       showShortcutHints: true,
     };
-    await chrome.storage.sync.set({ [OPTIONS_KEY]: next });
+    await chrome.storage.sync.set({ [OPTIONS_KEY]: sanitizeOptionsForSync(next) });
     await chrome.storage.local.remove(SHORTCUT_COACH_KEY);
     currentOptionsCache = next;
     const checkbox = $("#showShortcutHints");

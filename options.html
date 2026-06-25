@@ -26,17 +26,18 @@
       <a href="#privacy" data-options-nav="privacy">Privacy</a>
     </nav>
 
-    <section id="updateNotice" class="update-notice" hidden>
-      <div>
-        <p class="eyebrow">Update</p>
-        <h2 id="updateNoticeTitle">Ghostwriter updated</h2>
-        <p id="updateNoticeMessage" class="description"></p>
-        <ul id="updateNoticeList" class="small"></ul>
-      </div>
-      <button id="dismissUpdateNotice" type="button">Dismiss</button>
-    </section>
+    <div class="options-content">
+      <section id="updateNotice" class="update-notice" hidden>
+        <div>
+          <p class="eyebrow">Update</p>
+          <h2 id="updateNoticeTitle">Ghostwriter updated</h2>
+          <p id="updateNoticeMessage" class="description"></p>
+          <ul id="updateNoticeList" class="small"></ul>
+        </div>
+        <button id="dismissUpdateNotice" type="button">Dismiss</button>
+      </section>
 
-    <section class="card options-pane" id="connection" data-options-pane="connection">
+      <section class="card options-pane" id="connection" data-options-pane="connection">
       <details class="accordion section-accordion" open>
         <summary class="accordion-summary">
           <div class="row-inline section-title-row">
@@ -73,6 +74,7 @@
                   <label for="providerPreset">AI provider</label>
                   <select id="providerPreset">
                     <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
                     <option value="ultimate">UltimateAI</option>
                     <option value="gemini">Google Gemini</option>
                     <option value="claude">Anthropic Claude</option>
@@ -119,7 +121,7 @@
           <details class="accordion sub-accordion">
             <summary class="accordion-summary">
               <div>
-                <h3>AI helpers for queued cards</h3>
+                <h3>AI helpers for cards</h3>
                 <p class="description">Optional helpers for context, tags, and previews.</p>
               </div>
             </summary>
@@ -131,7 +133,7 @@
                     <option value="true">On</option>
                     <option value="false">Off</option>
                   </select>
-                  <p class="small">Optional helper for queued cards.</p>
+                  <p class="small">Optional helper for cards you add.</p>
                 </div>
                 <div class="field">
                   <label for="manualAutoContext">Generate context with AI</label>
@@ -139,7 +141,7 @@
                     <option value="true">On</option>
                     <option value="false">Off</option>
                   </select>
-                  <p class="small">Optional helper for queued cards.</p>
+                  <p class="small">Optional helper for cards you add.</p>
                 </div>
                 <div class="field">
                   <label for="manualAutoPreview">Auto preview (manual editor)</label>
@@ -248,10 +250,10 @@
                   <label for="copilotAutoFillBack" class="inline-control"><input id="copilotAutoFillBack" type="checkbox" checked /> Also fill Back when editing Front</label>
                 </div>
               </div>
-              <input id="copilotFrontWordCap" type="number" value="24" hidden />
-              <input id="copilotBackWordCap" type="number" value="18" hidden />
-              <input id="copilotFrontMaxTokens" type="number" value="1024" hidden />
-              <input id="copilotBackMaxTokens" type="number" value="1024" hidden />
+              <input id="copilotFrontWordCap" type="number" value="18" hidden />
+              <input id="copilotBackWordCap" type="number" value="14" hidden />
+              <input id="copilotFrontMaxTokens" type="number" value="40" hidden />
+              <input id="copilotBackMaxTokens" type="number" value="30" hidden />
               <input id="showSourceModePill" type="checkbox" checked hidden />
             </div>
           </details>
@@ -297,12 +299,12 @@
             </label>
             <label class="inline-control">
               <input id="closeOverlayAfterQueue" type="checkbox" />
-              <span>Close overlay after Queue card</span>
+              <span>Close overlay after Add to Anki</span>
             </label>
           </div>
           <div class="grid">
             <div class="field">
-              <label for="addShortcut">Queue card shortcut</label>
+              <label for="addShortcut">Add to Anki shortcut</label>
               <input id="addShortcut" type="text" placeholder="Cmd+Shift+A" />
               <p class="small">Use modifiers (Ctrl, Alt, Shift, Cmd) plus a letter or number. Leave blank to disable.</p>
             </div>
@@ -383,11 +385,26 @@
               </fieldset>
             </div>
           </details>
+
+          <details class="accordion sub-accordion">
+            <summary class="accordion-summary">
+              <div>
+                <h3>Clipboard source</h3>
+                <p class="description">Allow clipboard text to fill Source when no page selection is available.</p>
+              </div>
+            </summary>
+            <div class="accordion-body">
+              <label class="row" style="gap:.5rem; align-items:center;">
+                <input id="clipboardFallback" type="checkbox" />
+                Use clipboard as a Source fallback
+              </label>
+              <p class="small muted">Ghostwriter reads clipboard text only when Clipboard Source is selected, or Auto has no page selection.</p>
+            </div>
+          </details>
         </div>
       </details>
     </section>
 
-    <input id="clipboardFallback" type="checkbox" checked hidden />
     <input id="debugMode" type="checkbox" hidden />
 
     <section class="card options-pane" id="help" data-options-pane="help" hidden>
@@ -448,7 +465,7 @@
                   <dd><kbd>Tab</kbd></dd>
                 </div>
                 <div>
-                  <dt>Queue card</dt>
+                  <dt>Add to Anki</dt>
                   <dd><kbd>Cmd/Ctrl + Shift + A</kbd></dd>
                 </div>
                 <div>
@@ -475,7 +492,7 @@
                 <li>Open Ghostwriter with <kbd>Option + Shift + F</kbd> on Mac or <kbd>Ctrl + Shift + F</kbd> on Windows/Linux.</li>
                 <li>Write the first few words of the question or answer.</li>
                 <li>Use <kbd>Cmd/Ctrl + Shift + X</kbd> for AI autocomplete when helpful.</li>
-                <li>Queue the card, review it, then send accepted cards to Anki.</li>
+                <li>Click Add to Anki when the card is ready.</li>
               </ol>
             </div>
           </details>
@@ -504,16 +521,17 @@
       </details>
     </section>
 
-    <div class="save-bar">
-      <div class="card">
-        <div class="button-row" style="justify-content: space-between;">
-          <div>
-            <h3 style="margin: 0;">Save changes</h3>
-            <p class="small" style="margin-top: 2px;">Applies across the extension immediately.</p>
-          </div>
-          <div class="button-row">
-            <button id="save" class="primary">Save</button>
-            <span id="msg" class="status"></span>
+      <div class="save-bar">
+        <div class="card">
+          <div class="button-row" style="justify-content: space-between;">
+            <div>
+              <h3 style="margin: 0;">Save changes</h3>
+              <p class="small" style="margin-top: 2px;">Applies across the extension immediately.</p>
+            </div>
+            <div class="button-row">
+              <button id="save" class="primary">Save</button>
+              <span id="msg" class="status"></span>
+            </div>
           </div>
         </div>
       </div>

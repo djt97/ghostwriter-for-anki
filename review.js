@@ -14,6 +14,10 @@ const state = {
 
 const REVIEW_UNDO_LIMIT = 25;
 let persistQueue = Promise.resolve();
+const GHOSTWRITER_BASIC_RE = /^basic\s*\[ghostwriter\]/i;
+const GHOSTWRITER_CLOZE_RE = /^cloze\s*\[ghostwriter\]/i;
+const CLOZE_PATTERN = /\{\{c\d+::/i;
+const modelFieldsCache = new Map();
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -83,6 +87,40 @@ function normalizeTags(value) {
   return String(value || "");
 }
 
+function markdownToAnki(value) {
+  if (typeof convertLatexToAnki === "function") {
+    return convertLatexToAnki(value || "");
+  }
+  return String(value || "");
+}
+
+function buildSourceHtml(item) {
+  const label = (item.pageTitle || item.pageUrl || "Source").trim();
+  const link = item.textFragmentUrl || item.pageUrl || "";
+  const sourceParts = [];
+  if (link && typeof makeBackLinkHTML === "function") {
+    const linked = makeBackLinkHTML(link, label);
+    if (linked) sourceParts.push(linked);
+  }
+  if (item.highlight) sourceParts.push(markdownToAnki(item.highlight));
+  return sourceParts.join("\n\n");
+}
+
+async function getModelFields(modelName) {
+  const key = modelName || "";
+  if (modelFieldsCache.has(key)) return modelFieldsCache.get(key);
+  try {
+    const names = await ankiRequest("modelFieldNames", { modelName });
+    const list = Array.isArray(names) ? names : [];
+    modelFieldsCache.set(key, list);
+    return list;
+  } catch {
+    const fallback = /cloze/i.test(modelName || "") ? ["Text", "Extra"] : ["Front", "Back"];
+    modelFieldsCache.set(key, fallback);
+    return fallback;
+  }
+}
+
 function toReviewItem(raw, source) {
   const item = { ...(raw || {}) };
   const status = normalizeReviewStatus(item);
@@ -95,6 +133,7 @@ function toReviewItem(raw, source) {
   item.front = item.front || "";
   item.back = item.back || "";
   item.context = Array.isArray(item.context) ? item.context.join(" | ") : (item.context || "");
+  item.extra = item.extra || item.notes || "";
   item.tags = normalizeTags(item.tags);
   item.deck = item.deck || "";
   item.modelName = item.model || item.modelName || "";
@@ -117,6 +156,7 @@ function fromReviewItem(item) {
     source_text_fragment_url: item.textFragmentUrl || item.source_text_fragment_url || "",
     captured_at: item.capturedAt || item.captured_at || new Date().toISOString(),
     model: item.modelName || item.model || "",
+    extra: item.extra || "",
     review_status: normalizeReviewStatus(item),
     created_note_ids: Array.isArray(item.created_note_ids) ? item.created_note_ids : [],
   };
@@ -170,11 +210,53 @@ async function loadModels() {
 }
 
 function getBestModel(item) {
-  // Prefer Ghostwriter note types, then item's original model, then Basic
-  const gwModels = (state.models || []).filter((m) => /ghostwriter/i.test(m));
-  if (gwModels.length) return gwModels[0];
+  const models = state.models || [];
+  const wantsCloze = item?.type === "cloze" || CLOZE_PATTERN.test(item?.front || "");
   if (item.modelName && state.models?.includes(item.modelName)) return item.modelName;
-  return state.models?.[0] || "Basic";
+  if (wantsCloze) {
+    const cloze = models.find((m) => GHOSTWRITER_CLOZE_RE.test(m)) || models.find((m) => /cloze/i.test(m));
+    if (cloze) return cloze;
+  }
+  const basic = models.find((m) => GHOSTWRITER_BASIC_RE.test(m));
+  if (basic) return basic;
+  const ghostwriter = models.find((m) => /ghostwriter/i.test(m));
+  if (ghostwriter) return ghostwriter;
+  return models[0] || (wantsCloze ? "Cloze" : "Basic");
+}
+
+async function buildReviewNote(item, deckName, modelName) {
+  const fieldNames = await getModelFields(modelName);
+  const fields = {};
+  for (const name of fieldNames) fields[name] = "";
+
+  const front = markdownToAnki(item.front || "");
+  const back = markdownToAnki(item.back || "");
+  const context = markdownToAnki(item.context || "");
+  const extra = markdownToAnki(item.extra || item.notes || "");
+  const source = buildSourceHtml(item);
+  const wantsCloze = item?.type === "cloze" || CLOZE_PATTERN.test(item?.front || "") || "Text" in fields;
+
+  if (wantsCloze && "Text" in fields) {
+    fields.Text = front;
+    if ("Extra" in fields) fields.Extra = extra || back;
+  } else {
+    if ("Front" in fields) fields.Front = front;
+    if ("Back" in fields) fields.Back = back;
+  }
+
+  if ("Context" in fields) fields.Context = context;
+  if ("Source" in fields) fields.Source = source;
+  if ("Notes" in fields) fields.Notes = extra || source;
+  if ("Extra" in fields && !fields.Extra) fields.Extra = extra;
+
+  const tags = normalizeTags(item.tags).split(/\s+/).filter(Boolean);
+  return {
+    deckName,
+    modelName,
+    fields,
+    tags,
+    options: { allowDuplicate: false, duplicateScope: "deck" },
+  };
 }
 
 // --- Load items ---
@@ -493,23 +575,9 @@ async function sendToAnki() {
     try {
       const deck = item.deck || cardDeck.value || "Default";
       const modelName = getBestModel(item);
-      const fields = {
-        Front: item.front || "",
-        Back: item.back || "",
-      };
-      if (item.context) fields.Context = item.context;
-      if (item.highlight) fields.Source = item.highlight;
-
-      const tags = (item.tags || "").split(/\s+/).filter(Boolean);
-
+      const note = await buildReviewNote(item, deck, modelName);
       const noteId = await ankiRequest("addNote", {
-        note: {
-          deckName: deck,
-          modelName,
-          fields,
-          tags,
-          options: { allowDuplicate: false },
-        },
+        note,
       });
       setReviewStatus(item, "sent");
       item.created_note_ids = [

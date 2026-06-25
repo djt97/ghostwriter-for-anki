@@ -101,6 +101,12 @@ main {
   margin: 0 auto;
 }
 
+.options-content {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
 .section-index {
   display: grid;
   gap: 6px;
@@ -151,7 +157,6 @@ main {
 }
 
 .update-notice {
-  grid-column: 2;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
@@ -312,6 +317,10 @@ html[data-options-view="mobile"] .section-index {
   box-shadow: none;
 }
 
+html[data-options-view="mobile"] .options-content {
+  min-width: 0;
+}
+
 html[data-options-view="mobile"] .section-index::-webkit-scrollbar {
   display: none;
 }
@@ -343,7 +352,7 @@ html[data-options-view="mobile"] .save-bar .card {
 }
 
 html[data-options-view="mobile"] .save-bar {
-  grid-column: 1;
+  grid-column: auto;
 }
 
 html[data-options-view="mobile"] button {
@@ -481,7 +490,6 @@ button.ghost { background: transparent; }
   position: sticky;
   bottom: 12px;
   z-index: 5;
-  grid-column: 2;
   background: linear-gradient(180deg, transparent 0%, var(--bg) 48%, var(--bg) 100%);
   padding: 6px 0 0;
 }
@@ -523,7 +531,6 @@ legend {
   .page-header, main { padding-left: 14px; padding-right: 14px; }
   main { grid-template-columns: 1fr; }
   .update-notice {
-    grid-column: 1;
     grid-template-columns: 1fr;
   }
   .section-index {
@@ -544,5 +551,5 @@ legend {
   .section-index::-webkit-scrollbar { display: none; }
   .section-index a { flex: 0 0 auto; }
   .card { padding: 12px; }
-  .save-bar { grid-column: 1; }
+  .save-bar { grid-column: auto; }
 }

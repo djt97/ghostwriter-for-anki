@@ -1130,18 +1130,7 @@
     }
 
     body.is-overlay-surface .header-review-btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    body.is-overlay-surface .header-review-btn {
-      gap: 5px;
-      padding: 5px 7px;
-      border-radius: 8px;
-      font-size: 12px;
-      box-shadow: none;
-      background: var(--surface-2);
+      display: none;
     }
 
     body.is-overlay-surface .header-settings-link {
@@ -1339,7 +1328,7 @@
       transform: translateX(-50%);
       z-index: 7;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
       gap: 8px;
       width: min(360px, calc(100% - 56px));
       padding-bottom: env(safe-area-inset-bottom);
@@ -1351,11 +1340,6 @@
 
     body.is-overlay-surface .primary-action-row .maintenance-action {
       display: none;
-    }
-
-    body.is-overlay-surface #openReviewQueueInline {
-      display: inline-flex;
-      justify-content: center;
     }
 
     body.is-overlay-surface .primary-action-row:has(#triageSkip:not([hidden])) #openReviewQueueInline {
@@ -1684,13 +1668,13 @@
                 <span class="mirror"></span><span class="ghost"></span>
               </div>
               <div class="markdown-section inline-preview" data-preview-block="front" hidden>
-                <iframe id="previewFront" class="markdown-render preview-frame" title="Front preview"></iframe>
+                <iframe id="previewFront" class="markdown-render preview-frame" title="Front preview" tabindex="-1"></iframe>
                 <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
               </div>
             </div>
             <div class="shortcut-coach small" data-field-coach="front" role="status" aria-live="polite" hidden>
               <span data-coach-text></span>
-              <button type="button" data-coach-dismiss>Hide tips</button>
+              <button type="button" data-coach-dismiss tabindex="-1">Hide tips</button>
             </div>
             <div class="copilot-suggestion" data-field="front" hidden>
               <div class="copilot-header">
@@ -1699,8 +1683,8 @@
               </div>
               <div class="copilot-text"></div>
               <div class="copilot-actions">
-                <button type="button" class="copilot-accept" data-field="front">Accept</button>
-                <button type="button" class="copilot-refresh" data-field="front">Regenerate</button>
+                <button type="button" class="copilot-accept" data-field="front" tabindex="-1">Accept</button>
+                <button type="button" class="copilot-refresh" data-field="front" tabindex="-1">Regenerate</button>
               </div>
             </div>
           </div>
@@ -1708,12 +1692,12 @@
           <!-- Compact AI suggestion mini panel -->
           <div id="copilotMini" class="copilot-mini">
             <select id="editorTemplateSelect" class="small" hidden></select>
-            <button type="button" id="editorGenerateBtn" title="Draft one card from Source" hidden>Draft</button>
-            <button type="button" id="copilotMiniGenerate" title="Request AI suggestion">Suggest</button>
+            <button type="button" id="editorGenerateBtn" title="Draft one card from Source" tabindex="-1" hidden>Draft</button>
+            <button type="button" id="copilotMiniGenerate" title="Request AI suggestion" tabindex="-1">Suggest</button>
             <span id="sourceModePill" class="source-pill small" aria-live="polite">Source: Auto</span>
-            <button type="button" id="copilotMiniAccept" title="Accept both">Accept</button>
-            <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)">Reject</button>
-            <button type="button" id="copilotMiniClear" title="Clear Front &amp; Back">Clear</button>
+            <button type="button" id="copilotMiniAccept" title="Accept both" tabindex="-1">Accept</button>
+            <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)" tabindex="-1">Reject</button>
+            <button type="button" id="copilotMiniClear" title="Clear Front &amp; Back" tabindex="-1">Clear</button>
           </div>
 
           <!-- Review toolbar (mobile-friendly; shown when review is active) -->
@@ -1792,8 +1776,8 @@
       </div>
     </details>
 
-    <details id="readyToSendSection" open class="card-entry">
-      <summary>Ready to Send</summary>
+    <details id="readyToSendSection" class="card-entry" hidden>
+      <summary>Review &amp; Send</summary>
       <div class="card-entry-body">
         <div class="btns">
           <button type="button" id="openReviewQueue">Open Review Queue</button>
@@ -1805,7 +1789,7 @@
           <button id="undoLastSend">Undo last send</button>
         </div>
         <div class="btns">
-          <button type="button" id="triageAcceptAll" class="primary">Queue all remaining</button>
+          <button type="button" id="triageAcceptAll" class="primary">Mark all ready</button>
           <button type="button" id="triageClear">Reset</button>
           <button type="button" id="clearOutbox" class="subtle-btn" hidden>Clear queue</button>
           <button type="button" id="triageResume" hidden>Resume review</button>
@@ -1818,7 +1802,7 @@
       <button type="button" id="openReviewQueueInline" class="secondary-action">Review Queue</button>
       <button type="button" id="triageSkip" hidden>Reject</button>
       <button class="primary primary-with-shortcut" id="add">
-        <span class="button-label">Queue card</span>
+        <span class="button-label">Add to Anki</span>
         <kbd id="queueShortcutButtonHint" class="button-shortcut">Cmd + Shift + A</kbd>
       </button>
     </div>
@@ -1860,7 +1844,7 @@
             <code id="shortcutCopilot">Cmd/Ctrl + Shift + X</code>
           </li>
           <li>
-            <span>Queue card</span>
+            <span>Add to Anki</span>
             <code id="shortcutAdd">Custom</code>
           </li>
           <li>

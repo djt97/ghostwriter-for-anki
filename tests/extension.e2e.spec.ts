@@ -1,6 +1,7 @@
 import { test, chromium, expect } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
 const OUT_DIR = path.resolve(__dirname, 'screenshots');
 
@@ -34,21 +35,61 @@ function resolveExtensionRoot(): string {
 }
 
 const EXT_PATH = resolveExtensionRoot();
-const IS_CI = !!process.env.CI;
 
 test.describe('Ghostwriter for Anki UI', () => {
-  // UI screenshot tests are nice for local dev, but starting a headed
-  // Chromium with extensions is flaky/slow on CI runners. Skip them on CI.
-  test.skip(IS_CI, 'UI screenshot suite is disabled on CI; run `npm run test:ui` locally.');
+  test.skip(!!process.env.GHOSTWRITER_SKIP_UI, 'UI screenshot suite skipped by GHOSTWRITER_SKIP_UI.');
 
   test.setTimeout(240_000);
 
   let context: any;
   let page: any;
+  let userDataDir = '';
+  let ankiActions: string[] = [];
+
+  async function extensionWorker() {
+    return context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 10_000 });
+  }
+
+  async function injectContentScriptIntoFixtureTab() {
+    const worker = await extensionWorker();
+    const result = await worker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      const tab =
+        tabs.find((candidate) => candidate.url?.startsWith('http://localhost:31337/')) ||
+        tabs.find((candidate) => candidate.active && /^https?:/.test(candidate.url || ''));
+      if (!tab?.id) return { ok: false, error: 'No injectable fixture tab found.' };
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+    if (!result?.ok) throw new Error(`Failed to inject content script: ${result?.error || 'unknown error'}`);
+  }
+
+  async function openOverlayInFixtureTab() {
+    const worker = await extensionWorker();
+    const result = await worker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      const tab = tabs.find((candidate) => candidate.url?.startsWith('http://localhost:31337/'));
+      if (!tab?.id) return { ok: false, error: 'No fixture tab found.' };
+      try {
+        const response = await chrome.tabs.sendMessage(tab.id, {
+          type: 'quickflash:showOverlay',
+          options: { skipCapturePopover: true },
+        });
+        return response?.ok ? { ok: true } : { ok: false, error: response?.reason || 'overlay refused' };
+      } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+    if (!result?.ok) throw new Error(`Failed to open overlay: ${result?.error || 'unknown error'}`);
+  }
 
   test.beforeAll(async () => {
     await fs.promises.mkdir(OUT_DIR, { recursive: true });
-    const userDataDir = path.resolve(__dirname, '.pw-user');
+    userDataDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ghostwriter-pw-user-'));
 
     const launchArgs = [
       `--disable-extensions-except=${EXT_PATH}`,
@@ -63,7 +104,9 @@ test.describe('Ghostwriter for Anki UI', () => {
     ];
 
     const commonOpts = {
-      headless: false, // extensions require headed
+      // Playwright's bundled Chromium only loads the MV3 extension in headed mode.
+      // CI supplies a virtual display through Xvfb.
+      headless: false,
       ignoreDefaultArgs: ['--disable-extensions'],
       args: launchArgs,
     } as const;
@@ -76,6 +119,7 @@ test.describe('Ghostwriter for Anki UI', () => {
       let body: any = {};
       try { body = await route.request().postDataJSON(); } catch {}
       const action = body?.action;
+      if (action) ankiActions.push(action);
 
       const ok = (result: any) =>
         route.fulfill({
@@ -88,9 +132,18 @@ test.describe('Ghostwriter for Anki UI', () => {
         case 'deckNames':        return ok(['Default']);
         case 'modelNames':       return ok(['Basic']);
         case 'modelFieldNames':  return ok(['Front', 'Back']);
+        case 'addNotes':         return ok((body?.params?.notes || []).map((_: any, idx: number) => 1234567890 + idx));
         case 'addNote':          return ok(1234567890);
         default:                 return ok(null);
       }
+    });
+
+    await context.route('http://localhost:31337/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!doctype html><html><head><title>Ghostwriter fixture</title></head><body><main><h1>Ghostwriter fixture</h1><p id="fixture-text">Highlights become focused Anki cards.</p><figure><img id="fixture-image" src="/diagram.png" alt="Layered neural network diagram"><figcaption>Layered network diagram</figcaption></figure></main></body></html>',
+      });
     });
 
     page = await context.newPage();
@@ -99,10 +152,14 @@ test.describe('Ghostwriter for Anki UI', () => {
 
   test.afterAll(async () => {
     await context?.close();
+    if (userDataDir) {
+      await fs.promises.rm(userDataDir, { recursive: true, force: true });
+    }
   });
 
   test('@screenshots overlay + tab screenshots (light & dark)', async () => {
-    await page.goto('https://example.com/', { waitUntil: 'domcontentloaded' });
+    await page.goto('http://localhost:31337/?__qf_ci=1', { waitUntil: 'domcontentloaded' });
+    await injectContentScriptIntoFixtureTab();
 
     await page.waitForSelector('html[data-qf-cs="ready"]', { timeout: 5_000 }).catch(() => {});
 
@@ -143,17 +200,7 @@ test.describe('Ghostwriter for Anki UI', () => {
     // Panel <html> flags readiness; prefer an assertion over locator.waitFor
     await expect(panel.locator('html')).toHaveAttribute('data-qf-panel', 'ready', { timeout: 30_000 });
 
-    // Option A: check exactly one control (simplest, strict-mode safe)
-    await expect(panel.locator('#deck')).toBeVisible({ timeout: 30_000 });
-
-    // Option B: assert both exist/visible (also strict-mode safe)
-    //await Promise.all([
-    //  expect(panel.locator('#deck')).toBeVisible({ timeout: 30_000 }),
-    //  expect(panel.locator('#model')).toBeVisible({ timeout: 30_000 }),
-    //]);
-
-    // Option C: if you insist on a single line, disambiguate the multi-match
-    // await panel.locator('#deck, #model').first().waitFor({ timeout: 30_000 });
+    await expect(panel.locator('#front')).toBeVisible({ timeout: 30_000 });
 
     await page.emulateMedia({ colorScheme: 'light' });
     await overlayRoot.screenshot({ path: path.join(OUT_DIR, 'overlay-light.png') });
@@ -177,5 +224,35 @@ test.describe('Ghostwriter for Anki UI', () => {
 
     await panelPage.emulateMedia({ colorScheme: 'dark' });
     await panelPage.screenshot({ path: path.join(OUT_DIR, 'panel-tab-dark.png'), fullPage: true });
+  });
+
+  test('@online-smoke text selection sends directly to Anki', async () => {
+    ankiActions = [];
+    await page.goto('http://localhost:31337/', { waitUntil: 'domcontentloaded' });
+    await injectContentScriptIntoFixtureTab();
+    await page.evaluate(() => {
+      const target = document.querySelector('#fixture-text');
+      const range = document.createRange();
+      range.selectNodeContents(target!);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+    await openOverlayInFixtureTab();
+
+    const iframe = page.locator('#quickflash-panel-iframe');
+    await expect(iframe).toHaveCount(1, { timeout: 30_000 });
+    const panel = page.frameLocator('#quickflash-panel-iframe');
+    await expect(panel.locator('html')).toHaveAttribute('data-qf-panel', 'ready', { timeout: 30_000 });
+
+    await expect(panel.locator('#source')).toHaveValue(/Highlights become focused Anki cards\./);
+    await panel.locator('#front').fill('What do highlights become?');
+    await panel.locator('#front').press('Tab');
+    await expect(panel.locator('#back')).toBeFocused();
+    await panel.locator('#back').fill('Focused Anki cards.');
+    await panel.locator('#add').click();
+
+    await expect.poll(() => ankiActions.filter((action) => action === 'addNote' || action === 'addNotes').length).toBeGreaterThan(0);
+    await expect(panel.locator('#status')).toContainText(/Added note|Added .* note/, { timeout: 30_000 });
   });
 });

@@ -31,7 +31,7 @@ Output shape:
 Rules:
 - Keep answers atomic; fronts univocal.
 - Prefer short, precise wording; include minimal necessary notation/units.
-- STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). ALWAYS use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.
+- STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). If the Source contains TeX/LaTeX, preserve the exact source TeX spans instead of converting them to Unicode or plaintext. Otherwise use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.
 {{CONTEXT}}
 
 TEXT:

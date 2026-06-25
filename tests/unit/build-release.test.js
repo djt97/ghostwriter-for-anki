@@ -96,6 +96,9 @@ describe('build-release.js pure functions', () => {
       assert.ok(EXCLUDES.includes('eslint.config.js'));
       assert.ok(EXCLUDES.includes('AGENTS.md'));
       assert.ok(EXCLUDES.includes('.DS_Store'));
+      assert.ok(EXCLUDES.includes('.gitignore'));
+      assert.ok(EXCLUDES.includes('stubs'));
+      assert.ok(EXCLUDES.includes('vendor'));
     });
 
     it('excludes dist to prevent nesting', () => {
@@ -118,7 +121,7 @@ describe('manifest shortcuts', () => {
   it('defaults the explicit overlay command to the overlay-first shortcut', () => {
     const overlayCommand = manifest.commands?.['open-ghostwriter-overlay'];
     assert.equal(overlayCommand?.description, 'Open Ghostwriter for Anki Overlay');
-    assert.equal(overlayCommand?.suggested_key?.mac, 'Option+Shift+F');
+    assert.equal(overlayCommand?.suggested_key?.mac, 'Alt+Shift+F');
     assert.equal(overlayCommand?.suggested_key?.default, 'Ctrl+Shift+F');
   });
 

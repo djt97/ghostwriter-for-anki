@@ -37,7 +37,7 @@ npm run test:screenshots
 
 ## CI considerations
 
-Current test suite intentionally skips screenshot runs on CI (`test.skip(IS_CI, ...)`) due to extension/headed-browser instability in typical runners.
+The GitHub UI workflow runs the screenshot suite under Xvfb with a persistent Chromium profile. Use `GHOSTWRITER_SKIP_UI=1` only for temporary incident response when browser startup is known to be broken.
 
 ## Manual verification checklist
 
@@ -48,4 +48,4 @@ Before release, verify:
 3. Provider call works with test key.
 4. AnkiConnect connection check passes with desktop Anki running.
 5. Outbox send creates notes in expected deck/model.
-6. Lite build hides dashboard features.
+6. The release zip loads as an unpacked extension and includes the expected extension files.

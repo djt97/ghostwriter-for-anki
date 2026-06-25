@@ -10,14 +10,12 @@ Ghostwriter for Anki — a Chrome/Edge Manifest V3 extension (v0.3.3) for AI-ass
 
 ```bash
 npm ci                      # Install dependencies
-npm run build:full          # Full bundle (includes ML embeddings via ONNX)
-npm run build:lite          # Lite bundle (excludes embeddings/dashboard)
-npm run build:release       # MathJax webpack build + both variants + zip
+npm run build:release       # MathJax webpack build + release zip
 npm run test:install        # Install Chromium for Playwright
-npm run test:screenshots    # Run Playwright screenshot e2e tests (headed, skipped on CI)
+npm run test:screenshots    # Run Playwright screenshot e2e tests (headed)
 ```
 
-Build outputs go to `dist/full/`, `dist/lite/`, and `dist/ghostwriter-{full,lite}.zip`.
+Build outputs go to `dist/ghostwriter/` and `dist/ghostwriter.zip`.
 
 For local development: load the repo root as an unpacked extension in `chrome://extensions` (Developer mode). Reload extension after editing JS/HTML/CSS.
 
@@ -31,11 +29,9 @@ Five runtime components communicate via Chrome messaging and `window.postMessage
 - **`options.js` + `options.html`** — Settings page. Provider config, Copilot prompts, editor field visibility, AnkiConnect endpoint, permissions management.
 - **`prompts.js`** — Default AI prompt templates loaded by `panel.html` before `panel.js`. Exposes `window.QUICKFLASH_PROMPTS` with system prompts for front/back generation and a `buildUserPrompt()` function.
 
-### Full vs Lite builds
+### Release build
 
-The build script (`scripts/build-release.js`) copies the repo into `dist/`, then for lite: removes dashboard/embedding files, strips `vendor/` ML assets, patches `manifest.json` (CSP connect-src, web_accessible_resources), sets `enableDashboard: false` in `panel.js`, and removes `<!-- LITE-REMOVE-START -->` blocks from `panel.html`.
-
-Full-only components: `dashboard.*`, `embeddings.js`, `force-graph.js`, `vendor/transformers/`, `vendor/onnx/`, `vendor/knn-index.js`, `vendor/edge-labeler.js`.
+The build script (`scripts/build-release.js`) copies the extension into `dist/ghostwriter/`, builds MathJax, excludes development-only files, and creates `dist/ghostwriter.zip`.
 
 ### MathJax
 

@@ -26,13 +26,13 @@ These verify nothing is broken by the refactoring.
 
 - [ ] **Open overlay** — Option+Shift+F on Mac or Ctrl+Shift+F on Windows/Linux. Overlay appears, panel
   loads, deck/model dropdowns populate.
-- [ ] **Create a card** — Type a front and back, queue it with Cmd+Shift+A or
-  **Queue card**, then accept/send it from the Review Queue.
+- [ ] **Create a card** — Type a front and back, add it with Cmd+Shift+A or
+  **Add to Anki**, and confirm the note appears in Anki.
 - [ ] **AI suggestion** — Start typing a front with source text
   selected. An AI continuation appears (ghost text).
 - [ ] **Accept suggestion** — Tab to accept. Back field auto-fills if
   auto-fill-back is enabled.
-- [ ] **Review Queue** — Queue cards, accept/skip them, then send accepted cards to Anki.
+- [ ] **Direct send** — The primary action sends the current card to Anki without a review queue step.
 - [ ] **Side panel** — Click the extension icon. Side panel opens with the
   same UI.
 - [ ] **Options page** — Right-click extension → Options. All settings load
@@ -100,7 +100,6 @@ These verify the code splits didn't break anything.
 These should work exactly as before:
 
 - [ ] LPCG (Lyrics/Poetry) import mode
-- [ ] Dashboard (knowledge graph) — full build only
 - [ ] MathJax preview toggle
 - [ ] Keyboard shortcuts (`Option+Shift+F` on Mac or `Ctrl+Shift+F` on Windows/Linux activates the overlay-first editor flow)
 - [ ] Context menu ("Ghostwriter for Anki: Open panel")
@@ -111,7 +110,6 @@ These should work exactly as before:
 |------|---------|
 | Run unit tests | `npm test` |
 | Run linter | `npm run lint` |
-| Build full | `npm run build:full` |
-| Build lite | `npm run build:lite` |
+| Build release | `npm run build:release` |
 | Branch | `audit-test-suite` |
 | Commits | 6 (on top of `audit-remediation`) |

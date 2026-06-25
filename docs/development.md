@@ -27,8 +27,6 @@ Reload extension after editing JS/HTML/CSS.
 ## Build commands
 
 ```bash
-npm run build:full
-npm run build:lite
 npm run build:release
 ```
 
@@ -36,7 +34,6 @@ npm run build:release
 
 - MathJax webpack build
 - Dist folder refresh
-- Full/lite variant generation
 - ZIP packaging
 
 ## Code organization quick map
@@ -53,7 +50,7 @@ npm run build:release
 
 - Keep manifest and permission changes intentional and documented.
 - Avoid introducing provider-specific logic without preserving generic OpenAI-compatible paths.
-- Keep lite/full parity in mind when touching dashboard or vendor-dependent features.
+- Keep manifest permissions and release packaging in sync with public docs.
 
 ## Documentation expectations
 

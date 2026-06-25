@@ -12,11 +12,12 @@ const EXCLUDES = [
   '.claude',
   '.codex',
   '.DS_Store',
+  '.gitignore',
   'dist',
   'node_modules',
   'mathjax-entry.js',
   'webpack.config.js',
-  'stubs/mathjax-version.js',
+  'stubs',
   'mathjax-config.js',
   'libs/mathjax/tex-mml-chtml.js',
   'tests',
@@ -36,7 +37,7 @@ const EXCLUDES = [
   'GHOSTWRITER_V2_PLAN.md',
   'README.md',
   'licences',
-  'vendor/.DS_Store'
+  'vendor'
 ];
 
 function normalizePath(value) {

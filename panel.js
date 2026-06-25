@@ -49,6 +49,8 @@ const GHOSTWRITER_BASIC_FRONT_TEMPLATE = "{{Front}}<br><br>{{hint:Context}}";
 const GHOSTWRITER_BASIC_BACK_TEMPLATE = "{{FrontSide}}\n\n<hr id=\"answer\">\n\n{{Back}}";
 const GHOSTWRITER_CLOZE_FRONT_TEMPLATE = "{{cloze:Text}}<br><br>{{hint:Context}}";
 const GHOSTWRITER_CLOZE_BACK_TEMPLATE = "{{cloze:Text}}\n\n<hr id=\"answer\">\n\n{{Extra}}";
+const GHOSTWRITER_TEMPLATE_VERSION = "2026-06-direct-send-v1";
+const GHOSTWRITER_TEMPLATE_VERSION_KEY = "qf_ghostwriter_template_version";
 const debugState = {
   enabled: false,
   prefs: {
@@ -163,7 +165,7 @@ async function refreshDebugSource() {
   if (!debugState.enabled || !debugState.prefs.showSource) return;
   const debugSource = $("#debugSource");
   if (!debugSource) return;
-  const selection = (copilot?.pageCtx?.selection || "").trim();
+  const selection = getContextSourceText(copilot?.pageCtx).trim();
   if (selection) {
     debugSource.value = selection;
     return;
@@ -287,22 +289,31 @@ function focusFrontAtEnd() {
 }
 
 // ------- AnkiConnect helpers -------
-async function anki(action, params = {}) {
-  // In CI/test mode, short‑circuit to deterministic values so the UI boots instantly
-  if (QF_TEST_MODE) {
-    if (action === "requestPermission") return { permission: "granted" };
-    if (action === "deckNames")        return ["Default"];
-    if (action === "modelNames")       return ["Basic"];
-    if (action === "modelFieldNames")  return ["Front", "Back"];
-    if (action === "addNote")          return 123456; // fake note id
-    return null;
-  }
+const ANKI_SESSION_CACHE_TTL_MS = 30000;
+const ankiSessionCache = {
+  permissionGranted: false,
+  values: new Map(),
+};
 
-  // Normal path (real AnkiConnect)
-  if (action !== "requestPermission") {
-    try { await anki("requestPermission"); } catch {}
-  }
+function clearAnkiSessionCache({ keepPermission = false } = {}) {
+  ankiSessionCache.values.clear();
+  if (!keepPermission) ankiSessionCache.permissionGranted = false;
+  modelFieldsCache?.clear?.();
+}
 
+function getAnkiCacheKey(action, params = {}) {
+  return `${action}:${JSON.stringify(params || {})}`;
+}
+
+function isCacheableAnkiAction(action) {
+  return action === "deckNames" || action === "modelNames" || action === "modelFieldNames";
+}
+
+function invalidatesAnkiSetupCache(action) {
+  return action === "createModel" || action === "updateModelTemplates" || action === "createDeck";
+}
+
+async function sendAnkiConnectRequest(action, params = {}) {
   const opts = await getOptions();
   const configured = (opts.ankiBaseUrl || "http://127.0.0.1:8765").replace(/\/+$/,'');
   const candidates = [configured];
@@ -334,10 +345,52 @@ async function anki(action, params = {}) {
 
   const help = [
     "Could not reach AnkiConnect.",
-    `Tried: ${candidates.join(" → ")}.`,
-    "On Android: open AnkiconnectAndroid, tap “Start Service”, then set “CORS host” to the Extension origin shown in Options."
+    `Tried: ${candidates.join(" -> ")}.`,
+    "On Android: open AnkiconnectAndroid, tap \"Start Service\", then set \"CORS host\" to the Extension origin shown in Options."
   ].join(" ");
   throw new Error(`${help} (${lastErr?.message || lastErr || "unknown error"})`);
+}
+
+async function anki(action, params = {}) {
+  // In CI/test mode, short‑circuit to deterministic values so the UI boots instantly
+  if (QF_TEST_MODE) {
+    if (action === "requestPermission") return { permission: "granted" };
+    if (action === "deckNames")        return ["Default"];
+    if (action === "modelNames")       return ["Basic"];
+    if (action === "modelFieldNames")  return ["Front", "Back"];
+    if (action === "addNote")          return 123456; // fake note id
+    return null;
+  }
+
+  try {
+    if (action !== "requestPermission" && !ankiSessionCache.permissionGranted) {
+      await sendAnkiConnectRequest("requestPermission");
+      ankiSessionCache.permissionGranted = true;
+    }
+
+    if (action === "requestPermission" && ankiSessionCache.permissionGranted) {
+      return { permission: "granted" };
+    }
+
+    if (isCacheableAnkiAction(action)) {
+      const key = getAnkiCacheKey(action, params);
+      const cached = ankiSessionCache.values.get(key);
+      if (cached && Date.now() - cached.at < ANKI_SESSION_CACHE_TTL_MS) {
+        return cached.value;
+      }
+      const result = await sendAnkiConnectRequest(action, params);
+      ankiSessionCache.values.set(key, { at: Date.now(), value: result });
+      return result;
+    }
+
+    const result = await sendAnkiConnectRequest(action, params);
+    if (action === "requestPermission") ankiSessionCache.permissionGranted = true;
+    if (invalidatesAnkiSetupCache(action)) clearAnkiSessionCache({ keepPermission: true });
+    return result;
+  } catch (err) {
+    clearAnkiSessionCache();
+    throw err;
+  }
 }
 
 function isMalformedJsonError(err) {
@@ -508,10 +561,39 @@ function bindStickyContextUI() {
 }
 
 // ------- Options -------
+const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
+const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey"];
+
+function sanitizeOptionsForSync(options = {}) {
+  const clean = { ...(options || {}) };
+  for (const key of PROVIDER_KEY_FIELDS) delete clean[key];
+  return clean;
+}
+
+async function getProviderSecrets() {
+  try {
+    await chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" });
+  } catch {}
+  try {
+    const got = await chrome.storage.local.get(PROVIDER_SECRETS_KEY);
+    const raw = got?.[PROVIDER_SECRETS_KEY] || {};
+    const out = {};
+    for (const key of PROVIDER_KEY_FIELDS) {
+      if (typeof raw[key] === "string") out[key] = raw[key];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 async function getOptions() {
   try {
-    const { quickflash_options } = await chrome.storage.sync.get("quickflash_options");
-    return quickflash_options || {};
+    const [{ quickflash_options }, providerSecrets] = await Promise.all([
+      chrome.storage.sync.get("quickflash_options"),
+      getProviderSecrets(),
+    ]);
+    return { ...(quickflash_options || {}), ...providerSecrets };
   } catch (error) {
     if (isExtensionContextInvalidated(error)) {
       return {};
@@ -579,20 +661,35 @@ function applyFieldVisibilityPrefs(opts = {}) {
 function normalizeProvider(value) {
   if (value === "gemini") return "gemini";
   if (value === "openai") return "openai";
+  if (value === "openrouter") return "openrouter";
   if (value === "claude") return "claude";
   return "ultimate";
+}
+
+function normalizeMiniCopilotMode(value) {
+  if (value === "always") return "on";
+  if (value === "on" || value === "auto" || value === "off") return value;
+  return "off";
 }
 
 function inferProviderFromOptions(opts) {
   if (opts?.llmProvider) return normalizeProvider(opts.llmProvider);
   if (opts?.openaiKey) return "openai";
+  if (opts?.openrouterKey) return "openrouter";
   if (opts?.ultimateKey) return "ultimate";
   if (opts?.geminiKey) return "gemini";
   if (opts?.claudeKey) return "claude";
+  if (/openrouter\.ai/i.test(String(opts?.openrouterBaseUrl || ""))) return "openrouter";
   return "openai";
 }
 
 const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton97.workers.dev/v1";
+const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
+const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
+const CLAUDE_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
@@ -643,6 +740,13 @@ async function incrementFreeTierUsage() {
   } catch {}
 }
 
+function normalizeUltimateBaseUrl(value) {
+  const raw = String(value || ULTIMATE_BASE_URL).trim().replace(/\/+$/g, "");
+  if (!raw) return ULTIMATE_BASE_URL;
+  if (ULTIMATE_HOST_RE.test(raw)) return `${raw}/v1`;
+  return raw;
+}
+
 function getOpenAIProviderConfig(opts, overrideProvider) {
   const provider = overrideProvider ? normalizeProvider(overrideProvider) : inferProviderFromOptions(opts || {});
   if (provider === "openai") {
@@ -650,27 +754,102 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
       provider,
       baseUrl: (opts.openaiBaseUrl || "https://api.openai.com/v1").replace(/\/+$/g, ""),
       apiKey: opts.openaiKey || "",
-      model: opts.openaiModel || opts.ultimateModel || "gpt-4.1-mini",
+      model: opts.openaiModel || opts.ultimateModel || OPENAI_DEFAULT_MODEL,
+    };
+  }
+  if (provider === "openrouter") {
+    return {
+      provider,
+      baseUrl: (opts.openrouterBaseUrl || OPENROUTER_BASE_URL).replace(/\/+$/g, ""),
+      apiKey: opts.openrouterKey || "",
+      model: opts.openrouterModel || "openrouter/auto",
     };
   }
 
   return {
     provider: "ultimate",
-    baseUrl: (opts.ultimateBaseUrl || "https://smart.ultimateai.org/v1").replace(/\/+$/g, ""),
+    baseUrl: normalizeUltimateBaseUrl(opts.ultimateBaseUrl),
     apiKey: opts.ultimateKey || "",
-    model: opts.ultimateModel || "auto",
+    model: opts.ultimateModel || ULTIMATE_DEFAULT_MODEL,
   };
 }
 
 async function getOpenAIProviderConfigWithFreeTier(opts, overrideProvider) {
   const config = getOpenAIProviderConfig(opts, overrideProvider);
-  if (!config.apiKey) {
+  if (!config.apiKey && config.provider !== "openrouter") {
     const ft = await getFreeTierState();
     if (ft.remaining > 0 && ft.installId) {
       return { ...config, provider: "free-tier", baseUrl: FREE_TIER_PROXY_URL, apiKey: `ft-${ft.installId}`, _freeTier: true };
     }
   }
   return config;
+}
+
+const AI_PROVIDER_HOST_PERMISSION_ORIGINS = new Set([
+  "https://api.openai.com/*",
+  "https://openrouter.ai/*",
+  "https://api.ultimateai.org/*",
+  "https://smart.ultimateai.org/*",
+  "https://chat.ultimateai.org/*",
+  "https://generativelanguage.googleapis.com/*",
+  "https://api.anthropic.com/*",
+]);
+
+function buildOpenAICompatibleHeaders(provider, apiKey, extra = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    ...extra,
+  };
+  if (provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://github.com/djt97/ghostwriter-for-anki";
+    headers["X-OpenRouter-Title"] = "Ghostwriter for Anki";
+  }
+  return headers;
+}
+
+function getProviderDisplayName(provider) {
+  if (provider === "gemini") return "Google Gemini";
+  if (provider === "openai") return "OpenAI";
+  if (provider === "openrouter") return "OpenRouter";
+  if (provider === "claude") return "Anthropic Claude";
+  if (provider === "free-tier") return "Ghostwriter free suggestions";
+  return "UltimateAI";
+}
+
+function hasProviderApiKey(opts = {}, provider) {
+  if (provider === "gemini") return !!opts.geminiKey;
+  if (provider === "openai") return !!opts.openaiKey;
+  if (provider === "openrouter") return !!opts.openrouterKey;
+  if (provider === "claude") return !!opts.claudeKey;
+  return !!opts.ultimateKey;
+}
+
+function getKnownAiHostPermissionOrigin(baseUrl) {
+  try {
+    const origin = `${new URL(String(baseUrl || "")).origin}/*`;
+    return AI_PROVIDER_HOST_PERMISSION_ORIGINS.has(origin) ? origin : "";
+  } catch {
+    return "";
+  }
+}
+
+async function assertAiHostPermission({ provider, baseUrl } = {}) {
+  if (!baseUrl || provider === "free-tier" || !chrome.permissions?.contains) return;
+  const origin = getKnownAiHostPermissionOrigin(baseUrl);
+  if (!origin) return;
+  let granted = true;
+  try {
+    granted = await chrome.permissions.contains({ origins: [origin] });
+  } catch {
+    return;
+  }
+  if (!granted) {
+    throw new Error(
+      `Chrome has not granted Ghostwriter permission to contact ${origin}. ` +
+      `Open Ghostwriter Settings, click Save, and accept the AI provider permission prompt.`
+    );
+  }
 }
 
 async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, extra = {}) {
@@ -714,6 +893,9 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
   const { provider: providerName, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const model   = mdl || defaultModel;
   if (!apiKey) {
+    if (providerName === "openrouter") {
+      throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
+    }
     throw new Error("No API key configured and free suggestions used up. Add an API key in Settings for unlimited suggestions.");
   }
   const endpoint = `${baseUrl}/chat/completions`;
@@ -740,9 +922,10 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
   let data;
   try {
     await copilotRateLimit();
+    await assertAiHostPermission(providerConfig);
     const r = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      headers: buildOpenAICompatibleHeaders(providerName, apiKey),
       body: JSON.stringify(payload)
     });
     if (!r.ok) {
@@ -825,6 +1008,9 @@ async function ultimateCompletion(prompt, options = {}) {
   const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const mdl     = model || defaultModel;
   if (!apiKey) {
+    if (provider === "openrouter") {
+      throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
+    }
     throw new Error("No API key configured and free suggestions used up. Add an API key in Settings.");
   }
   const endpoint = `${baseUrl}/chat/completions`;
@@ -861,9 +1047,10 @@ async function ultimateCompletion(prompt, options = {}) {
   let data = null;
   try {
     await copilotRateLimit();
+    await assertAiHostPermission(providerConfig);
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      headers: buildOpenAICompatibleHeaders(provider, apiKey),
       body: JSON.stringify(payload),
       signal,
     });
@@ -916,6 +1103,14 @@ function extractGeminiText(parts) {
   }).join("");
 }
 
+function getGeminiThinkingConfig(modelName) {
+  const model = String(modelName || "").toLowerCase();
+  if (/gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(model) || model === "gemini-2.5-flash" || model === "gemini-2.5-flash-lite") {
+    return { thinkingBudget: 0 };
+  }
+  return null;
+}
+
 // Single, canonical implementation. Default model = gemini-2.5-flash-lite.
 async function geminiCompletion(
   prompt,
@@ -935,6 +1130,7 @@ async function geminiCompletion(
     { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
     { category: "HARM_CATEGORY_CIVIC_INTEGRITY",   threshold: "BLOCK_NONE" }
   ] : undefined;
+  const thinkingConfig = getGeminiThinkingConfig(mdl);
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }]}],
     generationConfig: {
@@ -942,6 +1138,7 @@ async function geminiCompletion(
       temperature,
       stopSequences: Array.isArray(stop) && stop.length ? stop : undefined,
       responseMimeType: "text/plain",
+      ...(thinkingConfig ? { thinkingConfig } : {}),
     },
     ...(system ? { systemInstruction: { role: "system", parts: [{ text: system }] } } : {}),
     ...(allowSafetySettings ? { safetySettings } : {})
@@ -1083,6 +1280,7 @@ async function geminiCompletionStream(
     { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
     { category: "HARM_CATEGORY_CIVIC_INTEGRITY",   threshold: "BLOCK_NONE" }
   ];
+  const thinkingConfig = getGeminiThinkingConfig(mdl);
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }]}],
     generationConfig: {
@@ -1090,6 +1288,7 @@ async function geminiCompletionStream(
       temperature,
       ...(Array.isArray(stop) && stop.length ? { stopSequences: stop } : {}),
       responseMimeType: "text/plain",
+      ...(thinkingConfig ? { thinkingConfig } : {}),
     },
     ...(system ? { systemInstruction: { role: "system", parts: [{ text: system }] } } : {}),
     safetySettings
@@ -1205,7 +1404,12 @@ async function ultimateCompletionStream(
   const providerConfig = await getOpenAIProviderConfigWithFreeTier(opts);
   const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const mdl = model || defaultModel;
-  if (!apiKey) throw new Error("API key missing. Set it in Options.");
+  if (!apiKey) {
+    if (provider === "openrouter") {
+      throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
+    }
+    throw new Error("API key missing. Set it in Options.");
+  }
   const endpoint = `${baseUrl}/chat/completions`;
   const systemPrompt = system || getCopilotSystemPrompt("front");
   if (_freeTier) {
@@ -1280,9 +1484,10 @@ async function ultimateCompletionStream(
   let res;
   try {
     await copilotRateLimit();
+    await assertAiHostPermission(providerConfig);
     res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      headers: buildOpenAICompatibleHeaders(provider, apiKey),
       body: JSON.stringify(payload),
       signal,
     });
@@ -1369,7 +1574,7 @@ async function claudeCompletion(prompt, options = {}) {
   const opts = await getOptions();
   const baseUrl = (opts.claudeBaseUrl || "https://api.anthropic.com").replace(/\/+$/, "");
   const apiKey = opts.claudeKey || "";
-  const model = options.model || opts.claudeModel || "claude-sonnet-4-6";
+  const model = options.model || opts.claudeModel || CLAUDE_DEFAULT_MODEL;
   if (!apiKey) throw new Error("Anthropic API key missing. Set it in Options.");
 
   const systemPrompt = options.system || getCopilotSystemPrompt("front");
@@ -1458,10 +1663,10 @@ const copilot = {
   triggerShortcut: (window.GHOSTWRITER_DEFAULTS || {}).copilotShortcut || "Cmd+Shift+X",
   triggerShortcutSpec: null,
   // tuning (defaults; overridden by options)
-  frontWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontWordCap || 20,
-  backWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackWordCap || 16,
-  frontMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontMaxTokens || 48,
-  backMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackMaxTokens || 36,
+  frontWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontWordCap || 18,
+  backWordCap: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackWordCap || 14,
+  frontMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotFrontMaxTokens || 40,
+  backMaxTokens: (window.GHOSTWRITER_DEFAULTS || {}).copilotBackMaxTokens || 30,
   minIntervalMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotMinIntervalMs || 1200,
   timeoutMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotTimeoutMs || 30000,
   pauseUntil: 0,
@@ -1474,7 +1679,7 @@ const copilot = {
   showSourceModePill: true,
 };
 copilot.lastFocusedField = "front";
-const STRICT_MATH_RULE = "STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). ALWAYS use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.";
+const STRICT_MATH_RULE = "STRICT MATH RULE: Do NOT use Unicode for mathematical symbols (e.g., do not use ⇒, α, ∫). If the Source contains TeX/LaTeX, preserve the exact source TeX spans instead of converting them to Unicode or plaintext. Otherwise use LaTeX formatting (e.g., \\Rightarrow, \\alpha, \\int). Output math wrapped in standard \\(...\\) or \\[...\\] delimiters.";
 function appendStrictMathRule(promptText) {
   const base = (promptText || "").trim();
   if (!base) return STRICT_MATH_RULE;
@@ -1587,17 +1792,20 @@ function getCopilotSystemPrompt(kind = "front") {
       "Autocomplete one Anki Back field.",
       "Output only the text to insert. No analysis, labels, quotes, markdown, or \"The user\".",
       "Continue after the user's prefix; do not repeat, correct, or restate text already typed.",
-      "Answer the Front exactly. Prefer the smallest source-grounded phrase.",
-      "Supply the missing answer the Front cues; do not turn the Back into a passage summary."
+      "Return exactly one atomic answer. Obey this length cap strictly: <= {{backWordCap}} words.",
+      "In most cases the answer should be a bare noun phrase, name, term, value, or short clause.",
+      "Use a full sentence only if the Front explicitly asks for a definition, explanation, or sentence completion.",
+      "Answer exactly what the Front asks. Do not restate the Front or turn the Back into a passage summary.",
+      "Do not append unasked dates, locations, relative clauses, or descriptors unless required to disambiguate."
     ].join(" ")));
   }
   if (kind === "front-from-back") {
     return appendStrictMathRule(renderPromptTemplate([
-      "Autocomplete one Anki Front field.",
+      "Autocomplete one Anki Front field from an existing Back answer.",
       "Output only the text to insert. No analysis, labels, quotes, markdown, or \"The user\".",
       "Continue after the user's prefix; do not repeat, correct, or restate text already typed.",
-      "Use the Back as the answer contract. Ask for exactly one target.",
-      "Cue, don't disclose: the Front must point at the Back answer while leaving that answer missing."
+      "Use the Back as the answer contract. Ask for exactly one target with enough context and no answer leakage.",
+      "Keep the full Front <= {{frontWordCap}} words. Cue the Back answer while leaving that answer missing."
     ].join(" ")));
   }
   // kind === 'front'
@@ -1605,20 +1813,118 @@ function getCopilotSystemPrompt(kind = "front") {
     "Autocomplete one Anki Front field.",
     "Output only the text to insert. No analysis, labels, quotes, markdown, or \"The user\".",
     "Continue after the user's prefix; do not repeat, correct, or restate text already typed.",
-    "Complete the user's prefix into one durable retrieval cue. No answer leakage.",
-    "Cue, don't disclose: silently identify the minimal Back answer, then write a Front that asks for it without revealing the method, formula, definition, result, name, or example.",
-    "If the completion would need \"by defining\", \"using\", \"where\", \"namely\", or another answer-bearing phrase, stop before that phrase."
+    "Complete the prefix into one durable retrieval cue: one target, unambiguous, enough context, no answer leakage.",
+    "Cue, don't disclose: identify the minimal Back answer, then leave that answer missing from the Front.",
+    "If the completion would need an answer-bearing phrase such as \"by defining\", \"using\", \"where\", or \"namely\", stop before that phrase.",
+    "Prefer a direct question. For command prefixes like State/Define/Name/List, complete the object of the command.",
+    "Do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.",
+    "Keep the full Front <= {{frontWordCap}} words. Preserve the user's target; do not switch to easier source trivia."
   ].join(" ")));
 }
 
 // --- Add near the Copilot state ---
 const SOURCE_MODE_KEY = 'quickflash_source_mode_v1'; // 'auto' | 'clipboard' | 'page'
+const clipboardReadState = {
+  lastPermissionError: "",
+  lastReadError: "",
+};
 
 function normalizeSourceMode(mode) {
   return (mode === 'clipboard' || mode === 'page') ? mode : 'auto';
 }
 
 let currentSourceMode = 'auto';
+
+function compactImageMeta(value, max = 160) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1)).trimEnd()}...`;
+}
+
+function buildImageSelectionSourceText(ctx = {}) {
+  const image = Array.isArray(ctx.selectedImages) ? ctx.selectedImages[0] : null;
+  if (!image) return "";
+  const label = compactImageMeta(image.caption || image.alt || image.title || image.src || "metadata only");
+  const parts = [`Image selected: ${label}.`];
+  if (image.caption) parts.push(`Caption: ${compactImageMeta(image.caption)}.`);
+  if (image.alt) parts.push(`Alt text: ${compactImageMeta(image.alt)}.`);
+  if (image.title) parts.push(`Title: ${compactImageMeta(image.title)}.`);
+  if (image.nearestHeading) parts.push(`Nearest heading: ${compactImageMeta(image.nearestHeading)}.`);
+  if (image.src) parts.push(`Image src: ${compactImageMeta(image.src, 220)}.`);
+  if (image.pageTitle) parts.push(`Page title: ${compactImageMeta(image.pageTitle)}.`);
+  if (image.pageUrl || ctx.url) parts.push(`Page URL: ${compactImageMeta(image.pageUrl || ctx.url, 220)}.`);
+  if (!image.caption && !image.alt && !image.title) {
+    parts.push("Only image metadata was captured; no caption, alt text, or title was available.");
+  }
+  parts.push("Metadata only; do not infer visual content beyond these captured fields.");
+  return parts.join(" ");
+}
+
+function getContextSourceText(ctx = {}) {
+  if (!ctx || typeof ctx !== "object") return "";
+  if (ctx.sourceText) return String(ctx.sourceText || "").trim();
+  if (ctx.selectionKind === "image" || (Array.isArray(ctx.selectedImages) && ctx.selectedImages.length)) {
+    return buildImageSelectionSourceText(ctx).trim();
+  }
+  return String(ctx.selection || "").trim();
+}
+
+function normalizePageContext(ctx = {}) {
+  const sourceText = getContextSourceText(ctx);
+  const hasSelectedImages = Array.isArray(ctx?.selectedImages) && ctx.selectedImages.length > 0;
+  return {
+    ...(ctx || {}),
+    selection: sourceText || String(ctx?.selection || "").trim(),
+    sourceText,
+    selectionKind: ctx?.selectionKind || (hasSelectedImages ? "image" : (sourceText ? "text" : "")),
+    selectedImages: hasSelectedImages ? ctx.selectedImages : [],
+  };
+}
+
+function normalizeContextPageUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.hash && /^#:~:text=/i.test(url.hash)) url.hash = "";
+    return url.toString();
+  } catch {
+    return raw.replace(/#:~:text=.*$/i, "");
+  }
+}
+
+function getContextPageUrl(ctx = {}) {
+  if (!ctx || typeof ctx !== "object") return "";
+  return normalizeContextPageUrl(ctx.url || ctx.pageUrl || ctx.sourceUrl || "");
+}
+
+function sameContextPage(a = {}, b = {}) {
+  const aUrl = getContextPageUrl(a);
+  const bUrl = getContextPageUrl(b);
+  return !!aUrl && !!bUrl && aUrl === bUrl;
+}
+
+function chooseSeedPageContext({ draftCtx = null, liveCtx = null, surface = "" } = {}) {
+  const draft = draftCtx ? normalizePageContext(draftCtx) : null;
+  const live = liveCtx ? normalizePageContext(liveCtx) : null;
+  const draftSource = getContextSourceText(draft);
+  const liveSource = getContextSourceText(live);
+  const draftUrl = getContextPageUrl(draft);
+  const liveUrl = getContextPageUrl(live);
+  const normalizedSurface = surface || getEditorSurface();
+
+  if (normalizedSurface === "side_panel") {
+    if (liveSource) return live;
+    if (draftSource && liveUrl && draftUrl && !sameContextPage(draft, live)) return live;
+    return draftSource ? draft : (live || draft);
+  }
+
+  if (normalizedSurface === "tab") {
+    return draftSource ? draft : (live || draft);
+  }
+
+  return draftSource ? draft : (liveSource ? live : (draft || live));
+}
 
 async function getSourceMode() {
   try { const v = (await chrome.storage.sync.get(SOURCE_MODE_KEY))?.[SOURCE_MODE_KEY];
@@ -1631,23 +1937,144 @@ async function setSourceMode(mode) {
   return v;
 }
 
+async function ensureClipboardReadPermission() {
+  if (!chrome.permissions?.contains || !chrome.permissions?.request) return true;
+  try {
+    const granted = await chrome.permissions.contains({ permissions: ["clipboardRead"] });
+    if (granted) {
+      clipboardReadState.lastPermissionError = "";
+      return true;
+    }
+  } catch {
+    return true;
+  }
+  try {
+    const granted = await chrome.permissions.request({ permissions: ["clipboardRead"] });
+    clipboardReadState.lastPermissionError = granted ? "" : "Chrome did not grant clipboard permission.";
+    return granted;
+  } catch (err) {
+    clipboardReadState.lastPermissionError = err?.message || String(err) || "Chrome blocked clipboard permission.";
+    return false;
+  }
+}
+
 // Robust clipboard read from the side-panel (MV3)
-async function readClipboardSafe() {
-  try { return (await navigator.clipboard.readText())?.trim() || ''; }
-  catch { return ''; } // Brave may still require user gesture; we just no-op if blocked.
+function readClipboardWithPasteCommandFallback() {
+  if (typeof document.execCommand !== "function") return "";
+  const root = document.body || document.documentElement;
+  if (!root) return "";
+  const active = document.activeElement;
+  const ta = document.createElement("textarea");
+  ta.setAttribute("aria-hidden", "true");
+  ta.tabIndex = -1;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.top = "0";
+  ta.style.width = "1px";
+  ta.style.height = "1px";
+  ta.style.opacity = "0";
+  root.appendChild(ta);
+  try {
+    ta.focus({ preventScroll: true });
+    ta.select();
+    const ok = document.execCommand("paste");
+    return ok ? (ta.value || "").trim() : "";
+  } catch (err) {
+    clipboardReadState.lastReadError = err?.message || String(err) || clipboardReadState.lastReadError;
+    return "";
+  } finally {
+    ta.remove();
+    try {
+      if (active && typeof active.focus === "function") active.focus({ preventScroll: true });
+    } catch {}
+  }
+}
+
+async function readClipboardSafe({ requestPermission = false } = {}) {
+  clipboardReadState.lastReadError = "";
+  if (requestPermission && !(await ensureClipboardReadPermission())) return "";
+  try {
+    const text = (await navigator.clipboard.readText())?.trim() || "";
+    if (text) {
+      clipboardReadState.lastReadError = "";
+      return text;
+    }
+    const pasted = readClipboardWithPasteCommandFallback();
+    if (pasted) {
+      clipboardReadState.lastReadError = "";
+      return pasted;
+    }
+    return "";
+  } catch (err) {
+    clipboardReadState.lastReadError = err?.message || String(err) || "Chrome blocked clipboard access.";
+    const pasted = readClipboardWithPasteCommandFallback();
+    if (pasted) {
+      clipboardReadState.lastReadError = "";
+      return pasted;
+    }
+    return "";
+  }
+}
+
+function getClipboardFallbackIssue() {
+  if (clipboardReadState.lastPermissionError) {
+    return "Clipboard Source is enabled, but Chrome has not granted clipboard access. Reload the extension and accept the clipboard permission prompt.";
+  }
+  if (clipboardReadState.lastReadError) {
+    return "Clipboard Source is enabled, but Chrome blocked reading the clipboard. Copy the source again, then click Generate or use Clipboard Source mode.";
+  }
+  return "";
+}
+
+function getNoSourceTextMessage(sourceIssue = "") {
+  return sourceIssue || getClipboardFallbackIssue() || "No source text (type, select text, or enable clipboard-as-Source).";
+}
+
+function notifyNoSourceText({ target = "status", sourceIssue = "" } = {}) {
+  const message = getNoSourceTextMessage(sourceIssue);
+  if (target === "copilot") {
+    setCopilotStatus(message, true);
+  } else {
+    status(message);
+    if (sourceIssue || getClipboardFallbackIssue()) {
+      showCopilotNotice(message, { error: true });
+    }
+  }
+  return message;
+}
+
+function isClipboardFallbackEnabled(opts = {}) {
+  if (typeof opts.clipboardFallback === "boolean") return opts.clipboardFallback;
+  if (typeof opts.clipboardAsSourceIfNoSelection === "boolean") return opts.clipboardAsSourceIfNoSelection;
+  if (typeof opts.pasteClipboardIfNoSelection === "boolean") return opts.pasteClipboardIfNoSelection;
+  return (window.GHOSTWRITER_DEFAULTS || {}).clipboardFallback !== false;
+}
+
+function hasVisibleSourceModeControl() {
+  return ["#sourceMode", "#sourceModeToggle"].some((selector) => {
+    const el = document.querySelector(selector);
+    if (!el || el.hidden || el.getAttribute("aria-hidden") === "true") return false;
+    const style = typeof getComputedStyle === "function" ? getComputedStyle(el) : null;
+    return !style || (style.display !== "none" && style.visibility !== "hidden");
+  });
 }
 
 // If there is no selection (or mode demands), fill pageCtx.selection from clipboard.
 async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, force = false } = {}) {
-  const clip = await readClipboardSafe();
+  if (!force) {
+    const opts = await getOptions();
+    if (!isClipboardFallbackEnabled(opts)) return false;
+  }
+  const clip = await readClipboardSafe({ requestPermission: true });
   const hasClip = !!clip;
   if (!hasClip && !allowEmpty) return false;
   window.copilot = window.copilot || {};
-  const hasPageSelection = !!(copilot?.pageCtx?.selection || "").trim() && !copilot?.pageCtx?.usingClipboard;
+  const hasPageSelection = !!getContextSourceText(copilot?.pageCtx) && !copilot?.pageCtx?.usingClipboard;
   if (!force && hasPageSelection) return false;
   copilot.pageCtx = {
     ...(copilot.pageCtx || {}),
     selection: clip || "",
+    sourceText: clip || "",
     usingClipboard: force || hasClip,
   };
   // reflect in UI if you have a "Source" textarea
@@ -1665,16 +2092,34 @@ async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, f
   return hasClip;
 }
 
-async function refreshPageSelectionFromTab({ fresh = null } = {}) {
+async function refreshPageSelectionFromTab({ fresh = null, applyToEditor = false, clearStale = false } = {}) {
   try {
-    const ctx = fresh || await getPageContext();
-    const selection = (ctx?.selection || "").trim();
-    if (!selection) return "";
-    const current = (copilot?.pageCtx?.selection || "").trim();
+    const ctx = normalizePageContext(fresh || await getPageContext());
+    const selection = getContextSourceText(ctx);
+    const currentCtx = copilot?.pageCtx || null;
+    const pageChanged = !!getContextPageUrl(ctx) && !!getContextPageUrl(currentCtx) && !sameContextPage(ctx, currentCtx);
+    if (!selection) {
+      if (clearStale && pageChanged) {
+        copilot.pageCtx = { ...ctx, selection: "", sourceText: "", usingClipboard: false };
+        const sourceEl = document.querySelector("#source");
+        if (sourceEl && sourceEl.value) {
+          sourceEl.value = "";
+          delete sourceEl.dataset.autoClipboard;
+          sourceEl.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        updateOverlaySourceChrome();
+        refreshDebugSource();
+      }
+      return "";
+    }
+    const current = getContextSourceText(copilot?.pageCtx);
     const usingClipboard = !!copilot?.pageCtx?.usingClipboard;
     if (!copilot.pageCtx || usingClipboard || selection !== current) {
       copilot.pageCtx = { ...(copilot.pageCtx || {}), ...ctx, selection, usingClipboard: false };
       refreshDebugSource();
+    }
+    if (applyToEditor) {
+      applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
     }
     return selection;
   } catch {}
@@ -1699,13 +2144,15 @@ function clearClipboardSource({ notify = false } = {}) {
 }
 
 function applyPageContextToEditor(ctx, { dispatch = true, preserveUserText = false } = {}) {
-  const selection = (ctx?.selection || "").trim();
+  const normalizedCtx = normalizePageContext(ctx || {});
+  const selection = getContextSourceText(normalizedCtx);
   if (!selection) return false;
   const sourceEl = document.querySelector("#source");
   if (!sourceEl) return false;
   if (preserveUserText && sourceEl.value.trim()) return false;
   delete sourceEl.dataset.autoClipboard;
   sourceEl.value = selection;
+  if (copilot) copilot.pageCtx = { ...(copilot.pageCtx || {}), ...normalizedCtx, selection };
   if (dispatch) sourceEl.dispatchEvent(new Event("input", { bubbles: true }));
   updateOverlaySourceChrome();
   refreshDebugSource();
@@ -1766,25 +2213,35 @@ async function ensureSourceFromMode(mode, { wantPaste = false } = {}) {
     await applyClipboardFallback({ wantPaste, allowEmpty: true, force: true });
     return normalized;
   }
-  if (normalized === 'auto') {
-    let sel = copilot?.pageCtx?.selection?.trim();
-    if (copilot?.pageCtx?.usingClipboard) {
-      const refreshed = await refreshPageSelectionFromTab();
-      if (refreshed) sel = refreshed;
+  if (normalized === 'page') {
+    const sel = await refreshPageSelectionFromTab({ applyToEditor: true, clearStale: true });
+    if (!sel) {
+      const src = document.querySelector('#source');
+      if (src && src.value) {
+        src.value = "";
+        delete src.dataset.autoClipboard;
+        src.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (copilot?.pageCtx) copilot.pageCtx = { ...(copilot.pageCtx || {}), usingClipboard: false };
+      updateOverlaySourceChrome();
+      refreshDebugSource();
+      const opts = await getOptions();
+      if (isClipboardFallbackEnabled(opts) && !hasVisibleSourceModeControl()) {
+        const used = await applyClipboardFallback({ wantPaste, allowEmpty: true });
+        if (used) {
+          const saved = await setSourceMode("auto");
+          renderSourceMode(saved);
+          return saved;
+        }
+      }
     }
+  }
+  if (normalized === 'auto') {
+    let sel = await refreshPageSelectionFromTab({ applyToEditor: true, clearStale: true });
+    if (!sel) sel = getContextSourceText(copilot?.pageCtx);
     if (!sel) {
       await applyClipboardFallback({ wantPaste, allowEmpty: true });
     }
-  }
-  if (normalized === "page" && copilot?.pageCtx?.usingClipboard) {
-    copilot.pageCtx = { ...(copilot.pageCtx || {}), usingClipboard: false };
-    try {
-      const fresh = await getPageContext();
-      if (fresh) {
-        copilot.pageCtx = fresh;
-        refreshDebugSource();
-      }
-    } catch {}
   }
   if (wantPaste && normalized !== 'page') {
     const src = document.querySelector('#source');
@@ -1811,26 +2268,35 @@ async function syncSourceMode({ wantPaste = false } = {}) {
 
 // Seed from storage (set by content.js on overlay open) or ask active tab
 async function seedCopilotPageContext() {
+  let draftCtx = null;
+  let liveCtx = null;
   try {
     const { quickflash_lastDraft } = await chrome.storage.local.get("quickflash_lastDraft");
-    if (quickflash_lastDraft) {
-      copilot.pageCtx = quickflash_lastDraft;           // prefer exact overlay context
-      await chrome.storage.local.remove("quickflash_lastDraft").catch(() => {});
-      if ((quickflash_lastDraft.selection || "").trim()) {
-        await clearManualDraftStorage().catch(() => {});
-      }
-      applyPageContextToEditor(quickflash_lastDraft, { preserveUserText: false });
-      refreshDebugSource();
-      return;
-    }
+    draftCtx = quickflash_lastDraft || null;
+    if (quickflash_lastDraft) await chrome.storage.local.remove("quickflash_lastDraft").catch(() => {});
   } catch {}
-  // Fallback: ask the active tab live
+
   try {
-    copilot.pageCtx = await getPageContext();           // { selection, url, title }
-    refreshDebugSource();
-  } catch {
+    liveCtx = await getPageContext();
+  } catch {}
+
+  const chosen = chooseSeedPageContext({
+    draftCtx,
+    liveCtx,
+    surface: getEditorSurface(),
+  });
+
+  if (!chosen) {
     copilot.pageCtx = null;
+    return;
   }
+
+  copilot.pageCtx = normalizePageContext(chosen);
+  if (getContextSourceText(copilot.pageCtx)) {
+    await clearManualDraftStorage().catch(() => {});
+    applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
+  }
+  refreshDebugSource();
 }
 
 // Listen for overlay push (content.js posts this to the panel iframe)
@@ -1839,15 +2305,16 @@ window.addEventListener("message", async (event) => {
   // Only accept messages from the extension origin or same-origin (side panel)
   if (event.origin !== EXTENSION_ORIGIN && event.origin !== location.origin) return;
   if (event?.data?.type === "quickflash:context") {
-    const incomingSelection = (event.data.payload?.selection || "").trim();
+    const incomingCtx = normalizePageContext(event.data.payload || {});
+    const incomingSelection = getContextSourceText(incomingCtx);
     if (incomingSelection) clearClipboardSource({ notify: true });
 
-    copilot.pageCtx = event.data.payload || copilot.pageCtx; // latest overlay context
+    copilot.pageCtx = incomingCtx || copilot.pageCtx; // latest overlay context
     applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
     resetCopilotLocks();
     refreshDebugSource();
 
-    const sel = (copilot.pageCtx?.selection || "").trim();
+    const sel = getContextSourceText(copilot.pageCtx);
     const mode = await getSourceMode();
     renderSourceMode(mode);
 
@@ -1862,10 +2329,11 @@ window.addEventListener("message", async (event) => {
       }
       if (!textToPaste && mode !== 'page') {
         const used = await applyClipboardFallback({ wantPaste: true, allowEmpty: true, force: mode === 'clipboard' });
-        if (used && copilot?.pageCtx?.selection) {
+        const clipboardText = getContextSourceText(copilot?.pageCtx);
+        if (used && clipboardText) {
           const back = document.querySelector("#back");
           if (back) {
-            back.value = copilot.pageCtx.selection;
+            back.value = clipboardText;
             back.dispatchEvent(new Event("input", { bubbles: true }));
           }
         }
@@ -1886,7 +2354,7 @@ window.addEventListener("message", async (event) => {
     setCopilotStatus("Copilot ready.");
   }
   if (event?.data?.type === "quickflash:queueCurrentCard") {
-    await queueCurrentCardForReview();
+    await addToAnki();
   }
 });
 
@@ -1977,7 +2445,9 @@ function cancelCopilotRequests() {
 async function persistCopilotPreference(enabled) {
   try {
     const opts = await getOptions();
-    await chrome.storage.sync.set({ quickflash_options: { ...opts, autoCompleteAI: !!enabled } });
+    await chrome.storage.sync.set({
+      quickflash_options: sanitizeOptionsForSync({ ...opts, autoCompleteAI: !!enabled }),
+    });
   } catch (err) {
     console.warn("Failed to persist Copilot preference", err);
     setCopilotStatus("Could not save Copilot preference. It may reset next time.", true);
@@ -1997,7 +2467,7 @@ function setCopilotEnabled(nextEnabled, { persist = false } = {}) {
     setCopilotStatus("Copilot off.");
   } else if (!copilot.apiConfigured) {
     cancelCopilotRequests();
-    const providerName = copilot.provider === "gemini" ? "Google Gemini" : "OpenAI / UltimateAI";
+    const providerName = getProviderDisplayName(copilot.provider);
     setCopilotStatus(`Add your ${providerName} API key in Options to use Copilot.`, true);
   } else {
     if (copilot.manualOnly) {
@@ -2053,6 +2523,417 @@ function buildCompletionPrefixIndex(value) {
   return { text: chars.join(""), positions };
 }
 
+function getTypedWordCount(value) {
+  return String(value || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+function isStateCommandPrefix(prefixText) {
+  return /^state\s*$/i.test(String(prefixText || "").trim());
+}
+
+function isDistinctiveSingleSourceStemPrefix(prefixText) {
+  const prefix = String(prefixText || "").trim();
+  const words = prefix.split(/\s+/).filter(Boolean);
+  if (words.length !== 1) return false;
+  if (isStateCommandPrefix(prefix)) return false;
+
+  const word = words[0].replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+  const normalized = buildCompletionPrefixIndex(word).text;
+  if (!normalized) return false;
+  if (/^(?:a|an|the|in|on|of|to|for|with|by|and|or|but|what|who|when|where|why|how|which|state|define|name|list|explain|describe)$/i.test(word)) {
+    return false;
+  }
+  if (/^[A-Z0-9]{2,}s?$/u.test(word)) return true;
+  if (/['’‘`\-\d]/u.test(prefix) && normalized.length >= 4) return true;
+  return normalized.length >= 6;
+}
+
+function getSourceStemMatch(sourceText, prefixText) {
+  const source = String(sourceText || "");
+  const prefix = String(prefixText || "").trim();
+  const typedWords = getTypedWordCount(prefix);
+  const allowSingleWord = typedWords === 1 && isDistinctiveSingleSourceStemPrefix(prefix);
+  if (!source || !prefix || (typedWords < 2 && !allowSingleWord)) return null;
+
+  const sourceIndex = buildCompletionPrefixIndex(source);
+  const prefixIndex = buildCompletionPrefixIndex(prefix);
+  if (!sourceIndex.text || !prefixIndex.text) return null;
+
+  const start = sourceIndex.text.indexOf(prefixIndex.text);
+  if (start === -1) return null;
+  if (allowSingleWord && start > 80) return null;
+  const before = start > 0 ? sourceIndex.text[start - 1] : "";
+  const after = sourceIndex.text[start + prefixIndex.text.length] || "";
+  if (before && /[a-z0-9]/.test(before)) return null;
+  if (after && /[a-z0-9]/.test(after)) return null;
+
+  const originalStart = start === 0 ? 0 : (sourceIndex.positions[start - 1] || 0);
+  const originalEnd = sourceIndex.positions[start + prefixIndex.text.length - 1] || 0;
+  const continuation = source.slice(originalEnd).replace(/^\s+/, "");
+  if (!continuation || /^[.?!]/.test(continuation.trim())) return null;
+
+  return {
+    kind: "source-stem",
+    prefix: source.slice(originalStart, originalEnd).replace(/\s+/g, " ").trim() || prefix,
+    continuation,
+    continuationPreview: continuation.replace(/\s+/g, " ").trim().slice(0, 180),
+  };
+}
+
+const STATEMENT_VERB_PATTERN = "states?|says|holds|claims|argues|asserts|posits|maintains|suggests?|recommends?";
+const STATEMENT_REFERENT_PATTERN = "adage|law|principle|maxim|rule|aphorism|proverb|saying|observation|claim|hypothesis|theorem|doctrine|dictum|motto";
+const EQUATION_REFERENT_PATTERN = "formula|equation|identity|equality|expression";
+
+function normalizeStatementSourceText(value) {
+  return String(value || "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\r?\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanStatementSubject(value) {
+  return normalizeStatementSourceText(value)
+    .replace(/\s+\((?:or|also\s+known\s+as|also\s+called|aka|a\.k\.a\.)\s+[^)]*\)\s*$/i, "")
+    .replace(/[;:,.!?]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanStatementAlias(value) {
+  return cleanStatementSubject(value)
+    .replace(/^(?:also\s+known\s+as|also\s+called|aka|a\.k\.a\.|or)\s+/i, "")
+    .replace(/^(?:an?|the)\s+/i, "")
+    .trim();
+}
+
+function extractStatementAliases(value) {
+  const raw = normalizeStatementSourceText(value);
+  if (!raw) return [];
+  return raw
+    .replace(/^(?:or|also\s+known\s+as|also\s+called|aka|a\.k\.a\.)\s+/i, "")
+    .split(/\s*(?:;|,|\bor\b|\balso\s+known\s+as\b|\balso\s+called\b)\s*/i)
+    .map(cleanStatementAlias)
+    .filter((alias) => alias.length >= 2);
+}
+
+function extractStatementKinds(...values) {
+  const kinds = new Set();
+  const pattern = new RegExp(`\\b(${STATEMENT_REFERENT_PATTERN})\\b`, "gi");
+  for (const value of values) {
+    const text = normalizeStatementSourceText(value);
+    let match;
+    while ((match = pattern.exec(text))) {
+      kinds.add(match[1].toLowerCase());
+    }
+  }
+  return [...kinds];
+}
+
+function normalizeStatementVerb(value, fallback = "states") {
+  const verb = String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (!verb) return fallback;
+  const gerunds = {
+    stating: "states",
+    saying: "says",
+    holding: "holds",
+    claiming: "claims",
+    arguing: "argues",
+    asserting: "asserts",
+    positing: "posits",
+    maintaining: "maintains",
+    suggesting: "suggests",
+    recommending: "recommends",
+  };
+  if (gerunds[verb]) return gerunds[verb];
+  if (/^(?:stated|expressed|summarized|phrased)$/.test(verb)) return "states";
+  return verb;
+}
+
+function cleanStatementAnswer(value) {
+  let answer = normalizeStatementSourceText(value)
+    .replace(/[.!?]+$/g, "")
+    .trim();
+  const quoted = answer.match(/^["“”'‘’](.+)["“”'‘’]$/);
+  if (quoted?.[1]) answer = quoted[1].trim();
+  return cleanSourceStemAnswer(answer).replace(/[.!?]+$/g, "").trim();
+}
+
+function parseDirectStatementSplit(sourceText) {
+  const source = normalizeStatementSourceText(sourceText);
+  if (!source) return null;
+  const sentence = firstSourceStemSentence(source) || source;
+  const match = sentence.match(new RegExp(
+    `^(.{2,180}?)\\s+\\b(${STATEMENT_VERB_PATTERN})\\b\\s*(?:,|:|[-–—])?\\s*(?:that\\s+)?(.+)$`,
+    "i"
+  ));
+  if (!match) return null;
+
+  const subject = cleanStatementSubject(match[1]);
+  const verb = normalizeStatementVerb(match[2]);
+  const answer = cleanStatementAnswer(match[3]);
+  if (!subject || !verb || !answer) return null;
+  return { subject, verb, answer };
+}
+
+function parseCopularStatementSplit(sourceText) {
+  const source = normalizeStatementSourceText(sourceText);
+  if (!source) return null;
+  const sentence = firstSourceStemSentence(source) || source;
+  const match = sentence.match(new RegExp(
+    `^(.{2,140}?)(?:\\s+\\(([^)]{2,160})\\))?\\s+(?:is|are|was|were)\\s+((?:(?![.!?]).){0,220}?\\b(?:${STATEMENT_REFERENT_PATTERN})\\b(?:(?![.!?]).){0,120}?)\\s+(?:that|which)\\s+(.+)$`,
+    "i"
+  ));
+  if (!match) return null;
+
+  const subject = cleanStatementSubject(match[1]);
+  const aliases = extractStatementAliases(match[2] || "");
+  const description = match[3] || "";
+  const kinds = extractStatementKinds(subject, ...aliases, description);
+  if (!subject || !kinds.length) return null;
+
+  let verb = "states";
+  let answerText = match[4];
+  const statedAs = answerText.match(/^(?:(?:is|are|was|were)\s+)?(?:typically|commonly|usually|often|generally)?\s*(stated|expressed|summarized|phrased)\s+as\s*:?\s*(.+)$/i);
+  if (statedAs) {
+    verb = normalizeStatementVerb(statedAs[1]);
+    answerText = statedAs[2];
+  } else {
+    const verbMatch = answerText.match(new RegExp(
+      `^\\b(${STATEMENT_VERB_PATTERN}|stating|saying|holding|claiming|arguing|asserting|positing|maintaining|suggesting|recommending)\\b\\s*(?:that\\s+)?(.+)$`,
+      "i"
+    ));
+    if (verbMatch) {
+      verb = normalizeStatementVerb(verbMatch[1]);
+      answerText = verbMatch[2];
+    }
+  }
+
+  const answer = cleanStatementAnswer(answerText);
+  if (!verb || !answer) return null;
+  return {
+    subject,
+    ...(aliases.length ? { aliases } : {}),
+    verb,
+    answer,
+  };
+}
+
+function parseEquationStatementSplit(sourceText) {
+  const source = normalizeStatementSourceText(sourceText);
+  if (!source) return null;
+  const sentence = firstSourceStemSentence(source) || source;
+  const keywordMatch = sentence.match(new RegExp(
+    `^(.{2,160}?)\\s+(?:is|are|was|were)\\s+((?:(?:often|usually|commonly|typically)\\s+)?(?:(?:expressed|given|represented|written)\\s+(?:by|as)\\s+)?(?:the\\s+)?(?:${EQUATION_REFERENT_PATTERN}))\\s+(.+)$`,
+    "i"
+  ));
+  if (keywordMatch) {
+    const subject = cleanStatementSubject(keywordMatch[1]);
+    const verb = `is ${normalizeStatementSourceText(keywordMatch[2]).toLowerCase()}`;
+    const answer = cleanStatementAnswer(keywordMatch[3].replace(/^that\s+/i, ""));
+    if (subject && verb && answer) return { subject, verb, answer };
+  }
+
+  const writtenAs = sentence.match(/^(.{2,160}?)\s+(?:is|are|was|were)\s+((?:often|usually|commonly|typically)\s+)?(written|expressed|given|represented)\s+as\s+(.+)$/i);
+  if (!writtenAs) return null;
+  const answer = cleanStatementAnswer(writtenAs[4]);
+  if (!/[=+\-*/^π]/.test(answer)) return null;
+  const subject = cleanStatementSubject(writtenAs[1]);
+  const qualifier = writtenAs[2] ? `${writtenAs[2].replace(/\s+/g, " ").trim()} ` : "";
+  const verb = `is ${qualifier}${writtenAs[3].toLowerCase()} as`;
+  if (!subject || !verb || !answer) return null;
+  return { subject, verb, answer };
+}
+
+function getNamedStatementSubject(sourceText) {
+  const source = normalizeStatementSourceText(sourceText);
+  const sentence = firstSourceStemSentence(source) || source;
+  if (!sentence) return null;
+
+  const match = sentence.match(new RegExp(
+    `^(.{2,140}?)(?:\\s+\\(([^)]{2,160})\\))?\\s+(?:is|are|was|were)\\s+((?:(?![.!?]).){0,180}?\\b(?:${STATEMENT_REFERENT_PATTERN})\\b(?:(?![.!?]).){0,80})$`,
+    "i"
+  ));
+  if (!match) return null;
+
+  const subject = cleanStatementSubject(match[1]);
+  const aliases = extractStatementAliases(match[2] || "");
+  const description = match[3] || "";
+  const kinds = extractStatementKinds(subject, ...aliases, description);
+  if (!subject || !kinds.length) return null;
+  return { subject, aliases, kinds };
+}
+
+function parseAnaphoricStatementSplit(sourceText, named) {
+  const source = normalizeStatementSourceText(sourceText);
+  if (!source || !named?.subject || !Array.isArray(named.kinds) || !named.kinds.length) return null;
+  const kindPattern = named.kinds
+    .map((kind) => kind.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const match = source.match(new RegExp(
+    `\\b(?:the|this|that)\\s+(?:${kindPattern})\\s+\\b(${STATEMENT_VERB_PATTERN})\\b\\s*(?:,|:|[-–—])?\\s*(?:that\\s+)?([\\s\\S]+)$`,
+    "i"
+  ));
+  if (!match) return null;
+
+  const answerSentence = firstSourceStemSentence(match[2]) || match[2];
+  const answer = cleanStatementAnswer(answerSentence);
+  const verb = normalizeStatementVerb(match[1]);
+  if (!answer || !verb) return null;
+  return {
+    subject: named.subject,
+    ...(named.aliases?.length ? { aliases: named.aliases } : {}),
+    verb,
+    answer,
+  };
+}
+
+function getSourceStatementSplit(sourceText) {
+  const copular = parseCopularStatementSplit(sourceText);
+  if (copular) return copular;
+
+  const equation = parseEquationStatementSplit(sourceText);
+  if (equation) return equation;
+
+  const direct = parseDirectStatementSplit(sourceText);
+  if (direct) return direct;
+
+  const named = getNamedStatementSubject(sourceText);
+  if (!named) return null;
+  return parseAnaphoricStatementSplit(sourceText, named);
+}
+
+function getStatementSubjectForPrefix(statement, prefixText) {
+  const candidates = [statement?.subject, ...(statement?.aliases || [])].filter(Boolean);
+  const prefixIndex = buildCompletionPrefixIndex(prefixText);
+  if (!prefixIndex.text) return statement?.subject || "";
+  for (const candidate of candidates) {
+    const candidateIndex = buildCompletionPrefixIndex(candidate);
+    if (candidateIndex.text.startsWith(prefixIndex.text)) return candidate;
+  }
+  return statement?.subject || "";
+}
+
+function sourceStemTargetsStatement(match, statement) {
+  if (!match?.prefix || !statement?.subject) return false;
+  const prefixIndex = buildCompletionPrefixIndex(match.prefix);
+  if (!prefixIndex.text) return false;
+  const candidates = [statement.subject, ...(statement.aliases || [])];
+  return candidates.some((candidate) => {
+    const candidateIndex = buildCompletionPrefixIndex(candidate);
+    return candidateIndex.text.startsWith(prefixIndex.text) || prefixIndex.text.startsWith(candidateIndex.text);
+  });
+}
+
+function cleanSourceStemAnswer(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,;:.\-–—]+/, "")
+    .replace(/[;:]+$/g, "")
+    .trim();
+}
+
+function firstSourceStemSentence(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const match = text.match(/^([\s\S]*?[.!?])(?:\s+|$)/);
+  return (match?.[1] || text).replace(/[.!?]+$/g, "").trim();
+}
+
+function buildSourceStemCompletion(frontLead, answer) {
+  const lead = String(frontLead || "")
+    .replace(/\s+/g, " ")
+    .replace(/[\s,;:.\-–—]+$/g, "")
+    .trim();
+  const back = cleanSourceStemAnswer(answer).replace(/[.!?]+$/g, "").trim();
+  if (!lead || !back) return null;
+  const answerWords = back.split(/\s+/).filter(Boolean);
+  if (answerWords.length < 1 || answerWords.length > 24) return null;
+  return {
+    frontSuffix: `${lead}...`,
+    back,
+  };
+}
+
+function isExactComplementSourceStemPrefix(prefixText) {
+  const prefix = normalizeStatementSourceText(prefixText).toLowerCase();
+  return /\b(?:is|are|was|were|means|equals|denotes|refers to|consists of|is defined as|are defined as|is called|are called|is named after|are named after|was named after|were named after|is named for|are named for|was named for|were named for)\s*$/.test(prefix);
+}
+
+function buildExactComplementSourceStemCompletion(answer) {
+  const back = cleanSourceStemAnswer(answer).replace(/[.!?]+$/g, "").trim();
+  if (!back) return null;
+  const answerWords = back.split(/\s+/).filter(Boolean);
+  if (answerWords.length < 1 || answerWords.length > 24) return null;
+  return {
+    frontSuffix: "...",
+    back,
+  };
+}
+
+function buildStatementSourceStemCompletion(statement, prefixText, { command = false } = {}) {
+  if (!statement?.subject || !statement?.answer) return null;
+  const subject = command ? statement.subject : getStatementSubjectForPrefix(statement, prefixText);
+  const fullFront = command
+    ? subject
+    : `${subject} ${statement.verb || "states"}...`;
+  const frontSuffix = stripExistingPrefixFromCompletion(fullFront, prefixText);
+  const back = cleanSourceStemAnswer(statement.answer).replace(/[.!?]+$/g, "").trim();
+  if (!frontSuffix || !back) return null;
+  return {
+    frontSuffix,
+    back,
+  };
+}
+
+function inferSourceStemCompletion(sourceText, prefixText) {
+  if (isStateCommandPrefix(prefixText)) {
+    const statement = getSourceStatementSplit(sourceText);
+    const completion = buildStatementSourceStemCompletion(statement, prefixText, { command: true });
+    if (completion) return { ...completion, kind: "source-stem", split: "statement-command" };
+  }
+
+  const match = getSourceStemMatch(sourceText, prefixText);
+  if (!match?.continuation) return null;
+
+  const sourceStatement = getSourceStatementSplit(sourceText);
+  if (sourceStemTargetsStatement(match, sourceStatement)) {
+    const completion = buildStatementSourceStemCompletion(sourceStatement, prefixText);
+    if (completion) return { ...completion, kind: "source-stem", split: "statement" };
+  }
+
+  const sentence = firstSourceStemSentence(match.continuation);
+  if (!sentence) return null;
+
+  const statement = getSourceStatementSplit(`${match.prefix} ${sentence}`);
+  if (statement) {
+    const completion = buildStatementSourceStemCompletion(statement, prefixText);
+    if (completion) return { ...completion, kind: "source-stem", split: "statement" };
+  }
+
+  if (isExactComplementSourceStemPrefix(prefixText)) {
+    const completion = buildExactComplementSourceStemCompletion(sentence);
+    if (completion) return { ...completion, kind: "source-stem", split: "source-complement" };
+  }
+
+  const contrast = sentence.match(/^(.{8,}?\b(?:not|never|without)\b.{0,140}?)\s+(?:and|but|rather\s+than|rather|instead)\s+(.+)$/i);
+  if (contrast) {
+    const completion = buildSourceStemCompletion(contrast[1], contrast[2]);
+    if (completion) return { ...completion, kind: "source-stem", split: "contrast" };
+  }
+
+  const passiveComplement = sentence.match(
+    /^(.{5,}?\b(?:(?:can|could|may|might|must|should|will|would)\s+(?:also\s+)?(?:be\s+)?|(?:is|are|was|were|be|been|being)\s+(?:also\s+)?)[a-z]+(?:ed|en)\s+(?:to|for|as|in|on|with|by|after))\s+(.+)$/i
+  );
+  if (passiveComplement) {
+    const completion = buildSourceStemCompletion(passiveComplement[1], passiveComplement[2]);
+    if (completion) return { ...completion, kind: "source-stem", split: "passive-complement" };
+  }
+
+  return null;
+}
+
 function stripExistingPrefixFromCompletion(completionText, existingText) {
   const text = String(completionText || "");
   const existing = String(existingText || "").trim();
@@ -2061,6 +2942,8 @@ function stripExistingPrefixFromCompletion(completionText, existingText) {
   const lowerText = text.toLowerCase();
   const lowerExisting = existing.toLowerCase();
   if (lowerText.startsWith(lowerExisting)) {
+    const next = text[existing.length] || "";
+    if (next && /[a-z0-9]/i.test(next)) return "";
     return text.slice(existing.length).replace(/^\s+/, "");
   }
   if (lowerExisting.startsWith(lowerText) && lowerText.length < lowerExisting.length) {
@@ -2076,8 +2959,7 @@ function stripExistingPrefixFromCompletion(completionText, existingText) {
   if (!prefix || !completionIndex.text.startsWith(prefix)) return text;
 
   const next = completionIndex.text[prefix.length] || "";
-  const prefixHasWordBreak = /\s/.test(prefix);
-  const safeBoundary = !next || !/[a-z0-9]/i.test(next) || prefixHasWordBreak;
+  const safeBoundary = !next || !/[a-z0-9]/i.test(next);
   if (!safeBoundary) return text;
 
   const cut = completionIndex.positions[prefix.length - 1] || 0;
@@ -2103,11 +2985,31 @@ function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWord
   const cap = typeof maxWords === "number"
     ? maxWords
     : (role === "front" ? copilot.frontWordCap : copilot.backWordCap);
-  const words = text.split(/\s+/);
-  if (words.length > cap) text = words.slice(0, cap).join(" ");
+  text = truncateCopilotSuggestionWords(text, cap, role);
 
   // IMPORTANT: do NOT drop suffix matches; streaming models often send suffix-sized deltas first.
   return text;
+}
+
+function isDanglingCompletionWord(value) {
+  return /^(?:and|or|but|the|a|an|of|to|than|with|by|because|that|which|who|where|when|how|not|don'?t|doesn'?t|can'?t|won'?t)$/i
+    .test(String(value || "").replace(/^[^\w']+|[^\w']+$/g, ""));
+}
+
+function truncateCopilotSuggestionWords(text, cap, role = "front") {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  if (!Number.isFinite(cap) || cap <= 0 || words.length <= cap) return text;
+  if (role !== "back") return words.slice(0, cap).join(" ");
+
+  if (words.length - cap <= 4) return words.join(" ");
+
+  let end = cap;
+  const maxEnd = Math.min(words.length, cap + 6);
+  while (end < maxEnd && isDanglingCompletionWord(words[end - 1])) {
+    end += 1;
+  }
+  if (words.length - end <= 3) end = words.length;
+  return words.slice(0, end).join(" ");
 }
 
 function stripCopilotMetaOutput(rawText) {
@@ -2179,6 +3081,23 @@ function finalizeFrontQuestion(text) {
   return s; // leave as-is
 }
 
+const FRONT_ANSWER_CUE_TERMS = new Set([
+  "also", "known", "called", "named", "termed", "referred",
+  "what", "which", "type", "kind", "class", "category", "form",
+  "thing", "concept", "term", "word", "phrase", "name", "answer",
+  "method", "approach", "technique", "process", "property", "characteristic",
+]);
+
+const FRONT_ANSWER_CONTEXT_TERMS = new Set([
+  "artificial", "neural", "network", "networks",
+  "data", "feature", "features", "model", "models", "representation", "representations",
+]);
+
+const FRONT_ANSWER_GENERIC_TERMS = new Set([
+  ...FRONT_ANSWER_CUE_TERMS,
+  ...FRONT_ANSWER_CONTEXT_TERMS,
+]);
+
 function normalizeFrontLeakText(value) {
   return String(value || "")
     .replace(/\\\((.*?)\\\)/g, " $1 ")
@@ -2188,6 +3107,380 @@ function normalizeFrontLeakText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+function normalizeAnswerTerm(value) {
+  let term = String(value || "")
+    .toLowerCase()
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+  if (!term) return "";
+  if (term.length > 5 && term.endsWith("ances")) term = `${term.slice(0, -5)}ant`;
+  else if (term.length > 4 && term.endsWith("ance")) term = `${term.slice(0, -4)}ant`;
+  else if (term.length > 5 && term.endsWith("ences")) term = `${term.slice(0, -5)}ent`;
+  else if (term.length > 4 && term.endsWith("ence")) term = `${term.slice(0, -4)}ent`;
+  else if (term.length > 4 && term.endsWith("ies")) term = `${term.slice(0, -3)}y`;
+  else if (term.length > 3 && term.endsWith("s")) term = term.slice(0, -1);
+  return term;
+}
+
+function singularizeAnswerTerm(value) {
+  return normalizeAnswerTerm(value);
+}
+
+function getAnswerTerms(value, { distinctiveOnly = false } = {}) {
+  const terms = normalizeFrontLeakText(value)
+    .split(/[^a-z0-9]+/i)
+    .map(normalizeAnswerTerm)
+    .filter(Boolean)
+    .filter((term) => term.length >= 3);
+  const unique = [...new Set(terms)];
+  if (!distinctiveOnly) return unique;
+  const distinctive = unique.filter((term) => !FRONT_ANSWER_GENERIC_TERMS.has(term));
+  if (distinctive.length) return distinctive;
+  return unique.filter((term) => !FRONT_ANSWER_CUE_TERMS.has(term));
+}
+
+function isAdvantageFront(frontText) {
+  return /\bwhat\s+(?:is\s+the\s+|are\s+the\s+)?advantages?\b/i.test(String(frontText || ""));
+}
+
+function inferAnswerRoleFromFront(frontText) {
+  if (isAdvantageFront(frontText)) {
+    return {
+      kind: "advantage",
+      instruction: "Answer shape: standalone advantage/benefit. Use a finite clause such as \"they require less training time\" or a concise noun phrase; avoid dangling phrases like \"requiring...\".",
+    };
+  }
+  return null;
+}
+
+function stripAdvantageComparisonTail(text) {
+  return String(text || "")
+    .replace(/\s+\bthan\b[\s\S]*$/i, "")
+    .replace(/\s+\bcompared\s+to\b[\s\S]*$/i, "")
+    .trim();
+}
+
+function normalizeDefinedTermAlias(value) {
+  return String(value || "")
+    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")
+    .replace(/^(?:an?|the)\s+/i, "")
+    .replace(/^adjective\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inferExplicitDefinitionFromSource(sourceText) {
+  const sentence = String(sourceText || "")
+    .trim()
+    .split(/(?:[.!?]\s+|\n)/)[0]
+    ?.trim() || "";
+  if (!sentence) return null;
+
+  const patterns = [
+    /^(?:in\s+[^,]+,\s+)?(?:an?|the)\s+(.+?)\s+\(([A-Z][A-Z0-9-]{1,12})\)\s+(?:is|are|refers?\s+to|means?)\s+(.+)$/i,
+    /^(?:in\s+[^,]+,\s+)?(?:an?|the)\s+(.+?)\s+(?:is|are|refers?\s+to|means?)\s+(.+)$/i,
+    /^([A-Z][A-Z0-9-]{1,12})\s+(?:is|are|refers?\s+to|means?)\s+(.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = sentence.match(pattern);
+    if (!match) continue;
+    const hasAbbreviation = match.length === 4;
+    const rawTerm = hasAbbreviation ? match[1] : match[1];
+    const abbreviation = hasAbbreviation ? match[2] : "";
+    const answer = (hasAbbreviation ? match[3] : match[2])
+      .replace(/[;:,.!?]+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const aliases = [
+      normalizeDefinedTermAlias(rawTerm),
+      normalizeDefinedTermAlias(abbreviation),
+    ];
+    const quoted = String(rawTerm || "").match(/["“”']([^"“”']+)["“”']/);
+    if (quoted?.[1]) aliases.push(normalizeDefinedTermAlias(quoted[1]));
+    const cleanAliases = [...new Set(aliases.filter((alias) => alias.length >= 2))];
+    if (!cleanAliases.length || !answer) continue;
+    return { aliases: cleanAliases, answer };
+  }
+  return null;
+}
+
+function frontIncludesDefinedTermAlias(frontText, aliases = []) {
+  const normalizedFront = normalizeFrontLeakText(frontText);
+  const frontTerms = new Set(getAnswerTerms(frontText));
+  return aliases.some((alias) => {
+    const normalizedAlias = normalizeFrontLeakText(alias);
+    if (!normalizedAlias) return false;
+    if (normalizedFront.includes(normalizedAlias)) return true;
+    const aliasTerms = normalizedAlias.split(/[^a-z0-9]+/).map(singularizeAnswerTerm).filter(Boolean);
+    return aliasTerms.length > 0 && aliasTerms.every((term) => frontTerms.has(term));
+  });
+}
+
+function isWhoFrontWithoutDateTarget(frontText) {
+  const front = String(frontText || "").toLowerCase();
+  if (!/\bwho\b/.test(front)) return false;
+  return !/\b(?:when|what\s+year|which\s+year|date)\b/.test(front);
+}
+
+function stripUnaskedDateFromWhoAnswer(backText, frontText) {
+  if (!isWhoFrontWithoutDateTarget(frontText)) return String(backText || "").trim();
+  return String(backText || "")
+    .replace(/\s*,?\s+\b(?:in|on|around|circa|ca\.?|c\.?)\s+(?:the\s+)?(?:\d{4}s?|[A-Z][a-z]+ \d{1,2},? \d{4}|\d{1,2} [A-Z][a-z]+ \d{4})\.?$/i, "")
+    .replace(/\s*,\s*(?:\d{4}s?|[A-Z][a-z]+ \d{1,2},? \d{4}|\d{1,2} [A-Z][a-z]+ \d{4})\.?$/i, "")
+    .trim();
+}
+
+function normalizeStandaloneBackAnswer(backText, frontText) {
+  let answer = String(backText || "").replace(/\s+/g, " ").trim();
+  if (!answer) return "";
+
+  if (!/^(?:yes|no)\.?$/i.test(answer)) {
+    answer = answer.replace(/[.!?]+$/g, "").trim();
+  }
+  if (/^\s*where\b/i.test(String(frontText || ""))) {
+    answer = answer.replace(/^(?:into|to|in|at|on)\s+/i, "").trim();
+  }
+  if (isAdvantageFront(frontText)) {
+    answer = stripAdvantageComparisonTail(answer);
+  }
+  answer = stripUnaskedDateFromWhoAnswer(answer, frontText);
+  return answer;
+}
+
+function sourceContainsLatexMath(value) {
+  return /(?:\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\]|\\(?:frac|partial|sum|int|sqrt|alpha|beta|gamma|delta|nabla|rightarrow|Rightarrow)\b)/.test(String(value || ""));
+}
+
+function containsUnicodeMath(value) {
+  return /[∂∫∑∏√∞≤≥≠≈≡→↦⇒⇔∇∆Δπ±×÷∈∉⊂⊆⊄⊕⊗α-ωΑ-Ω]/.test(String(value || ""));
+}
+
+function extractSourceLatexMathSpans(sourceText) {
+  const source = String(sourceText || "");
+  const spans = [];
+  const patterns = [
+    /\$\$([\s\S]+?)\$\$/g,
+    /\\\[([\s\S]+?)\\\]/g,
+    /\\\(([\s\S]+?)\\\)/g,
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source))) {
+      const inner = String(match[1] || "")
+        .replace(/^\s+|\s+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (inner && /(?:=|\\(?:frac|partial|sum|int|sqrt|alpha|beta|gamma|delta|nabla|rightarrow|Rightarrow)\b)/.test(inner)) {
+        spans.push(inner);
+      }
+    }
+  }
+  return [...new Set(spans)];
+}
+
+function formatLatexMathSpansForBack(spans = []) {
+  const usable = spans.filter(Boolean).slice(0, 3);
+  if (!usable.length) return "";
+  return usable.map((span) => {
+    const clean = String(span || "").trim();
+    const hasEnvironment = clean.includes("\\begin" + String.fromCharCode(123));
+    if (hasEnvironment || clean.includes("\\\\")) return `\\[\n${clean}\n\\]`;
+    return `\\(${clean}\\)`;
+  }).join(" and ");
+}
+
+function getSourceLatexReplacementForMathSuggestion(sourceText, suggestion, { existingText = "" } = {}) {
+  if (String(existingText || "").trim()) return "";
+  if (!sourceContainsLatexMath(sourceText) || !containsUnicodeMath(suggestion)) return "";
+  const spans = extractSourceLatexMathSpans(sourceText);
+  if (!spans.length || spans.length > 3) return "";
+  const wordCount = String(suggestion || "")
+    .replace(/[∂∫∑∏√∞≤≥≠≈≡→↦⇒⇔∇∆Δπ±×÷∈∉⊂⊆⊄⊕⊗α-ωΑ-Ω]/g, " ")
+    .replace(/[=+\-*/^_()[\]{}|,.;:]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word && !/^[a-zA-Z]$/.test(word))
+    .length;
+  if (wordCount > 6) return "";
+  return formatLatexMathSpansForBack(spans);
+}
+
+function preserveSourceLatexForBackSuggestion(backText, { sourceText = "", existingText = "" } = {}) {
+  const replacement = getSourceLatexReplacementForMathSuggestion(sourceText, backText, { existingText });
+  return replacement || String(backText || "").trim();
+}
+
+function getBackAnswerFitIssue(frontText, backText) {
+  const answer = String(backText || "").trim();
+  if (!answer) return "";
+  if (/\b(?:than|of|to|with|by|because|that|which|who|where|when|how|not|don'?t|doesn'?t|can'?t|won'?t)\s*$/i.test(answer)) {
+    return "Back answer ends with a dangling word";
+  }
+  if (isWhoFrontWithoutDateTarget(frontText) && /[;]/.test(answer)) {
+    return "Back answer contains multiple answers for a Who question";
+  }
+  if (isWhoFrontWithoutDateTarget(frontText) && /\b(?:in|on|around|circa|ca\.?|c\.?)\s+(?:the\s+)?(?:\d{4}s?|[A-Z][a-z]+ \d{1,2},? \d{4}|\d{1,2} [A-Z][a-z]+ \d{4})\b/i.test(answer)) {
+    return "Back answer includes an unasked date";
+  }
+  if (stripUnaskedDateFromWhoAnswer(answer, frontText) !== answer) {
+    return "Back answer includes an unasked date";
+  }
+  return "";
+}
+
+function normalizeBackSuggestionForFront(backText, frontText) {
+  const normalized = normalizeStandaloneBackAnswer(backText, frontText);
+  return normalized.trim();
+}
+
+function stripAnswerCueLead(value) {
+  return String(value || "")
+    .replace(/^[\s,;:.\-–—]+/, "")
+    .replace(/^(?:also\s+)?(?:known\s+as|called|named|termed|referred\s+to\s+as)\s+/i, "")
+    .replace(/^(?:is|are|was|were|means|mean)\s+/i, "")
+    .replace(/^(?:an?|the)\s+/i, "")
+    .trim();
+}
+
+function inferProtectedAnswerFromAdvantageSource(sourceText, existingText) {
+  if (!isAdvantageFront(existingText)) return "";
+  const source = String(sourceText || "").trim();
+  if (!source) return "";
+  const therefore = source.match(/\btherefore\s+([a-z]+ing\b[\s\S]*?)(?:[.!?]|$)/i);
+  const comparative = source.match(/\b(?:therefore\s+|potentially\s+)?([a-z]+ing\b(?:(?![.!?]).){0,160}?\b(?:fewer|less|more|greater|lower|higher|faster|slower|better)\b(?:(?![.!?]).)*?)\s+\bthan\b/i);
+  const rawAnswer = therefore?.[1] || comparative?.[1] || "";
+  if (!rawAnswer) return "";
+  const clipped = stripAdvantageComparisonTail(rawAnswer)
+    .replace(/^potentially\s+/i, "")
+    .replace(/[;:,.!?]+$/g, "")
+    .trim();
+  let normalized = normalizeStandaloneBackAnswer(clipped, existingText);
+  return normalized;
+}
+
+function inferProtectedAnswerFromSimpleFactSource(sourceText, existingText) {
+  const prefix = String(existingText || "").trim();
+  if (!/^(?:what|which|who|where)\b/i.test(prefix)) return "";
+
+  const sentence = String(sourceText || "")
+    .trim()
+    .split(/(?:[.!?]\s+|\n)/)[0]
+    ?.trim() || "";
+  if (!sentence) return "";
+
+  const match = sentence.match(/^(.{2,90}?)\s+(?:is|are|was|were)\s+(.+)$/i);
+  if (!match) return "";
+
+  const subject = match[1]
+    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const predicate = match[2]
+    .replace(/[;:,.!?]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!subject || !predicate) return "";
+
+  const formula = predicate.match(/\bchemical\s+formula\s+([A-Za-z0-9][A-Za-z0-9()[\]_\-]*)\b/i);
+  if (formula?.[1] && /^(?:what|which)\b/i.test(prefix)) {
+    return formula[1].trim();
+  }
+
+  if (!/^(?:what|which|who)\b/i.test(prefix)) return "";
+  if (/^(?:it|this|that|these|those|there|methods?|some|many|several)\b/i.test(subject)) return "";
+  if (subject.split(/\s+/).length > 8) return "";
+
+  const predicateSignalsSubjectAnswer =
+    /\b(?:capital|largest|highest|lowest|longest|shortest|smallest|biggest|oldest|youngest|first|last|only|official|chief|main|primary|largest-known|highest-known)\b/i
+      .test(predicate);
+  if (!predicateSignalsSubjectAnswer) return "";
+
+  return subject;
+}
+
+function getSourceTextForProtectedAnswer(page = null) {
+  const sourceField = document.querySelector("#source")?.value || "";
+  return (getContextSourceText(page) || sourceField || "").trim();
+}
+
+function inferProtectedAnswerFromSource(sourceText, existingText) {
+  const advantageAnswer = inferProtectedAnswerFromAdvantageSource(sourceText, existingText);
+  if (advantageAnswer) return advantageAnswer;
+
+  const source = String(sourceText || "").trim();
+  const prefix = String(existingText || "").trim();
+  if (!source || !prefix) return "";
+
+  const simpleFactAnswer = inferProtectedAnswerFromSimpleFactSource(source, prefix);
+  if (simpleFactAnswer) return simpleFactAnswer;
+
+  const statement = getSourceStatementSplit(source);
+  if (statement?.answer) {
+    const statementStem = getSourceStemMatch(source, prefix);
+    if (isStateCommandPrefix(prefix) || statementStem) return statement.answer;
+  }
+
+  const explicitDefinition = inferExplicitDefinitionFromSource(source);
+  if (explicitDefinition?.answer && /^(?:what\s+is|what\s+are|what\s+does|define)\b/i.test(prefix)) {
+    return explicitDefinition.answer.length > 180
+      ? `${explicitDefinition.answer.slice(0, 180).trimEnd()}...`
+      : explicitDefinition.answer;
+  }
+
+  const sourceIndex = buildCompletionPrefixIndex(source);
+  const prefixIndex = buildCompletionPrefixIndex(prefix);
+  if (!sourceIndex.text || !prefixIndex.text) return "";
+
+  const prefixPos = sourceIndex.text.indexOf(prefixIndex.text);
+  if (prefixPos === -1 || prefixPos > 80) return "";
+  const cutIndex = prefixPos + prefixIndex.text.length - 1;
+  const sourceCut = sourceIndex.positions[cutIndex] || 0;
+  let tail = source.slice(sourceCut).replace(/^[\s,;:.\-–—]+/, "");
+  if (!tail) return "";
+
+  tail = tail.split(/(?:[.!?]\s+|\n)/)[0].trim();
+  const hadCueLead = /^(?:also\s+)?(?:known\s+as|called|named|termed|referred\s+to\s+as)\b/i.test(tail);
+  const prefixEndsAsCue = /\b(?:known\s+as|called|named|termed|referred\s+to\s+as)\s*$/i.test(prefix);
+  if (!hadCueLead && !prefixEndsAsCue) return "";
+
+  const answer = stripAnswerCueLead(tail)
+    .replace(/\s+/g, " ")
+    .replace(/[;:,.!?]+$/g, "")
+    .trim();
+  const terms = getAnswerTerms(answer, { distinctiveOnly: true });
+  if (terms.length < 1) return "";
+  return answer.length > 180 ? `${answer.slice(0, 180).trimEnd()}...` : answer;
+}
+
+function getProtectedBackAnswerForFront({ existingText = "", backText = "", page = null } = {}) {
+  const explicitBack = String(backText || "").trim();
+  if (explicitBack) return explicitBack;
+  return inferProtectedAnswerFromSource(getSourceTextForProtectedAnswer(page), existingText);
+}
+
+function getAnswerTermLeakReason(frontText, { existingText = "", backText = "" } = {}) {
+  const answer = String(backText || "").trim();
+  if (!answer) return "";
+
+  const answerTerms = getAnswerTerms(answer, { distinctiveOnly: true });
+  if (!answerTerms.length) return "";
+
+  const text = normalizeFrontLeakText(frontText);
+  const existing = normalizeFrontLeakText(existingText);
+  const added = existing && text.startsWith(existing)
+    ? text.slice(existing.length).trim()
+    : text;
+  const checkTerms = new Set(getAnswerTerms(added || text));
+  const overlap = answerTerms.filter((term) => checkTerms.has(term));
+
+  if (answerTerms.length === 1 && overlap.length === 1 && answerTerms[0].length >= 4) {
+    return "front includes a distinctive Back answer term";
+  }
+  if (overlap.length >= 2) {
+    return "front includes distinctive Back answer terms";
+  }
+  return "";
 }
 
 function getFrontAnswerLeakReason(frontText, { existingText = "", backText = "" } = {}) {
@@ -2235,10 +3528,104 @@ function getFrontAnswerLeakReason(frontText, { existingText = "", backText = "" 
     return "front includes the Back answer";
   }
 
+  const termLeak = getAnswerTermLeakReason(frontText, { existingText, backText });
+  if (termLeak) return termLeak;
+
   return "";
 }
 
-function buildFrontLeakRetryPrompt(basePrompt, leakedDraft, reason) {
+function getFrontCompletionFitIssue(frontText) {
+  const text = String(frontText || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+
+  if (/\bwhat\s+do\s+(?:es|does)\b/i.test(text)) {
+    return "Front changes the user's cue from 'What do' to 'What does'";
+  }
+  if (/^what\s+is\s+(?:is|are|was|were)\b/i.test(text)) {
+    return "Front repeats an auxiliary verb after 'What is'";
+  }
+  if (/\b(where|what|who|when|why|how|does|do|did|is|are|was|were|can|could|should|would)\s+\1\b/i.test(text)) {
+    return "Front repeats a question word or auxiliary verb";
+  }
+  if (/^what\s+is\s+(?:of|in|on|to|from|for|with|by|than)\b/i.test(text)) {
+    return "Front has a dangling preposition after 'What is'";
+  }
+  if (/^(?:do|does|did|is|are|was|were|can|could|should|would)\b[\s\S]*\b(?:what|who|whom|which|where|when|why|how)\s*[?!.]?$/i.test(text)) {
+    return "Yes/no Front was converted into an object-answer question";
+  }
+  if (/^(?:who|what|when|where|why|how|which|whom|whose)\b[\s\S]{0,90}\b(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
+    return "Front repeats a question starter";
+  }
+  if (!/^(?:who|what|when|where|why|how|which|whom|whose|do|does|did|is|are|was|were|can|could|should|would|has|have|had|define|state|name|list|describe|explain)\b/i.test(text)
+      && /\b(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
+    return "Front grafts a question fragment onto a declarative cue";
+  }
+  if (/\b(?:in terms of|with respect to|compared to|rather than|instead of)\s*[?.!]?$/i.test(text)) {
+    return "Front ends with a dangling phrase";
+  }
+  if (/\b(?:in|into|of|for|with|by|to|from)\s+(?:a|an|the|one|two|three|several|multiple|many)\s*[?.!]?$/i.test(text)) {
+    return "Front ends with a dangling phrase";
+  }
+  if (/\brefer\s+to\s*\?$/i.test(text)) {
+    return "";
+  }
+  if (/\b(?:of|to|than|with|by|for|because|that|which|who|where|when|how)\s*[?.!]?$/i.test(text)) {
+    return "Front ends with a dangling word";
+  }
+  if (/;/.test(text) && /;[^?]*(?:because|therefore|which|this|that|it|they|and)\b/i.test(text)) {
+    return "Front includes semicolon-heavy answer clauses";
+  }
+  if (/\b(?:because|therefore|thus|hence|which means|this means|this allows|allowing|enabling|leading to|resulting in)\b[^?]*[.!?]?$/i.test(text)) {
+    return "Front includes an explanation pivot";
+  }
+  return "";
+}
+
+function getFrontRelationshipDriftIssue(frontText, { sourceText = "", existingText = "" } = {}) {
+  const existing = normalizeFrontLeakText(existingText);
+  if (!/^(?:do|does|did|is|are|was|were|can|could|should|would)\b/.test(existing)) return "";
+
+  const source = normalizeFrontLeakText(sourceText);
+  const front = normalizeFrontLeakText(frontText);
+  if (!source || !front) return "";
+
+  if (/\b(?:do|does|did)?\s*not\s+intend\s+to\s+model\b|\bintend\s+to\s+model\b/.test(source)) {
+    if (/\bmodel\b/.test(front) && !/\b(?:intend|intended|intention|aim|aims|aimed)\b/.test(front)) {
+      return "Front changes the source relation from intent to accuracy or quality";
+    }
+  }
+
+  return "";
+}
+
+function getFrontDefinitionDriftIssue(frontText, { sourceText = "", existingText = "" } = {}) {
+  const existing = normalizeFrontLeakText(existingText);
+  if (!/^(?:what\s+is|what\s+are|what\s+does|define)\b/.test(existing)) return "";
+  const definition = inferExplicitDefinitionFromSource(sourceText);
+  if (!definition?.aliases?.length) return "";
+  const simpleFactAnswer = inferProtectedAnswerFromSimpleFactSource(sourceText, existingText);
+  if (simpleFactAnswer && frontIncludesDefinedTermAlias(simpleFactAnswer, definition.aliases)) return "";
+  if (frontIncludesDefinedTermAlias(frontText, definition.aliases)) return "";
+  return "Front substitutes a related term instead of the source-defined term";
+}
+
+function getFrontSuggestionBlockReason(suggestion, existingText, ctx = {}) {
+  if (!suggestion) return "";
+  const protectedAnswer = (ctx.protectedAnswer || ctx.other || "").trim();
+  const fullDraft = (existingText + (suggestion ? ` ${suggestion}` : "")).trim();
+  return getFrontAnswerLeakReason(fullDraft, {
+    existingText,
+    backText: protectedAnswer,
+  }) || getFrontCompletionFitIssue(fullDraft) || getFrontRelationshipDriftIssue(fullDraft, {
+    sourceText: getContextSourceText(ctx.page),
+    existingText,
+  }) || getFrontDefinitionDriftIssue(fullDraft, {
+    sourceText: getContextSourceText(ctx.page),
+    existingText,
+  });
+}
+
+function buildFrontGuardRetryPrompt(basePrompt, rejectedDraft, reason) {
   const clip = (value, max = 220) => {
     const text = String(value || "").replace(/\s+/g, " ").trim();
     if (text.length <= max) return text;
@@ -2248,58 +3635,64 @@ function buildFrontLeakRetryPrompt(basePrompt, leakedDraft, reason) {
   return [
     base,
     "",
-    "Quality check: the previous Front was rejected because it disclosed the answer.",
+    "Quality check: the previous Front was rejected.",
     reason ? `Reason: ${reason}.` : "",
-    leakedDraft ? `Rejected Front: ${clip(leakedDraft)}` : "",
-    "Rewrite once. Keep the user's target, but make the Front a cue with the answer missing.",
-    "Do not include the method, formula, definition, result, name, or example that belongs on the Back.",
+    rejectedDraft ? `Rejected Front: ${clip(rejectedDraft)}` : "",
+    "Rewrite once. Keep the user's target, but make the Front a stable cue with the answer missing.",
+    "Do not include the method, formula, definition, result, name, date, value, or example that belongs on the Back.",
+    "If no clean cue is possible, output nothing.",
     "Output:"
   ].filter(Boolean).join("\n");
 }
 
-async function callFrontLLMWithLeakRetry(prompt, sys, controller, state, existingText, ctx = {}) {
+async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existingText, ctx = {}) {
   state._lastFrontLeakBlocked = false;
-  let suggestion = await callFrontLLM(prompt, sys, controller, state, existingText);
-  if (controller?.signal?.aborted) return "";
+  state._lastFrontBlockReason = "";
+  state._frontValidationCtx = ctx;
+  try {
+    const suggestion = await callFrontLLM(prompt, sys, controller, state, existingText);
+    if (controller?.signal?.aborted) return "";
+    const blockReason = getFrontSuggestionBlockReason(suggestion, existingText, ctx);
+    if (!suggestion || !blockReason) return suggestion;
 
-  const fullDraft = (existingText + (suggestion ? ` ${suggestion}` : "")).trim();
-  const leakReason = getFrontAnswerLeakReason(fullDraft, {
-    existingText,
-    backText: ctx.other || "",
-  });
-  if (!suggestion || !leakReason) return suggestion;
+    const fullDraft = (existingText + ` ${suggestion}`).trim();
+    console.debug("[Copilot] Rewriting blocked Front suggestion:", blockReason, fullDraft);
+    state._lastFrontBlockReason = blockReason;
+    clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
+    if (state.suggestionEl) {
+      state.suggestionEl.hidden = false;
+      state.suggestionEl.classList.remove("error");
+      state.suggestionEl.classList.add("loading");
+    }
+    if (state.hintEl) state.hintEl.textContent = "Rewriting cue...";
+    if (state.workingEl) {
+      state.workingEl.textContent = "Copilot rewriting cue...";
+      state.workingEl.hidden = false;
+    }
 
-  console.debug("[Copilot] Rewriting front suggestion that leaked the answer:", leakReason, fullDraft);
-  clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
-  if (state.suggestionEl) {
-    state.suggestionEl.hidden = false;
-    state.suggestionEl.classList.remove("error");
-    state.suggestionEl.classList.add("loading");
+    copilot._skipRateLimit = true;
+    const retryPrompt = buildFrontGuardRetryPrompt(prompt, fullDraft, blockReason);
+    const retry = await callFrontLLM(retryPrompt, sys, controller, state, existingText);
+    if (controller?.signal?.aborted) return "";
+
+    const retryReason = getFrontSuggestionBlockReason(retry, existingText, ctx);
+    if (retry && !retryReason) {
+      state._lastFrontBlockReason = "";
+      return retry;
+    }
+
+    if (retryReason) {
+      state._lastFrontBlockReason = retryReason;
+      console.debug("[Copilot] Suppressed Front suggestion after rewrite:", retryReason, (existingText + ` ${retry || ""}`).trim());
+    }
+    state._lastFrontLeakBlocked = true;
+    clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
+    return "";
+  } finally {
+    if (state._frontValidationCtx === ctx) {
+      delete state._frontValidationCtx;
+    }
   }
-  if (state.hintEl) state.hintEl.textContent = "Rewriting cue...";
-  if (state.workingEl) {
-    state.workingEl.textContent = "Copilot rewriting cue...";
-    state.workingEl.hidden = false;
-  }
-
-  copilot._skipRateLimit = true;
-  const retryPrompt = buildFrontLeakRetryPrompt(prompt, fullDraft, leakReason);
-  const retry = await callFrontLLM(retryPrompt, sys, controller, state, existingText);
-  if (controller?.signal?.aborted) return "";
-
-  const retryDraft = (existingText + (retry ? ` ${retry}` : "")).trim();
-  const retryReason = getFrontAnswerLeakReason(retryDraft, {
-    existingText,
-    backText: ctx.other || "",
-  });
-  if (retry && !retryReason) return retry;
-
-  if (retryReason) {
-    console.debug("[Copilot] Suppressed front suggestion after no-leak retry:", retryReason, retryDraft);
-  }
-  state._lastFrontLeakBlocked = true;
-  clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
-  return "";
 }
 
 // --- Provider strategy helpers for LLM calls ---
@@ -2310,6 +3703,17 @@ function updateSuggestionUI(state, text) {
     state.ghostTextEl.textContent = text;
     state.ghostEl.hidden = !text;
   }
+}
+
+function getDisplayableFrontSuggestion(state, suggestion, existingText) {
+  const ctx = state?._frontValidationCtx || {};
+  const blockReason = getFrontSuggestionBlockReason(suggestion, existingText, ctx);
+  if (blockReason) {
+    state._lastFrontLiveBlockReason = blockReason;
+    return "";
+  }
+  state._lastFrontLiveBlockReason = "";
+  return suggestion;
 }
 
 function makeLinkedAbort(parentSignal) {
@@ -2325,7 +3729,7 @@ function makeLinkedAbort(parentSignal) {
 
 function getCopilotMaxTokens(role) {
   const isBack = role === "back";
-  const fallback = isBack ? 36 : 48;
+  const fallback = isBack ? 30 : 40;
   const configured = Number(isBack ? copilot.backMaxTokens : copilot.frontMaxTokens);
   if (!Number.isFinite(configured) || configured <= 0) return fallback;
   return Math.max(fallback, Math.min(configured, 64));
@@ -2344,7 +3748,11 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
       onStart: () => { copilot._skipRateLimit = true; },
       onDelta: (chunk) => {
         acc += chunk;
-        const live = normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords });
+        const live = getDisplayableFrontSuggestion(
+          state,
+          normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords }),
+          existingText
+        );
         anyVisible = anyVisible || !!live;
         updateSuggestionUI(state, live);
         if (live.split(/\s+/).filter(Boolean).length >= capWords && !local.signal.aborted) {
@@ -2352,8 +3760,12 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
         }
       },
       onDone: () => {
-        const live = finalizeFrontQuestion(
-          normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords })
+        const live = getDisplayableFrontSuggestion(
+          state,
+          finalizeFrontQuestion(
+            normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords })
+          ),
+          existingText
         );
         updateSuggestionUI(state, live);
       },
@@ -2423,7 +3835,11 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
       onStart: () => { copilot._skipRateLimit = true; },
       onDelta: (chunk) => {
         partial += chunk;
-        const live = normalizeCopilotSuggestion(partial, existingText, { role: "front", maxWords: capWords });
+        const live = getDisplayableFrontSuggestion(
+          state,
+          normalizeCopilotSuggestion(partial, existingText, { role: "front", maxWords: capWords }),
+          existingText
+        );
         suggestion = live;
         updateSuggestionUI(state, live);
         const reachedCap = live.split(/\s+/).filter(Boolean).length >= capWords;
@@ -2564,20 +3980,26 @@ async function callBackLLM(prompt, sys, ctrl, existingText) {
 }
 
 function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
+  const page = ctx.page || {};
+  const pageSourceText = getContextSourceText(page);
+  const sourceStem = fieldId === "front" ? getSourceStemMatch(pageSourceText, existing) : null;
   if (copilot._userPromptBuilder) {
     return copilot._userPromptBuilder({
       fieldId,
       existing,
       other: (ctx.other || ""),
+      protectedAnswer: (ctx.protectedAnswer || ""),
+      answerRole: fieldId === "back" ? inferAnswerRoleFromFront(ctx.other || "") : null,
+      sourceStem,
+      prefixEndsWithSpace: /\s$/.test(String(existing || "")),
       notes: (ctx.notes || ""),
-      page: ctx.page || null,
+      page,
       sourceMode: normalizeSourceMode(ctx.sourceMode),
       caps: { frontWordCap: copilot.frontWordCap, backWordCap: copilot.backWordCap },
     });
   }
   const opposite = (ctx.other || "").trim();
   const notes = (ctx.notes || "").trim();
-  const page = ctx.page || {};
   const sourceMode = normalizeSourceMode(ctx.sourceMode);
   const fromClipboard = !!page.usingClipboard || sourceMode === 'clipboard';
   const role = fieldId === "back" ? "BACK" : "FRONT";
@@ -2588,53 +4010,59 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   const hasExisting = !!(existing && existing.trim());
   const sourceCap = fieldId === "back" ? 320 : 220;
 
-  let prompt = [
+  const lines = [
     `Complete ${role}. Output text only.`,
-    hasExisting
-      ? `Prefix: ${clip(existing, 160)}`
-      : "",
-  ].join("\n") + "\n";
+  ];
+  if (hasExisting) {
+    lines.push(`Prefix: ${clip(existing, 160)}${/\s$/.test(String(existing || "")) ? " (ends with a space; last word is complete)" : ""}`);
+  }
+  if (sourceStem?.continuationPreview) {
+    lines.push(`Source-stem match: Prefix already matches source text; exact continuation begins "${clip(sourceStem.continuationPreview, 100)}".`);
+  }
   if (opposite) {
     const tag = oppositeLabel.toLowerCase();
-    prompt += `${oppositeLabel}: ${clip(opposite, tag === "front" ? 220 : 180)}\n`;
+    lines.push(`${oppositeLabel}: ${clip(opposite, tag === "front" ? 220 : 180)}`);
   }
   if (notes) {
-    prompt += `Notes: ${clip(notes, 120)}\n`;
+    lines.push(`Notes: ${clip(notes, 120)}`);
   }
-  if (page && (page.selection || page.title || page.url)) {
-    if (page.selection) prompt += `Source: ${clip(page.selection, sourceCap)}\n`;
+  if (page && (pageSourceText || page.title || page.url)) {
     if (!fromClipboard && (page.title || page.url)) {
-      if (page.title) prompt += `Title: ${clip(page.title, 80)}\n`;
+      if (page.title) lines.push(`Title: ${clip(page.title, 80)}`);
     }
   }
   if (sourceMode === 'clipboard') {
-    prompt += "Source mode: clipboard (ignore live page selection if present).\n";
-    prompt += "Ignore the current page URL/title/body; only use the clipboard text as the source.\n";
+    lines.push("Source mode: clipboard (ignore live page selection if present).");
+    lines.push("Ignore the current page URL/title/body; only use the clipboard text as the source.");
   } else if (sourceMode === 'page') {
-    prompt += "Source mode: page-only (do not rely on clipboard).\n";
+    lines.push("Source mode: page-only (do not rely on clipboard).");
+  }
+  if (sourceContainsLatexMath(pageSourceText)) {
+    lines.push("Math rule: the Source contains TeX/LaTeX; preserve exact source TeX spans for mathematical expressions. Do not convert them to Unicode or plaintext.");
   }
   const rules = fieldId === "front"
     ? [
         "Rules:",
-        "- No task narration or labels.",
         "- Continue after Prefix; do not repeat, correct, or restate text already typed.",
-        "- Preserve the user's target from Prefix/Back before using the Source.",
-        "- One atomic cue, unambiguous, enough context, no answer leakage.",
-        "- Cue, don't disclose: silently identify the minimal Back answer, then leave the method/formula/definition/result/name/example missing.",
-        "- If the wording would need \"by defining\", \"using\", \"where\", \"namely\", or another answer-bearing phrase, stop before that phrase.",
+        "- Preserve the user's target from Prefix/Front/Back before using the Source.",
+        `- FRONT: one atomic cue, full Front <= ${copilot.frontWordCap} words, unambiguous, enough context, no answer leakage.`,
+        "- FRONT: prefer a direct question; for command prefixes like State/Define/Name/List, complete the object of the command.",
+        "- FRONT: do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.",
+        "- FRONT: stop before answer-bearing phrases such as \"by defining\", \"using\", \"where\", or \"namely\".",
       ]
     : [
         "Rules:",
-        "- No task narration or labels.",
         "- Continue after Prefix; do not repeat, correct, or restate text already typed.",
-        "- Preserve the user's target from Front before using the Source.",
-        "- Minimal answer, source-grounded, no passage restatement.",
-        "- Supply the missing answer cued by the Front; do not turn the Back into a passage summary.",
+        `- BACK: one atomic answer <= ${copilot.backWordCap} words, usually a bare noun phrase/name/term/value/short clause.`,
+        "- BACK: answer exactly the Front; do not restate it, summarize the passage, or add unasked dates/descriptors.",
       ];
-  rules.push("- If the target is unsupported or unclear, output nothing.");
-  prompt += `${rules.join("\n")}\n`;
-  prompt += "Output:";
-  return prompt;
+  rules.push("- If the target is unsupported, unclear, or non-atomic, output nothing.");
+  lines.push(...rules.filter(Boolean));
+  if (pageSourceText) {
+    lines.push(`Source:\n${clip(pageSourceText, sourceCap)}`);
+  }
+  lines.push("Output:");
+  return lines.join("\n");
 }
 
 function maybeRequestBackDraft(frontForBack) {
@@ -2645,6 +4073,40 @@ function maybeRequestBackDraft(frontForBack) {
   if (!okByTime) return;
   copilot._lastBackAt = now;
   requestBackDraftFromFront(frontForBack);
+}
+
+function setBackDraftSuggestionFromSourceStem(backText, frontText) {
+  const backState = copilot.fields.get("back");
+  if (!backState?.textarea) return;
+  if ((backState.textarea.value || "").trim()) return;
+
+  const sourceText = getCopilotSourceTextForLimit(copilot?.pageCtx || null);
+  const suggestion = preserveSourceLatexForBackSuggestion(
+    normalizeBackSuggestionForFront(backText, frontText),
+    { sourceText }
+  );
+  if (!suggestion || getBackAnswerFitIssue(frontText, suggestion)) return;
+
+  try { backState.controller?.abort(); } catch {}
+  backState.controller = null;
+  if (backState.timer) { clearTimeout(backState.timer); backState.timer = null; }
+  backState.suggestion = suggestion;
+  if (backState.suggestionEl) {
+    backState.suggestionEl.hidden = false;
+    backState.suggestionEl.classList.remove("loading", "error");
+  }
+  if (backState.textEl) backState.textEl.textContent = suggestion;
+  if (backState.hintEl) backState.hintEl.textContent = "Press Tab or click Accept";
+  if (backState.ghostEl && backState.mirrorEl && backState.ghostTextEl) {
+    backState.mirrorEl.textContent = backState.textarea.value || "";
+    backState.ghostTextEl.textContent = suggestion;
+    backState.ghostEl.hidden = !suggestion;
+  }
+  if (backState.workingEl) {
+    backState.workingEl.hidden = true;
+    backState.workingEl.textContent = "";
+  }
+  updateShortcutCoach("back");
 }
 
 async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
@@ -2661,20 +4123,18 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   const mode = await getSourceMode();
 
   // Keep page/clipboard handling consistent with main Copilot path.
-  if (mode !== "clipboard") {
-    await refreshPageSelectionFromTab();
-  }
-  if (mode === "clipboard") {
-    await applyClipboardFallback({ wantPaste: false, allowEmpty: true, force: true });
-  } else if (mode === "auto") {
-    let sel = copilot?.pageCtx?.selection?.trim();
-    if (!sel) {
-      await applyClipboardFallback({ wantPaste: false, allowEmpty: true });
-    }
-  }
+  await ensureSourceFromMode(mode, { wantPaste: false });
 
   const page = copilot.pageCtx || null;
-  if (!ensureAiSourceInputWithinLimit(getCopilotSourceTextForLimit(page), { notify: "copilot" })) {
+  const sourceTextForLimit = getCopilotSourceTextForLimit(page);
+  const sourceIssue = sourceTextForLimit ? "" : getClipboardFallbackIssue();
+  if (sourceIssue) {
+    notifyNoSourceText({ target: "copilot", sourceIssue });
+    clearSuggestionUI(backState, { mirrorValue: existingBack });
+    backState.suggestion = "";
+    return;
+  }
+  if (!ensureAiSourceInputWithinLimit(sourceTextForLimit, { notify: "copilot" })) {
     clearSuggestionUI(backState, { mirrorValue: existingBack });
     backState.suggestion = "";
     return;
@@ -2735,18 +4195,30 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     if (!force && since < copilot.minIntervalMs) {
       await new Promise((r) => setTimeout(r, copilot.minIntervalMs - since));
     }
-	    copilot._lastAt = Date.now();
-	    updateLocalMetrics((metrics) => {
-	      bumpMetric(metrics, "ai_suggestions_requested");
-	      return metrics;
-	    });
+    copilot._lastAt = Date.now();
+    updateLocalMetrics((metrics) => {
+      bumpMetric(metrics, "ai_suggestions_requested");
+      return metrics;
+    });
 
-	    const raw = await callBackLLM(prompt, sys, controller, existingBack);
+    const raw = await callBackLLM(prompt, sys, controller, existingBack);
     if (controller.signal.aborted) return;
 
     let suggestion = raw || "";
     const frontForStrip = frontForBack || (document.querySelector("#front")?.value || "");
     suggestion = stripFrontFromBack(suggestion, frontForStrip);
+    suggestion = normalizeBackSuggestionForFront(suggestion, frontForStrip);
+    suggestion = preserveSourceLatexForBackSuggestion(suggestion, {
+      sourceText: sourceTextForLimit,
+      existingText: existingBack,
+    });
+    const fitIssue = getBackAnswerFitIssue(frontForStrip, suggestion);
+    if (fitIssue) {
+      clearSuggestionUI(backState, { mirrorValue: existingBack });
+      backState.suggestion = "";
+      setCopilotStatus("AI returned a grammatically incomplete Back answer. Try again or edit the Back.", true);
+      return;
+    }
 
     if (!suggestion) {
       clearSuggestionUI(backState, { mirrorValue: existingBack });
@@ -2937,6 +4409,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   const value = textarea?.value || "";
   if (state.mirrorEl) state.mirrorEl.textContent = value;
   const trimmed = value.trim();
+  const existingForCopilot = state.fieldId === "front" ? value.replace(/^\s+/, "") : trimmed;
   let frontVal = "";
   if (state.fieldId === "back") {
     frontVal = (document.querySelector("#front")?.value || "").trim();
@@ -2967,7 +4440,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   state.lastValue = trimmed;
 
   if (!copilot.apiConfigured) {
-    const providerName = copilot.provider === "gemini" ? "Google Gemini" : "OpenAI / UltimateAI";
+    const providerName = getProviderDisplayName(copilot.provider);
     setCopilotStatus(`Add your ${providerName} API key in Options to use Copilot.`, true);
     if (state.suggestionEl) state.suggestionEl.hidden = true;
     if (state.ghostEl) state.ghostEl.hidden = true;
@@ -3007,21 +4480,21 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   const notes = document.querySelector("#notes")?.value || "";
   const mode = await getSourceMode();
 
-  if (mode !== 'clipboard') {
-    await refreshPageSelectionFromTab();
-  }
-
-  if (mode === 'clipboard') {
-    await applyClipboardFallback({ wantPaste: false, allowEmpty: true, force: true });
-  } else if (mode === 'auto') {
-    let sel = copilot?.pageCtx?.selection?.trim();
-    if (!sel) {
-      await applyClipboardFallback({ wantPaste: false, allowEmpty: true });
-    }
-  }
+  await ensureSourceFromMode(mode, { wantPaste: false });
 
   const page = copilot.pageCtx || null;
-  if (!ensureAiSourceInputWithinLimit(getCopilotSourceTextForLimit(page), { notify: "copilot" })) {
+  const sourceTextForLimit = getCopilotSourceTextForLimit(page);
+  const sourceIssue = sourceTextForLimit ? "" : getClipboardFallbackIssue();
+  if (sourceIssue) {
+    notifyNoSourceText({ target: "copilot", sourceIssue });
+    clearSuggestionUI(state, { mirrorValue: value });
+    state.suggestion = "";
+    clearTimeout(abortTimer);
+    if (state.workingEl) state.workingEl.hidden = true;
+    if (state.controller === controller) state.controller = null;
+    return;
+  }
+  if (!ensureAiSourceInputWithinLimit(sourceTextForLimit, { notify: "copilot" })) {
     clearSuggestionUI(state, { mirrorValue: value });
     state.suggestion = "";
     clearTimeout(abortTimer);
@@ -3030,7 +4503,41 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     return;
   }
 
-  const prompt = buildCopilotCompletionPrompt(state.fieldId, trimmed, { other, notes, page, sourceMode: mode });
+  const protectedAnswer = state.fieldId === "front"
+    ? getProtectedBackAnswerForFront({ existingText: existingForCopilot, backText: other, page })
+    : "";
+  const sourceStemCompletion = state.fieldId === "front"
+    ? inferSourceStemCompletion(getContextSourceText(page), existingForCopilot)
+    : null;
+  if (sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back) {
+    const suggestion = sourceStemCompletion.frontSuffix;
+    state.suggestion = suggestion;
+    if (state.suggestionEl) {
+      state.suggestionEl.hidden = false;
+      state.suggestionEl.classList.remove("loading", "error");
+    }
+    if (state.textEl) state.textEl.textContent = suggestion;
+    if (state.hintEl) state.hintEl.textContent = "Press Tab or click Accept";
+    if (state.ghostEl && state.mirrorEl && state.ghostTextEl) {
+      state.mirrorEl.textContent = textarea?.value || "";
+      state.ghostTextEl.textContent = suggestion;
+      state.ghostEl.hidden = !suggestion;
+    }
+    const frontForBack = `${existingForCopilot}${suggestion ? (/\s$/.test(existingForCopilot) ? "" : " ") + suggestion : ""}`.trim().slice(0, 500);
+    setBackDraftSuggestionFromSourceStem(sourceStemCompletion.back, frontForBack);
+    updateShortcutCoach(state.fieldId);
+    clearTimeout(abortTimer);
+    if (state.workingEl) state.workingEl.hidden = true;
+    if (state.controller === controller) state.controller = null;
+    return;
+  }
+  const prompt = buildCopilotCompletionPrompt(state.fieldId, existingForCopilot, {
+    other,
+    protectedAnswer,
+    notes,
+    page,
+    sourceMode: mode,
+  });
 
   try {
     const isFrontFromBack = state.fieldId === "front" && !trimmed && !!other.trim();
@@ -3042,15 +4549,58 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     copilot._lastAt = Date.now();
     copilot._skipRateLimit = true;
     state._lastFrontLeakBlocked = false;
+    state._lastBackFitIssue = "";
     updateLocalMetrics((metrics) => {
       bumpMetric(metrics, "ai_suggestions_requested");
       return metrics;
     });
     let suggestion = state.fieldId === "front"
-      ? await callFrontLLMWithLeakRetry(prompt, sys, controller, state, trimmed, { other, notes, page, sourceMode: mode })
+      ? await callFrontLLMWithLocalGuard(prompt, sys, controller, state, existingForCopilot, {
+          other,
+          protectedAnswer,
+          notes,
+          page,
+          sourceMode: mode,
+        })
       : await callBackLLM(prompt, sys, controller, trimmed);
     if (controller.signal.aborted) return;
-    const frontForBack = (trimmed + (suggestion ? (" " + suggestion) : "")).trim().slice(0, 500);
+    if (state.fieldId === "back" && suggestion) {
+      const frontForAnswer = other || frontVal;
+      if (!trimmed) {
+        suggestion = normalizeBackSuggestionForFront(suggestion, frontForAnswer);
+        suggestion = preserveSourceLatexForBackSuggestion(suggestion, {
+          sourceText: sourceTextForLimit,
+          existingText: trimmed,
+        });
+      } else {
+        const displayedBack = `${trimmed} ${suggestion}`.replace(/\s+/g, " ").trim();
+        const normalizedDisplayedBack = normalizeBackSuggestionForFront(displayedBack, frontForAnswer);
+        if (normalizedDisplayedBack !== displayedBack) {
+          const normalizedSuffix = stripExistingPrefixFromCompletion(normalizedDisplayedBack, trimmed);
+          if (normalizedSuffix && normalizedSuffix !== normalizedDisplayedBack) {
+            suggestion = normalizedSuffix;
+          } else {
+            const fitIssue = getBackAnswerFitIssue(frontForAnswer, displayedBack);
+            if (fitIssue) {
+              state._lastBackFitIssue = fitIssue;
+              console.debug("[Copilot] Suppressed Back suggestion:", fitIssue, displayedBack);
+              suggestion = "";
+            }
+          }
+        }
+      }
+      if (suggestion) {
+        const fitIssue = getBackAnswerFitIssue(frontForAnswer, suggestion);
+        if (fitIssue) {
+          state._lastBackFitIssue = fitIssue;
+          console.debug("[Copilot] Suppressed Back suggestion:", fitIssue, suggestion);
+          suggestion = "";
+        }
+      }
+    }
+    const frontForBack = state.fieldId === "front"
+      ? `${existingForCopilot}${suggestion ? (/\s$/.test(existingForCopilot) ? "" : " ") + suggestion : ""}`.trim().slice(0, 500)
+      : (trimmed + (suggestion ? (" " + suggestion) : "")).trim().slice(0, 500);
     if (!suggestion) {
       if (state.suggestionEl) state.suggestionEl.hidden = true;
       state.suggestion = "";
@@ -3061,10 +4611,11 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       if (state.fieldId === "front") {
         maybeRequestBackDraft(frontForBack);
       }
+      const rejectionReason = state._lastFrontBlockReason || state._lastBackFitIssue || state._lastFrontLiveBlockReason || "";
       setCopilotStatus(
-        state._lastFrontLeakBlocked
-          ? "AI suggestion put the answer on the Front, so Ghostwriter hid it. Try a shorter cue or ask for the Back."
-          : "AI returned no usable card text. Try direct OpenAI or a different model.",
+        rejectionReason
+          ? `AI returned no usable card text (${rejectionReason}). Try a shorter cue or regenerate.`
+          : "AI returned no usable card text. Try the cue again or use a different model.",
         true
       );
       return;
@@ -3317,17 +4868,9 @@ async function initCopilot() {
   try {
 	    const opts = await getOptions();
 	    copilot.provider = inferProviderFromOptions(opts);
-    if (copilot.provider === "gemini") {
-      copilot.apiConfigured = !!opts.geminiKey;
-    } else if (copilot.provider === "openai") {
-      copilot.apiConfigured = !!opts.openaiKey;
-    } else if (copilot.provider === "claude") {
-      copilot.apiConfigured = !!opts.claudeKey;
-    } else {
-      copilot.apiConfigured = !!opts.ultimateKey;
-    }
+    copilot.apiConfigured = hasProviderApiKey(opts, copilot.provider);
     // Free-tier: even without an API key, copilot can work via proxy
-    if (!copilot.apiConfigured) {
+    if (!copilot.apiConfigured && copilot.provider !== "openrouter") {
       try {
         const ft = await chrome.storage.local.get("ghostwriter_free_tier");
         const ftState = ft?.ghostwriter_free_tier || {};
@@ -3353,10 +4896,10 @@ async function initCopilot() {
     const shortcut = typeof opts.copilotShortcut === "string" ? opts.copilotShortcut.trim() : "";
     copilot.triggerShortcut = shortcut || D.copilotShortcut || "Cmd+Shift+X";
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut) || parseShortcutSpec("Cmd+Shift+X");
-    copilot.frontWordCap   = Number.isFinite(+opts.copilotFrontWordCap) ? +opts.copilotFrontWordCap : (D.copilotFrontWordCap || 20);
-    copilot.backWordCap    = Number.isFinite(+opts.copilotBackWordCap)  ? +opts.copilotBackWordCap  : (D.copilotBackWordCap || 16);
-    copilot.frontMaxTokens = Number.isFinite(+opts.copilotFrontMaxTokens) ? +opts.copilotFrontMaxTokens : (D.copilotFrontMaxTokens || 48);
-    copilot.backMaxTokens  = Number.isFinite(+opts.copilotBackMaxTokens) ? +opts.copilotBackMaxTokens : (D.copilotBackMaxTokens || 36);
+    copilot.frontWordCap   = Number.isFinite(+opts.copilotFrontWordCap) ? +opts.copilotFrontWordCap : (D.copilotFrontWordCap || 18);
+    copilot.backWordCap    = Number.isFinite(+opts.copilotBackWordCap)  ? +opts.copilotBackWordCap  : (D.copilotBackWordCap || 14);
+    copilot.frontMaxTokens = Number.isFinite(+opts.copilotFrontMaxTokens) ? +opts.copilotFrontMaxTokens : (D.copilotFrontMaxTokens || 40);
+    copilot.backMaxTokens  = Number.isFinite(+opts.copilotBackMaxTokens) ? +opts.copilotBackMaxTokens : (D.copilotBackMaxTokens || 30);
     copilot.minIntervalMs  = Number.isFinite(+opts.copilotMinIntervalMs) ? +opts.copilotMinIntervalMs : (D.copilotMinIntervalMs || 1200);
     copilot.timeoutMs      = Number.isFinite(+opts.copilotTimeoutMs) ? +opts.copilotTimeoutMs : (D.copilotTimeoutMs || 30000);
   } catch (e) {
@@ -3368,7 +4911,7 @@ async function initCopilot() {
     copilot.manualOnly = false;
     copilot.triggerShortcut = "Cmd+Shift+X";
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut);
-    copilot.backMaxTokens = 36;
+    copilot.backMaxTokens = 30;
   }
 
   await seedCopilotPageContext();
@@ -3387,22 +4930,15 @@ async function initCopilot() {
   }
 
   if (!copilot.storageListener) {
-    copilot.storageListener = (changes, areaName) => {
+    copilot.storageListener = async (changes, areaName) => {
       if (areaName !== "sync") return;
       if (changes.quickflash_options) {
-        const next = changes.quickflash_options.newValue || {};
+        const syncNext = changes.quickflash_options.newValue || {};
+        const next = { ...syncNext, ...(await getProviderSecrets()) };
         copilot.provider = inferProviderFromOptions(next);
-        if (copilot.provider === "gemini") {
-          copilot.apiConfigured = !!next.geminiKey;
-        } else if (copilot.provider === "openai") {
-          copilot.apiConfigured = !!next.openaiKey;
-        } else if (copilot.provider === "claude") {
-          copilot.apiConfigured = !!next.claudeKey;
-        } else {
-          copilot.apiConfigured = !!next.ultimateKey;
-        }
+        copilot.apiConfigured = hasProviderApiKey(next, copilot.provider);
         // Free-tier fallback
-        if (!copilot.apiConfigured) {
+        if (!copilot.apiConfigured && copilot.provider !== "openrouter") {
           try {
             chrome.storage.local.get("ghostwriter_free_tier").then((ft) => {
               const ftState = ft?.ghostwriter_free_tier || {};
@@ -3716,7 +5252,7 @@ function getAiInputLimitMessage(tokens) {
 
 function getCopilotSourceTextForLimit(page = null) {
   const sourceField = $("#source")?.value || "";
-  return String(page?.selection || sourceField || "").trim();
+  return String(getContextSourceText(page) || sourceField || "").trim();
 }
 
 function ensureAiSourceInputWithinLimit(sourceText, { notify = "status" } = {}) {
@@ -3766,7 +5302,7 @@ async function updateSourceRenderedPreview() {
   const frame = $("#previewSource");
   if (!frame) return;
   const sourceEl = $("#source");
-  const text = (sourceEl?.value || copilot?.pageCtx?.selection || "").trim();
+  const text = (sourceEl?.value || getContextSourceText(copilot?.pageCtx) || "").trim();
   const markdown = text || "_No source captured._";
   const prepared = await inlinePreviewImages(markdown);
   queuePreviewFrameRender(frame, prepared, sourceEl);
@@ -3786,14 +5322,20 @@ function updateCardDetailsSummary() {
 }
 
 function updateOverlaySourceChrome() {
-  const sourceText = ($("#source")?.value || copilot?.pageCtx?.selection || "").trim();
+  const sourceText = ($("#source")?.value || getContextSourceText(copilot?.pageCtx) || "").trim();
+  const sourceIssue = sourceText ? "" : getClipboardFallbackIssue();
   const preview = $("#sourcePreviewText");
   if (preview) {
-    preview.textContent = sourceText ? compactInlineText(sourceText, 220) : "No source captured";
+    preview.textContent = sourceText
+      ? compactInlineText(sourceText, 220)
+      : (sourceIssue ? "Clipboard source blocked" : "No source captured");
+    preview.title = sourceIssue || "";
   }
   const headerSource = $("#overlayHeaderSource");
   if (headerSource) {
-    headerSource.textContent = getCurrentSourceLabel() || (sourceText ? "Selected source" : "No source captured");
+    headerSource.textContent = getCurrentSourceLabel()
+      || (sourceText ? "Selected source" : (sourceIssue ? "Clipboard source blocked" : "No source captured"));
+    headerSource.title = sourceIssue || "";
   }
   updateOverlayQueueBadge();
   updateCardDetailsSummary();
@@ -3867,14 +5409,12 @@ function getManualDraftPayload() {
   const tags = $("#tags")?.value ?? "";
   const notes = $("#notes")?.value ?? "";
   const context = $("#context")?.value ?? "";
-  const source = $("#source")?.value ?? "";
   return {
     front,
     back,
     tags,
     notes,
     context,
-    source,
   };
 }
 
@@ -3921,13 +5461,11 @@ async function restoreManualDraftFromStorage() {
     const tagsEl = $("#tags");
     const notesEl = $("#notes");
     const contextEl = $("#context");
-    const sourceEl = $("#source");
     if (frontEl && typeof draft.front === "string") frontEl.value = draft.front;
     if (backEl && typeof draft.back === "string") backEl.value = draft.back;
     if (tagsEl && typeof draft.tags === "string") tagsEl.value = draft.tags;
     if (notesEl && typeof draft.notes === "string") notesEl.value = draft.notes;
     if (contextEl && typeof draft.context === "string") contextEl.value = draft.context;
-    if (sourceEl && typeof draft.source === "string") sourceEl.value = draft.source;
     updateFrontDetection(frontEl?.value || "");
     updateOverlaySourceChrome();
     await updateMarkdownPreview();
@@ -4049,8 +5587,8 @@ function shortcutCoachMessageForField(fieldId) {
   if (!activeValue) return "";
 
   if (canQueueCurrentEditorCard()) {
-    const queueShortcut = formatShortcutSpec(addShortcutConfig);
-    return queueShortcut ? `Use ${queueShortcut} to queue card.` : "";
+    const addShortcut = formatShortcutSpec(addShortcutConfig);
+    return addShortcut ? `Use ${addShortcut} to add card.` : "";
   }
 
   if (copilot.enabled && copilot.apiConfigured) {
@@ -4133,7 +5671,7 @@ async function persistShortcutCoachState(patch = {}) {
 
 async function recordShortcutCoachEvent(eventName) {
   if (!shortcutCoach.loaded) return;
-  if (eventName === "cardQueued") {
+  if (eventName === "cardQueued" || eventName === "cardAdded") {
     await persistShortcutCoachState({
       cardsQueued: (Number(shortcutCoach.state.cardsQueued) || 0) + 1,
     });
@@ -4268,7 +5806,7 @@ function updateOutboxMeta() {
   const forced = outbox.cards.filter((c) => c.allowDuplicate).length;
   const undoable = (outbox.lastSend?.noteIds?.length || 0) + (outbox.lastSend?.cards?.length || 0);
   if (meta) {
-    let text = `${staged} card${staged === 1 ? "" : "s"} ready`;
+    let text = `${staged} card${staged === 1 ? "" : "s"} ready to send`;
     const bits = [];
     if (flagged) bits.push(`${flagged} dup flagged`);
     if (forced) bits.push(`${forced} force add`);
@@ -4280,7 +5818,7 @@ function updateOutboxMeta() {
       if (pending > 0 && triageActive && triageState.active) {
         reviewHint = `Reviewing: ${pending} pending of ${triage.cards.length}`;
       } else if (pending > 0) {
-        reviewHint = `Paused – ${pending} card${pending === 1 ? "" : "s"} waiting`;
+        reviewHint = `Paused - ${pending} card${pending === 1 ? "" : "s"} waiting for review`;
       } else {
         const accepted = triage.accepted.length;
         const skipped = triage.skipped.length;
@@ -4290,7 +5828,12 @@ function updateOutboxMeta() {
     }
     meta.textContent = text;
   }
-  if (sendBtn) sendBtn.disabled = staged === 0;
+  if (sendBtn) {
+    sendBtn.disabled = staged === 0;
+    sendBtn.title = staged === 0 && triage.cards.length
+      ? "Review or mark cards ready before sending to Anki."
+      : "";
+  }
   if (undoBtn) undoBtn.disabled = !undoable;
   updateOverlayQueueBadge();
 }
@@ -5079,11 +6622,12 @@ function normalizeImportedCards(parsed) {
     const altAnswers = parseAltAnswers(raw.alt_answers || raw.altAnswers);
 
     const buildCard = (idSuffix, f, b, forcedType = type) => {
+      const normalizedBack = forcedType === "basic" ? normalizeBackSuggestionForFront(b, f) : b;
       const card = {
         id: idSuffix ? `${baseId}${idSuffix}` : baseId,
         type: forcedType === "reversible" ? "basic" : forcedType,
         front: f,
-        back: b,
+        back: normalizedBack,
         tags: tags.slice(),
       };
       if (context !== undefined) card.context = context;
@@ -5343,7 +6887,7 @@ function renderEditor({ persist = true } = {}) {
     }
     if (triageFooter) triageFooter.hidden = true;
     if (triageToolbar) triageToolbar.hidden = true;
-    if (addBtn) setPrimaryActionButton("Queue card", { showShortcut: true });
+    if (addBtn) setPrimaryActionButton("Add to Anki", { showShortcut: true });
     if (hadTriage) {
       clearEditorFields();
       focusFrontAtEnd();
@@ -5655,6 +7199,19 @@ function queuePreviewFrameRender(frame, markdown, sourceEl) {
       : "mathjax-sandbox.html";
     frame.setAttribute("src", sandboxUrl);
   }
+}
+
+async function renderPreviewElement(target, markdown, sourceEl) {
+  if (!target) return;
+  const value = markdown || "";
+  if (isPreviewFrame(target)) {
+    const prepared = await inlinePreviewImages(value);
+    queuePreviewFrameRender(target, prepared, sourceEl || target);
+    return;
+  }
+  target.innerHTML = renderMarkdownToHtml(value);
+  await hydratePreviewImages(target);
+  typesetMath(target);
 }
 
 function isInlineMathjaxPreviewEnabled() {
@@ -6524,7 +8081,7 @@ async function acceptAllPending() {
   updateOutboxMeta();
   persistOutboxState();
   persistTriageState();
-  if (added) status(`Queued ${added} card${added === 1 ? "" : "s"}.`, true);
+  if (added) status(`Marked ${added} card${added === 1 ? "" : "s"} ready to send.`, true);
   renderEditor();
   // If everything is now accepted, drop back to manual editor (no extra prompt).
   maybeCompleteTriage({ showPrompt: false });
@@ -6967,8 +8524,16 @@ async function getModelFields(modelName) {
   return list;
 }
 
-async function updateGhostwriterModelTemplates(models) {
+async function updateGhostwriterModelTemplates(models, { force = false } = {}) {
   const list = Array.isArray(models) ? models : [];
+  if (!force) {
+    try {
+      const stored = await chrome.storage.local.get(GHOSTWRITER_TEMPLATE_VERSION_KEY);
+      if (stored?.[GHOSTWRITER_TEMPLATE_VERSION_KEY] === GHOSTWRITER_TEMPLATE_VERSION) {
+        return;
+      }
+    } catch {}
+  }
   const targets = [
     {
       names: list.filter((name) => name === GHOSTWRITER_MODEL_NAME || GHOSTWRITER_MODEL_REGEX.test(name)),
@@ -7005,6 +8570,9 @@ async function updateGhostwriterModelTemplates(models) {
   }
   if (updates.length) {
     await Promise.all(updates);
+    try {
+      await chrome.storage.local.set({ [GHOSTWRITER_TEMPLATE_VERSION_KEY]: GHOSTWRITER_TEMPLATE_VERSION });
+    } catch {}
   }
 }
 
@@ -7012,6 +8580,7 @@ async function ensureGhostwriterModel(models, { autoCreate = false } = {}) {
   const list = Array.isArray(models) ? models.slice() : [];
   let hasBasic = list.some((name) => name === GHOSTWRITER_MODEL_NAME || GHOSTWRITER_MODEL_REGEX.test(name));
   let hasCloze = list.some((name) => name === GHOSTWRITER_CLOZE_MODEL_NAME || GHOSTWRITER_CLOZE_MODEL_REGEX.test(name));
+  let createdAny = false;
 
   if (autoCreate && !hasBasic) {
     try {
@@ -7027,8 +8596,10 @@ async function ensureGhostwriterModel(models, { autoCreate = false } = {}) {
           },
         ],
       });
+      clearAnkiSessionCache({ keepPermission: true });
       list.push(GHOSTWRITER_MODEL_NAME);
       hasBasic = true;
+      createdAny = true;
     } catch (err) {
       console.warn("Failed to create Ghostwriter Basic note type:", err);
     }
@@ -7048,15 +8619,17 @@ async function ensureGhostwriterModel(models, { autoCreate = false } = {}) {
           },
         ],
       });
+      clearAnkiSessionCache({ keepPermission: true });
       list.push(GHOSTWRITER_CLOZE_MODEL_NAME);
       hasCloze = true;
+      createdAny = true;
     } catch (err) {
       console.warn("Failed to create Ghostwriter Cloze note type:", err);
     }
   }
 
   if (hasBasic || hasCloze) {
-    await updateGhostwriterModelTemplates(list);
+    await updateGhostwriterModelTemplates(list, { force: createdAny });
   }
   return list;
 }
@@ -7689,7 +9262,7 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
   };
 }
 
-// ------- Queue card -------
+// ------- Queue for review -------
 async function queueCurrentCardForReview() {
   const front = ($("#front")?.value || "").trim();
   const back = ($("#back")?.value || "").trim();
@@ -7704,7 +9277,7 @@ async function queueCurrentCardForReview() {
   let page = copilot?.pageCtx || null;
   try {
     const ctx = await getPageContext();
-    page = { ...(ctx || {}), ...(page || {}) };
+    page = normalizePageContext({ ...(ctx || {}), ...(page || {}) });
   } catch {}
   const mode = await getSourceMode();
   const sourceUrl = (mode === "clipboard" || page?.usingClipboard)
@@ -7745,6 +9318,10 @@ async function queueCurrentCardForReview() {
   if (notesText) card.extra = notesText;
   if (sourceText) card.source_excerpt = sourceText;
   if (contextText) card.context = contextText;
+  if (page?.selectionKind) card.selection_kind = page.selectionKind;
+  if (Array.isArray(page?.selectedImages) && page.selectedImages.length) {
+    card.selected_images = page.selectedImages;
+  }
 
   setCardReviewStatus(card, "pending");
   triage.cards.push(card);
@@ -7782,13 +9359,23 @@ async function queueCurrentCardForReview() {
   updateOutboxMeta();
   focusFrontAtEnd();
   persistTriageState();
-  status("Queued card in Review Queue.", true);
+  status("Queued for review. Open Review Queue or mark it ready before sending.", true);
   const opts = await getOptions();
   if (getEditorSurface() === "overlay" && opts.closeOverlayAfterQueue === true) {
     setTimeout(() => {
       try { window.parent?.postMessage({ type: "quickflash:closeOverlay" }, "*"); } catch {}
     }, 80);
   }
+}
+
+async function maybeCloseOverlayAfterAdd() {
+  try {
+    const opts = await getOptions();
+    if (getEditorSurface() !== "overlay" || opts.closeOverlayAfterQueue !== true) return;
+    setTimeout(() => {
+      try { window.parent?.postMessage({ type: "quickflash:closeOverlay" }, "*"); } catch {}
+    }, 80);
+  } catch {}
 }
 
 async function addToAnki() {
@@ -7850,7 +9437,7 @@ async function addToAnki() {
   let page = copilot?.pageCtx || null;
   try {
     const ctx = await getPageContext();
-    page = { ...(ctx || {}), ...(page || {}) };
+    page = normalizePageContext({ ...(ctx || {}), ...(page || {}) });
   } catch {}
   const mode = await getSourceMode();
   const source_url = (mode === 'clipboard' || page?.usingClipboard)
@@ -7889,6 +9476,10 @@ async function addToAnki() {
   if (contextText) card.context = contextText;
   card.source_url = source_url || undefined;
   if (source_label) card.source_label = source_label;
+  if (page?.selectionKind) card.selection_kind = page.selectionKind;
+  if (Array.isArray(page?.selectedImages) && page.selectedImages.length) {
+    card.selected_images = page.selectedImages;
+  }
   let lpcgPayload = null;
   let lpcgTagPrompt = null;
   if (isLpcg1) {
@@ -8088,6 +9679,12 @@ async function addToAnki() {
         }
       }
       status(message, failedCount === 0);
+      await updateLocalMetrics((metrics) => {
+        markMetricOnce(metrics, "first_card_sent_at");
+        bumpMetric(metrics, "cards_sent", addedCount);
+        return metrics;
+      });
+      await recordShortcutCoachEvent("cardAdded");
 
       try {
         await archiveUpsertCards(
@@ -8098,6 +9695,7 @@ async function addToAnki() {
         console.warn("Archive upsert failed:", e);
       }
       await resetManualFields();
+      await maybeCloseOverlayAfterAdd();
       return;
     }
 
@@ -8116,6 +9714,12 @@ async function addToAnki() {
     const result = await anki("addNote", { note });
     if (result) {
       status(`Added note ${result} to ${deckName}.`, true);
+      await updateLocalMetrics((metrics) => {
+        markMetricOnce(metrics, "first_card_sent_at");
+        bumpMetric(metrics, "cards_sent", 1);
+        return metrics;
+      });
+      await recordShortcutCoachEvent("cardAdded");
       // Persist to local archive (card metadata for future analysis)
       try {
         await archiveUpsertCards(
@@ -8126,6 +9730,7 @@ async function addToAnki() {
         console.warn("Archive upsert failed:", e);
       }
       await resetManualFields();
+      await maybeCloseOverlayAfterAdd();
     } else {
       status("No result from AnkiConnect.");
     }
@@ -8137,7 +9742,11 @@ async function addToAnki() {
 // ------- Outbox -> Anki -------
 async function sendOutboxToAnki() {
   if (!outbox.cards.length) {
-    status("No cards to send.");
+    status(
+      triage.cards.length
+        ? "Review or mark cards ready before sending to Anki."
+        : "No cards ready to send."
+    );
     return;
   }
   closeActiveModal();
@@ -8422,7 +10031,7 @@ function handlePrimaryAction() {
   if (isTriageActive()) {
     return acceptCurrentCard();
   }
-  return queueCurrentCardForReview();
+  return addToAnki();
 }
 
 function handleQueueShortcut(event) {
@@ -8433,12 +10042,12 @@ function handleQueueShortcut(event) {
   event.stopPropagation();
   try {
     if (triageActive && !isTextField(event.target)) {
-      status("Queue shortcut is for writing mode. Use A to accept review cards.");
+      status("Add shortcut is for writing mode. Use A to accept review cards.");
       return;
     }
-    queueCurrentCardForReview();
+    addToAnki();
   } catch (err) {
-    console.warn("Queue shortcut failed", err);
+    console.warn("Add shortcut failed", err);
   }
 }
 document.addEventListener("keydown", handleQueueShortcut, true);
@@ -8506,14 +10115,10 @@ async function getAiSourceContext() {
   const mode = await getSourceMode();
   await ensureSourceFromMode(mode, { wantPaste: false });
   const text = ($("#source")?.value || "").trim();
-  let liveCtx = null;
-  try { liveCtx = await getPageContext(); } catch {}
-  if (mode !== 'clipboard') {
-    await refreshPageSelectionFromTab({ fresh: liveCtx });
-  }
-  const effectiveCtx = copilot.pageCtx || liveCtx || {};
-  const sourceText = text || effectiveCtx.selection || "";
-  return { sourceText, effectiveCtx };
+  const effectiveCtx = copilot.pageCtx || {};
+  const sourceText = text || getContextSourceText(effectiveCtx) || "";
+  const sourceIssue = sourceText ? "" : getClipboardFallbackIssue();
+  return { sourceText, effectiveCtx, sourceIssue };
 }
 
 async function detectBestTemplate(sourceText, templates = []) {
@@ -8548,7 +10153,7 @@ async function handleEditorGenerateClick() {
   const ctx = await getAiSourceContext();
 
   if (!ctx.sourceText) {
-    status("No source text (type, select text, or enable clipboard-as-Source).");
+    notifyNoSourceText({ sourceIssue: ctx.sourceIssue });
     return;
   }
   if (!ensureAiSourceInputWithinLimit(ctx.sourceText)) return;
@@ -8597,11 +10202,12 @@ async function aiGenerate(templateId, ctx = {}) {
   const chosenTemplate = templateId || templateSelect?.value || templateSelect?.options?.[0]?.value || templates[0]?.id;
   if (templateSelect && chosenTemplate) templateSelect.value = chosenTemplate;
 
-  const { sourceText, effectiveCtx } = ctx && ctx.sourceText !== undefined
+  const sourceCtx = ctx && ctx.sourceText !== undefined
     ? ctx
     : await getAiSourceContext();
+  const { sourceText, effectiveCtx, sourceIssue } = sourceCtx;
   if (!sourceText) {
-    status("No source text (type, select text, or enable clipboard-as-Source).");
+    notifyNoSourceText({ sourceIssue });
     return;
   }
   if (!ensureAiSourceInputWithinLimit(sourceText)) return;
@@ -8620,7 +10226,7 @@ async function aiGenerate(templateId, ctx = {}) {
         bumpMetric(metrics, "ai_suggestions_accepted");
         return metrics;
       });
-      status("Applied AI suggestion. Edit it before queueing.", true);
+      status("Applied AI suggestion. Edit it, then Add to Anki.", true);
       return;
     }
 
@@ -8710,25 +10316,34 @@ async function aiGenerate(templateId, ctx = {}) {
       }
     }
 
-    const oneCard = normalized.slice(0, 1);
+    const candidate = normalized[0];
     if (normalized.length > 1) {
       status("AI returned multiple cards; keeping the first candidate only.", true);
     }
-    const startLen = triage.cards.length;
-    for (const card of oneCard) {
-      setCardReviewStatus(card, "pending");
-      card.draft_origin = "ai_assisted";
-      card.ai_suggestion_count = (Number(card.ai_suggestion_count) || 0) + 1;
-      card.captured_at = card.captured_at || new Date().toISOString();
-      triage.cards.push(card);
-      try { triage.fingerprints.add(makeFingerprint(card)); } catch {}
+    candidate.draft_origin = "ai_assisted";
+    candidate.ai_suggestion_count = (Number(candidate.ai_suggestion_count) || 0) + 1;
+    candidate.captured_at = candidate.captured_at || new Date().toISOString();
+    applyFocusedSuggestionResult("generate-candidate", candidate);
+    if (candidate.source_excerpt || candidate.source) {
+      setEditorFieldValue("#source", candidate.source_excerpt || candidate.source);
     }
-    triage.deck = parsed.deck || triage.deck || null;
-    if (!startLen && triage.cards.length) {
-      triage.i = 0;
+    if (candidate.extra || candidate.notes) {
+      setEditorFieldValue("#notes", candidate.extra || candidate.notes);
     }
-    renderEditor();
-    status(`AI generated one candidate card; added it to Review Queue.`, true);
+    if (parsed.deck) {
+      const deckSelect = $("#deck");
+      if (deckSelect && [...deckSelect.options].some((option) => option.value === parsed.deck)) {
+        deckSelect.value = parsed.deck;
+      }
+    }
+    updateFrontDetection($("#front")?.value || "");
+    updateOverlaySourceChrome();
+    await updateLocalMetrics((metrics) => {
+      bumpMetric(metrics, "ai_suggestions_requested");
+      bumpMetric(metrics, "ai_suggestions_accepted");
+      return metrics;
+    });
+    status("AI drafted one candidate. Edit it, then Add to Anki.", true);
   } catch (e) {
     status(`AI error: ${e.message}`);
   }
@@ -8741,7 +10356,7 @@ async function updateCompactCopilotVisibility() {
   if (!miniNew && !miniOld) return;
 
   const opts = await getOptions();
-  const mode = opts.showMiniCopilotMode || 'off';
+  const mode = normalizeMiniCopilotMode(opts.showMiniCopilotMode || 'off');
   copilot.showSourceModePill = opts.showSourceModePill !== false;
   const isPopover = /\bpopover\b/i.test(location.hash);
   const small = window.matchMedia('(max-width: 640px)').matches || isPopover;
@@ -8805,9 +10420,22 @@ function markPanelReady() {
 async function initPanel() {
   try {
     applySurfaceModeClass();
-    $("#refresh").addEventListener("click", (e) => { e.preventDefault(); refreshMetaAndDefaults(); });
+    $("#refresh").addEventListener("click", (e) => {
+      e.preventDefault();
+      clearAnkiSessionCache();
+      refreshMetaAndDefaults();
+      syncSourceMode({ wantPaste: false }).catch(() => {});
+    });
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) refreshMetaAndDefaults();
+      if (!document.hidden) {
+        refreshMetaAndDefaults();
+        syncSourceMode({ wantPaste: false }).catch(() => {});
+      }
+    });
+    window.addEventListener("focus", () => {
+      if (getEditorSurface() === "side_panel") {
+        syncSourceMode({ wantPaste: false }).catch(() => {});
+      }
     });
     $("#add").addEventListener("click", (e) => { e.preventDefault(); handlePrimaryAction(); });
     const editorGenerateBtn = $("#editorGenerateBtn");
