@@ -1718,7 +1718,7 @@ const copilot = {
   fields: new Map(),
   storageListener: null,
   pageCtx: null,
-  prompts: { front: null, back: null, frontFromBack: null },
+  prompts: { front: null, back: null, frontFromBack: null, cloze: null },
   _userPromptBuilder: null,
   manualOnly: (window.GHOSTWRITER_DEFAULTS || {}).manualCopilotOnly !== false,
   triggerShortcut: (window.GHOSTWRITER_DEFAULTS || {}).copilotShortcut || "Cmd+Shift+X",
@@ -1754,6 +1754,7 @@ try {
     copilot.prompts.front = (p.frontSystem || "").trim() || copilot.prompts.front;
     copilot.prompts.back = (p.backSystem || "").trim() || copilot.prompts.back;
     copilot.prompts.frontFromBack = (p.frontFromBackSystem || "").trim() || copilot.prompts.frontFromBack;
+    copilot.prompts.cloze = (p.clozeSystem || "").trim() || copilot.prompts.cloze;
     copilot._userPromptBuilder = typeof p.buildUserPrompt === "function" ? p.buildUserPrompt : null;
   }
 } catch {}
@@ -1761,6 +1762,7 @@ const basePromptDefaults = {
   front: copilot.prompts.front,
   back: copilot.prompts.back,
   frontFromBack: copilot.prompts.frontFromBack,
+  cloze: copilot.prompts.cloze,
 };
 
 const COPILOT_ABORT_CANCELLED = "ghostwriter-copilot-cancelled";
@@ -1924,6 +1926,20 @@ function getCopilotSystemPrompt(kind = "front") {
   }
   if (kind === "front-from-back" && prompts.frontFromBack?.trim()) {
     return appendStrictMathRule(renderPromptTemplate(prompts.frontFromBack.trim()));
+  }
+  if (kind === "cloze") {
+    if (prompts.cloze?.trim()) {
+      return appendStrictMathRule(renderPromptTemplate(prompts.cloze.trim()));
+    }
+    return appendStrictMathRule(renderPromptTemplate([
+      "Autocomplete one Anki Cloze card's Text field.",
+      "Output only the text to insert. No analysis, labels, quotes, or markdown.",
+      "Continue after the user's prefix; do not repeat or restate text already typed.",
+      "Produce one self-contained sentence with AT LEAST ONE deletion in exact {{c1::answer}} format (use {{c2::}}, {{c3::}} for more); never return zero deletions.",
+      "Wrap only the key term(s) to recall; keep enough surrounding context to be unambiguous; each deletion atomic and grounded in the Source/title/notes.",
+      "The sentence with its deletion(s) is the whole card; do not add a separate question or answer.",
+      "Keep the sentence <= {{frontWordCap}} words, not counting the cloze markup."
+    ].join(" ")));
   }
 
   if (kind === "back") {
@@ -5148,6 +5164,17 @@ async function callBackLLM(prompt, sys, ctrl, existingText) {
   return openAIBackCall(prompt, sys, ctrl.signal, existingText, capWords);
 }
 
+// Cloze mode is active when the selected note type is a cloze model, or the Front
+// already contains a cloze deletion. Used to route the copilot to the cloze prompt.
+function isClozeCopilotActive(frontText) {
+  try {
+    if (isClozeModelName(($("#model")?.value || "").trim())) return true;
+    const text = frontText != null ? frontText : ($("#front")?.value || "");
+    if (detectClozeSyntax(text)) return true;
+  } catch {}
+  return false;
+}
+
 function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   const page = ctx.page || {};
   const pageSourceText = getContextSourceText(page);
@@ -5164,6 +5191,7 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
       notes: (ctx.notes || ""),
       page,
       sourceMode: normalizeSourceMode(ctx.sourceMode),
+      cloze: !!ctx.cloze,
       caps: { frontWordCap: copilot.frontWordCap, backWordCap: copilot.backWordCap },
     });
   }
@@ -5283,6 +5311,8 @@ function setBackDraftSuggestionFromSourceStem(backText, frontText) {
 
 async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   if (copilot.manualOnly && !force) return;
+  // Cloze cards carry their answer inside {{c1::...}}; don't auto-draft a Q&A "back".
+  if (isClozeCopilotActive(frontForBack)) return;
   const backState = copilot.fields.get("back");
   if (!backState) return;
   if (!frontForBack) return;
@@ -5776,17 +5806,19 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     if (state.controller === controller) state.controller = null;
     return;
   }
+  const isFrontFromBack = state.fieldId === "front" && !trimmed && !!other.trim();
+  const clozeMode = state.fieldId === "front" && !isFrontFromBack && isClozeCopilotActive(existingForCopilot);
   const prompt = buildCopilotCompletionPrompt(state.fieldId, existingForCopilot, {
     other,
     protectedAnswer,
     notes,
     page,
     sourceMode: mode,
+    cloze: clozeMode,
   });
 
   try {
-    const isFrontFromBack = state.fieldId === "front" && !trimmed && !!other.trim();
-    const sys = getCopilotSystemPrompt(isFrontFromBack ? "front-from-back" : state.fieldId);
+    const sys = getCopilotSystemPrompt(clozeMode ? "cloze" : isFrontFromBack ? "front-from-back" : state.fieldId);
     const since = Date.now() - (copilot._lastAt || 0);
     if (!force && since < copilot.minIntervalMs) {
       await new Promise(r => setTimeout(r, copilot.minIntervalMs - since));
@@ -6165,6 +6197,7 @@ async function initCopilot() {
       front: basePromptDefaults.front || null,
       back: basePromptDefaults.back || null,
       frontFromBack: basePromptDefaults.frontFromBack || null,
+      cloze: basePromptDefaults.cloze || null,
     };
     copilot.showSourceModePill = opts.showSourceModePill !== false;
     const D = window.GHOSTWRITER_DEFAULTS || {};
@@ -6183,7 +6216,7 @@ async function initCopilot() {
     copilot.apiConfigured = false;
 	    copilot.provider = "openai";
     copilot.enabled = false;
-    copilot.prompts = { front: null, back: null, frontFromBack: null };
+    copilot.prompts = { front: null, back: null, frontFromBack: null, cloze: null };
     copilot.manualOnly = false;
     copilot.triggerShortcut = "Cmd+Shift+X";
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut);
@@ -6232,6 +6265,7 @@ async function initCopilot() {
           front: basePromptDefaults.front || null,
           back: basePromptDefaults.back || null,
           frontFromBack: basePromptDefaults.frontFromBack || null,
+          cloze: basePromptDefaults.cloze || null,
         };
         copilot.manualOnly = next.manualCopilotOnly !== false;
         const nextShortcut = typeof next.copilotShortcut === "string" ? next.copilotShortcut.trim() : "";

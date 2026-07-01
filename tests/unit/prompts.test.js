@@ -35,6 +35,13 @@ describe('prompts.js', () => {
       assert.ok(PROMPTS.frontFromBackSystem.includes('answer contract'));
       assert.ok(PROMPTS.frontFromBackSystem.length < 650);
     });
+
+    it('provides a cloze system prompt that requires {{c1::...}} deletions', () => {
+      assert.equal(typeof PROMPTS.clozeSystem, 'string');
+      assert.ok(PROMPTS.clozeSystem.includes('{{c1::answer}}'));
+      assert.ok(/at least one/i.test(PROMPTS.clozeSystem));
+      assert.ok(PROMPTS.clozeSystem.includes("Cloze card's Text field"));
+    });
   });
 
   describe('buildUserPrompt', () => {
@@ -70,6 +77,28 @@ describe('prompts.js', () => {
       assert.ok(result.includes('Source-grounding'));
       assert.ok(result.includes('one atomic cue'));
       assert.ok(result.endsWith('Output:'));
+    });
+
+    it('emits cloze rules (and drops the answer-leakage rule) when cloze is true', () => {
+      const result = PROMPTS.buildUserPrompt({
+        ...baseMeta,
+        fieldId: 'front',
+        existing: '',
+        other: '',
+        cloze: true,
+      });
+      assert.ok(result.includes('Complete CLOZE TEXT'));
+      assert.ok(result.includes('{{c1::answer}}'));
+      assert.ok(/CLOZE:/.test(result));
+      // Must NOT carry the basic-front "no answer leakage" rule, which fights cloze.
+      assert.ok(!result.includes('no answer leakage'));
+      assert.ok(!result.includes('one atomic cue'));
+    });
+
+    it('leaves basic (non-cloze) front prompts unchanged', () => {
+      const result = PROMPTS.buildUserPrompt({ ...baseMeta, fieldId: 'front', existing: 'What', other: '' });
+      assert.ok(result.includes('one atomic cue'));
+      assert.ok(!result.includes('{{c1::'));
     });
 
     it('tells Back completion to answer the Front without restating it', () => {
