@@ -417,6 +417,11 @@
     .card-details-panel[open] .card-details-close-label {
       display: inline;
     }
+    /* When expanded, the body shows the full source; drop the summary preview so
+       we don't render the same text twice. */
+    .source-drawer[open] .source-summary-preview {
+      display: none;
+    }
     .source-controls { gap: 6px; align-items: center; }
     .metadata-drawer-body { margin-top: 10px; }
     .source-hidden-input {
