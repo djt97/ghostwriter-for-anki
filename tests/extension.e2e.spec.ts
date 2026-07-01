@@ -338,7 +338,7 @@ test.describe('Ghostwriter for Anki UI', () => {
     await expect(panel.locator('#source')).toHaveValue('Highlights become focused Anki cards.');
     await panel.locator('#front').fill('What do highlights become?');
 
-    await page.evaluate(() => window.postMessage({ type: 'quickflash:closeOverlay' }, '*'));
+    await page.evaluate(() => window.postMessage({ type: 'quickflash:test:closeOverlay' }, '*'));
     await expect(page.locator('html')).not.toHaveAttribute('data-qf-overlay', 'open', { timeout: 15_000 });
 
     await selectFixtureText('#fixture-text-2');

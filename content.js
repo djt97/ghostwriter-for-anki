@@ -970,6 +970,10 @@ if (window.__QUICKFLASH_INJECTED__) {
       } catch {
         // ignore - diagnostic only
       }
+    } else if (QF_TEST_MODE && type === 'quickflash:test:closeOverlay') {
+      // Test-only close: production closeOverlay requires the extension origin (below),
+      // which a page-origin postMessage can't satisfy. Stripped from release builds.
+      try { closePopover(); } catch {}
     }
 
     if (type === 'quickflash:closeOverlay') {
