@@ -1,0 +1,67 @@
+{
+  "name": "Dense multi-fact sources + cloze",
+  "schemaVersion": 1,
+  "source": { "title": "Assorted (dense highlights)", "url": "" },
+  "cases": [
+    {
+      "id": "dead-sea-afloat",
+      "section": "supermemo 20 rules - ill-formulated Dead Sea example",
+      "tags": ["dense-source", "minimum-information", "source-grounding"],
+      "sourceText": "Salt lake located on the border between Israel and Jordan. Its shoreline is the lowest point on the Earth's surface, averaging 396 m below sea level. It is 74 km long. It is seven times as salty (30% by volume) as the ocean. Its density keeps swimmers afloat. Only simple organisms can live in its saline waters.",
+      "frontPrefix": "Why can the Dead Sea keep ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A dense multi-fact blob. The prefix gestures at the 'keeps swimmers afloat' fact, not the first (location) fact. The copilot must ground on the targeted sentence and produce an atomic, non-leaking card.",
+        "plausibleUserPrefixes": ["Why can the Dead Sea keep ", "Why can "],
+        "preferredCards": [
+          { "type": "basic", "front": "Why can the Dead Sea keep swimmers afloat?", "back": "Its high density" }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Why can the Dead Sea be described as a salt lake located on the border between?",
+            "whyBad": "Grabbed the first fact in the blob, not the gestured fact; the Front also leaks the answer."
+          },
+          {
+            "type": "basic",
+            "front": "Why can the Dead Sea keep swimmers afloat?",
+            "back": "Its density keeps swimmers afloat",
+            "whyBad": "Back restates the Front instead of giving an atomic answer."
+          }
+        ]
+      }
+    },
+    {
+      "id": "forgetting-curve-cloze",
+      "section": "cloze on dense/definitional material",
+      "tags": ["cloze", "dense-source"],
+      "sourceText": "The forgetting curve, first described by Hermann Ebbinghaus, hypothesizes the decline of memory retention over time. Memory of new material drops steeply within the first day and then levels off.",
+      "frontPrefix": "The forgetting curve",
+      "carding": {
+        "verdict": "cloze",
+        "rationale": "Dense/definitional material the maintainer prefers as a cloze deletion rather than a single Q&A.",
+        "plausibleUserPrefixes": ["The forgetting curve"],
+        "preferredCards": [
+          { "type": "cloze", "text": "The forgetting curve, first described by {{c1::Hermann Ebbinghaus}}, hypothesizes the {{c2::decline}} of memory retention over {{c3::time}}." }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "spacing-effect-cloze",
+      "section": "cloze on definitional material",
+      "tags": ["cloze", "dense-source"],
+      "sourceText": "The spacing effect is the finding that information is remembered better when study is spread out over time than when the same amount is crammed into a single session.",
+      "frontPrefix": "The spacing effect",
+      "carding": {
+        "verdict": "cloze",
+        "rationale": "A definitional sentence that makes a clean cloze deletion.",
+        "plausibleUserPrefixes": ["The spacing effect"],
+        "preferredCards": [
+          { "type": "cloze", "text": "The {{c1::spacing effect}} is the finding that information is remembered better when study is {{c2::spread out over time}} than when crammed into a single session." }
+        ],
+        "badButPlausibleCards": []
+      }
+    }
+  ]
+}

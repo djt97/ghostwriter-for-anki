@@ -36,6 +36,7 @@ function parseArgs(argv) {
     write: true,
     includePrompts: false,
     listModels: false,
+    gate: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -65,6 +66,7 @@ function parseArgs(argv) {
     else if (arg === "--no-write") args.write = false;
     else if (arg === "--include-prompts") args.includePrompts = true;
     else if (arg === "--list-models") args.listModels = true;
+    else if (arg === "--gate") args.gate = true;
     else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -82,6 +84,8 @@ function printHelp() {
 
 Options:
   --run                    Call the model. Without this, the script does a dry prompt build.
+  --gate                    With --run, exit non-zero if any case produces a bad card
+                            (answer leak, drift, non-fit, restated Back, or a known-bad card).
   --fixture <path>          Eval fixture JSON. Default: tests/evals/deep-learning-wikipedia.json
   --out <dir>               Report output directory. Default: tests/evals/reports
   --provider <name>         openai, openrouter, ultimate, gemini, or compatible. Default: inferred from env.
@@ -260,6 +264,7 @@ function loadEngine() {
     ${extractFunction(panelSource, "isStateCommandPrefix")}
     ${extractFunction(panelSource, "isDistinctiveSingleSourceStemPrefix")}
     ${extractFunction(panelSource, "getSourceStemMatch")}
+    ${extractFunction(panelSource, "selectRelevantSource")}
     ${extractFunction(panelSource, "normalizeStatementSourceText")}
     ${extractFunction(panelSource, "cleanStatementSubject")}
     ${extractFunction(panelSource, "cleanStatementAlias")}
@@ -379,6 +384,7 @@ function loadEngine() {
     return {
       normalizeCopilotSuggestion,
       getSourceStemMatch,
+      selectRelevantSource,
       inferSourceStemCompletion,
       stripFrontFromBack,
       finalizeFrontQuestion,
@@ -636,6 +642,8 @@ function formatCard(card) {
 function buildFrontPrompt({ fixture, testCase, prompts, helpers }) {
   const page = makePage(fixture, testCase);
   const frontPrefix = getEvalPrefix(testCase);
+  // Mirror the extension: ground the model on the sentence the prefix targets.
+  page.selection = helpers.selectRelevantSource(testCase.sourceText, frontPrefix, "");
   const sourceStem = helpers.getSourceStemMatch(testCase.sourceText, frontPrefix);
   const protectedAnswer = helpers.inferProtectedAnswerFromSource(
     testCase.sourceText,
@@ -660,6 +668,7 @@ function buildFrontPrompt({ fixture, testCase, prompts, helpers }) {
 
 function buildBackPrompt({ fixture, testCase, front, prompts, helpers }) {
   const page = makePage(fixture, testCase);
+  page.selection = helpers.selectRelevantSource(testCase.sourceText, "", front);
   const answerRole = helpers.inferAnswerRoleFromFront(front);
   return {
     system: prompts.backSystem,
@@ -1316,6 +1325,22 @@ async function main() {
   console.log(`${rows.length} cases prepared; ${flagged.length} flagged for review.`);
   if (!live) {
     console.log("Dry run only. Add --run and an API key env var to call the autocomplete model.");
+  }
+  if (args.gate && live) {
+    // Hard failures: the model produced an actually-bad card (leak, drift, non-fit,
+    // restated Back, matched a known-bad card, missing field). Soft "fixture:*" review
+    // flags do not gate.
+    const HARD = ["front-leak", "protected-leak", "front-fit", "front-drift", "back-fit", "matches-known-bad-card", "missing-front", "missing-back", "model-output"];
+    const hardFails = rows.filter((row) => (row.judgment?.flags || []).some((f) => HARD.some((h) => String(f).startsWith(h))));
+    if (hardFails.length) {
+      console.error(`\nGATE FAILED: ${hardFails.length} case(s) produced a bad card:`);
+      for (const row of hardFails) {
+        console.error(`  - ${row.id} [prefix: ${JSON.stringify(row.frontPrefix)}] front=${JSON.stringify(row.front)} back=${JSON.stringify(row.back)} :: ${(row.judgment.flags || []).join(", ")}`);
+      }
+      process.exitCode = 1;
+    } else {
+      console.log("GATE PASSED: no hard failures on cases with expectations.");
+    }
   }
 }
 
