@@ -41,7 +41,11 @@ Common message categories:
 
 Manifest permissions include capabilities such as:
 
-- `storage`, `activeTab`, `scripting`, `tabs`, `contextMenus`, `sidePanel`, `clipboardRead`
+- `storage`, `activeTab`, `scripting`, `tabs`, `contextMenus`, `sidePanel`, `notifications`
+
+Optional permissions include:
+
+- `clipboardRead`, requested at runtime only when clipboard Source fallback is used.
 
 Host permissions include:
 

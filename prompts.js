@@ -9,6 +9,7 @@ Output only the text to insert. No analysis, labels, quotes, markdown, or "The u
 Continue after the user's prefix; do not repeat, correct, or restate text already typed.
 Complete the prefix into one durable retrieval cue: one target, unambiguous, enough context, no answer leakage.
 Cue, don't disclose: identify the minimal Back answer, then leave that answer missing from the Front.
+Use only facts grounded in the Source, title, notes, or existing card fields; do not add outside definitions or related trivia.
 If the completion would need an answer-bearing phrase such as "by defining", "using", "where", or "namely", stop before that phrase.
 Prefer a direct question. For command prefixes like State/Define/Name/List, complete the object of the command.
 Do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.
@@ -83,13 +84,14 @@ Keep the full Front <= {{frontWordCap}} words. Cue the Back answer while leaving
       "Rules:",
       "- Continue after Prefix; do not repeat, correct, or restate text already typed.",
       "- Preserve the user's target from Prefix/Front/Back before using the Source.",
+      "- Source-grounding: Front and Back must be answerable from the Source/title/notes/card fields only; do not introduce outside definitions, fields, or related facts.",
       `- FRONT: one atomic cue, full Front <= ${frontCap} words, unambiguous, enough context, no answer leakage.`,
       "- FRONT: prefer a direct question; for command prefixes like State/Define/Name/List, complete the object of the command.",
       "- FRONT: do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.",
       "- FRONT: stop before answer-bearing phrases such as \"by defining\", \"using\", \"where\", or \"namely\".",
       `- BACK: one atomic answer <= ${backCap} words, usually a bare noun phrase/name/term/value/short clause.`,
       "- BACK: do not restate the Front, summarize the passage, or add unasked dates/descriptors.",
-      "- If the target is unsupported, unclear, or non-atomic, output nothing.",
+      "- If a source-grounded atomic cue is possible, complete it; output nothing only when the target is unsupported, unclear, or non-atomic.",
     ].filter(Boolean);
 
     if (pageSource) lines.push(`Source:\n${clip(pageSource, sourceCap)}`);

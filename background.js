@@ -6,11 +6,11 @@ const OPTIONS_KEY = "quickflash_options";
 // Free-tier proxy: subsidized first-run AI suggestions. The proxy must also
 // enforce these limits server-side; local state is only for UX/status.
 const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton97.workers.dev/v1";
-const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
-const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
+const ULTIMATE_DEFAULT_MODEL = "auto";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
@@ -155,13 +155,19 @@ async function assertAiHostPermission({ provider, baseUrl } = {}) {
   if (!baseUrl || provider === "free-tier" || !chrome.permissions?.contains) return;
   const origin = getKnownAiHostPermissionOrigin(baseUrl);
   if (!origin) return;
-  let granted = true;
+  let granted = false;
   try {
     granted = await chrome.permissions.contains({ origins: [origin] });
   } catch {
-    return;
+    granted = false;
   }
   if (!granted) {
+    if (chrome.permissions?.request) {
+      try {
+        granted = await chrome.permissions.request({ origins: [origin] });
+      } catch {}
+      if (granted) return;
+    }
     throw new Error(
       `Chrome has not granted Ghostwriter permission to contact ${origin}. ` +
       `Open Ghostwriter Settings, click Save, and accept the AI provider permission prompt.`
@@ -378,10 +384,9 @@ function openSidePanelCommandFromUserGesture(tab) {
     return;
   }
 
-  if (isSidePanelMarkedOpen({ tabId, windowId }) && closeSidePanelCommandFromUserGesture({ tabId, windowId })) {
-    return;
-  }
-
+  // Chrome does not report user-initiated side-panel closes (no onClosed event),
+  // so the shortcut always opens/focuses the panel instead of toggling from stale
+  // in-memory state. Chrome focuses an already-open panel, so re-pressing is a no-op.
   clearLastDraftContext();
 
   if (typeof tabId === "number" && chrome.sidePanel.setOptions) {
@@ -432,14 +437,8 @@ function openSidePanelCommandFromUserGesture(tab) {
     });
 }
 
-try {
-  chrome.sidePanel?.onOpened?.addListener((info) => {
-    markSidePanelOpen(info);
-  });
-  chrome.sidePanel?.onClosed?.addListener((info) => {
-    markSidePanelClosed(info);
-  });
-} catch {}
+// Note: chrome.sidePanel exposes no onOpened/onClosed events, so open/closed
+// state cannot be tracked from user-initiated closes. The shortcut opens/focuses.
 
 async function getSidePanelEnabled(tabId) {
   if (!supportsSidePanel() || !chrome.sidePanel.getOptions) return null;
@@ -962,6 +961,7 @@ chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
 });
 
 const SAVED_ITEMS_KEY = "ghostwriter_saved_items";
+const NUDGE_MILESTONE_KEY = "ghostwriter_nudge_milestone_v1";
 
 async function refreshBadge() {
   try {
@@ -1264,21 +1264,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
         chrome.action.setBadgeBackgroundColor({ color: count >= 10 ? "#dc2626" : "#2563eb" });
-        // Nudge at milestones
-        if (count === 5) {
-          chrome.notifications?.create?.("ghostwriter-nudge-5", {
-            type: "basic",
-            iconUrl: "icons/icon128.png",
-            title: "Ghostwriter for Anki",
-            message: "You have 5 saved highlights. Ready to review them?",
-          });
-        } else if (count === 10) {
-          chrome.notifications?.create?.("ghostwriter-nudge-10", {
-            type: "basic",
-            iconUrl: "icons/icon128.png",
-            title: "Ghostwriter for Anki",
-            message: "10 highlights saved! Time to turn them into cards.",
-          });
+        // Nudge once per upward crossing of a milestone; reset when the queue drains
+        // so a later re-crossing can fire again (avoids re-firing on every count===5).
+        const milestone = count >= 10 ? 10 : count >= 5 ? 5 : 0;
+        const storedMilestone = await chrome.storage.local.get(NUDGE_MILESTONE_KEY);
+        const lastMilestone = Number(storedMilestone?.[NUDGE_MILESTONE_KEY]) || 0;
+        if (milestone > lastMilestone) {
+          if (milestone === 5) {
+            chrome.notifications?.create?.("ghostwriter-nudge-5", {
+              type: "basic",
+              iconUrl: "icons/icon128.png",
+              title: "Ghostwriter for Anki",
+              message: "You have 5 saved highlights. Ready to review them?",
+            });
+          } else if (milestone === 10) {
+            chrome.notifications?.create?.("ghostwriter-nudge-10", {
+              type: "basic",
+              iconUrl: "icons/icon128.png",
+              title: "Ghostwriter for Anki",
+              message: "10 highlights saved! Time to turn them into cards.",
+            });
+          }
+          await chrome.storage.local.set({ [NUDGE_MILESTONE_KEY]: milestone });
+        } else if (milestone < lastMilestone) {
+          await chrome.storage.local.set({ [NUDGE_MILESTONE_KEY]: milestone });
         }
       } catch {}
       sendResponse({ ok: true });

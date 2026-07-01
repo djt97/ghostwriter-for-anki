@@ -6,9 +6,57 @@
 
 (function () {
   const root = document.getElementById('root');
-  const PARENT_ORIGIN = (typeof chrome !== 'undefined' && chrome.runtime?.getURL)
-    ? new URL(chrome.runtime.getURL('')).origin
-    : '*';
+  function getSearchParam(name) {
+    try {
+      return new URL(window.location.href).searchParams.get(name) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function normalizeOrigin(value) {
+    if (!value) return '';
+    try {
+      const origin = new URL(value).origin;
+      return origin && origin !== 'null' ? origin : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function getTrustedParentOrigin() {
+    const configured = normalizeOrigin(getSearchParam('parentOrigin'));
+    if (configured) return configured;
+    try {
+      return normalizeOrigin(document.referrer);
+    } catch {
+      return '';
+    }
+  }
+
+  function getMessageChannel() {
+    const channel = getSearchParam('channel');
+    return /^[a-zA-Z0-9._:-]{8,128}$/.test(channel) ? channel : '';
+  }
+
+  function getExtensionOrigin() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+        return new URL(chrome.runtime.getURL('')).origin;
+      }
+    } catch {}
+    try {
+      return window.location.origin && window.location.origin !== 'null'
+        ? window.location.origin
+        : '';
+    } catch {
+      return '';
+    }
+  }
+
+  const TRUSTED_PARENT_ORIGIN = getTrustedParentOrigin() || getExtensionOrigin();
+  const PARENT_ORIGIN = TRUSTED_PARENT_ORIGIN || '*';
+  const MESSAGE_CHANNEL = getMessageChannel();
 
   function escapeHtml(str) {
     return String(str)
@@ -39,13 +87,22 @@
   function notify(type, extra) {
     try {
       window.parent.postMessage(
-        Object.assign({ type }, extra || {}),
+        Object.assign({ type, channel: MESSAGE_CHANNEL }, extra || {}),
         PARENT_ORIGIN
       );
     } catch (err) {
       // Swallow – failing to notify parent should not break preview
       console.warn('[QuickFlash sandbox] notify failed', err);
     }
+  }
+
+  function isTrustedParentMessage(event) {
+    if (event.source && event.source !== window.parent) return false;
+    const data = event.data;
+    if (!data || typeof data !== 'object') return false;
+    if (!MESSAGE_CHANNEL || data.channel !== MESSAGE_CHANNEL) return false;
+    if (TRUSTED_PARENT_ORIGIN && event.origin !== TRUSTED_PARENT_ORIGIN) return false;
+    return true;
   }
 
   // Keep the same "serialize typesets" behavior to avoid races.
@@ -105,8 +162,8 @@
   }
 
   function handleMessage(event) {
+    if (!isTrustedParentMessage(event)) return;
     const data = event.data;
-    if (!data || typeof data !== 'object') return;
 
     const type = data.type;
 

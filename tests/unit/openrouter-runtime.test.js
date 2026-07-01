@@ -12,6 +12,12 @@ const panelSource = fs.readFileSync(
 const manifest = JSON.parse(fs.readFileSync(
   path.resolve(__dirname, '../../manifest.json'), 'utf8'
 ));
+const listingSource = fs.readFileSync(
+  path.resolve(__dirname, '../../LISTING.md'), 'utf8'
+);
+const privacySource = fs.readFileSync(
+  path.resolve(__dirname, '../../PRIVACY_POLICY.md'), 'utf8'
+);
 
 describe('OpenRouter runtime wiring', () => {
   it('uses the OpenAI-compatible chat completions path and Auto Router default', () => {
@@ -42,5 +48,11 @@ describe('OpenRouter runtime wiring', () => {
   it('declares optional permission and CSP coverage for OpenRouter', () => {
     assert.ok(manifest.optional_host_permissions.includes('https://openrouter.ai/*'));
     assert.ok(manifest.content_security_policy.extension_pages.includes('https://openrouter.ai'));
+  });
+
+  it('discloses OpenRouter in store listing and privacy policy endpoint lists', () => {
+    assert.match(listingSource, /https:\/\/openrouter\.ai[\s\S]*OpenRouter API requests/);
+    assert.match(privacySource, /OpenAI, OpenRouter, UltimateAI, Google Gemini, Anthropic Claude/);
+    assert.match(privacySource, /https:\/\/openrouter\.ai[\s\S]*OpenRouter API requests/);
   });
 });

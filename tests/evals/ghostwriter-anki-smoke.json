@@ -1,0 +1,413 @@
+{
+  "name": "Ghostwriter Anki source-backed smoke eval",
+  "schemaVersion": 2,
+  "source": {
+    "title": "Local Anki notes tagged ghostwriter",
+    "url": "anki://local/tag/ghostwriter",
+    "fixtureCreatedAt": "2026-06-30",
+    "fixtureReviewedAt": "2026-06-30",
+    "licenseNote": "Curated local regression cases from the owner's Ghostwriter-tagged Anki notes where the stored source directly supports the preferred card."
+  },
+  "cases": [
+    {
+      "id": "cruft-computing-context",
+      "section": "define cruft - Brave Search",
+      "tags": ["anki", "software-engineering", "source-grounding"],
+      "sourceText": "Cruft is a slang term used primarily in computing and technology to describe unnecessary, redundant, or poorly written code, files, or digital information that accumulates over time and hinders performance.",
+      "frontPrefix": "In what ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source directly states the domain where cruft is primarily used.",
+        "plausibleUserPrefixes": ["In what "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "In what context is the term \"cruft\" primarily used?",
+            "back": "In computing and technology."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "compact-metric-space-conditions",
+      "section": "Total Boundedness in Non-Complete Spaces",
+      "tags": ["anki", "math", "topology"],
+      "sourceText": "In a metric space, compact iff complete plus totally bounded.",
+      "frontPrefix": "In a ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source gives the two-condition characterization.",
+        "plausibleUserPrefixes": ["In a "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "In a metric space, a set is compact if and only if it is... (two conditions)",
+            "back": "Complete and totally bounded."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "sigmoid-neuron-overcomes-perceptron",
+      "section": "Neural Networks and Deep Learning",
+      "tags": ["anki", "machine-learning", "neural-networks"],
+      "sourceText": "We can overcome this problem by introducing a new type of artificial neuron called a sigmoid neuron. Sigmoid neurons are similar to perceptrons, but modified so that small changes in their weights and bias cause only a small change in their output.",
+      "frontPrefix": "What type ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The highlighted source names the neuron type that overcomes the perceptron learning issue.",
+        "plausibleUserPrefixes": ["What type "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What type of artificial neuron can overcome the limitations of perceptrons for learning?",
+            "back": "Sigmoid neurons"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "sigmoid-logistic-name",
+      "section": "Neural Networks and Deep Learning",
+      "tags": ["anki", "machine-learning", "activation-functions"],
+      "sourceText": "Incidentally, sigma is sometimes called the logistic function, and this new class of neurons called logistic neurons.",
+      "frontPrefix": "What is ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source gives a synonym for the sigmoid function.",
+        "plausibleUserPrefixes": ["What is "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is another name for the sigmoid function?",
+            "back": "The logistic function."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "ood-stands-for",
+      "section": "Sigmoid neurons in MLPs - Claude",
+      "tags": ["anki", "machine-learning", "abbreviation"],
+      "sourceText": "In machine learning, OOD stands for Out-Of-Distribution.",
+      "frontPrefix": "What does ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source directly expands the abbreviation.",
+        "plausibleUserPrefixes": ["What does "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What does OOD stand for in machine learning?",
+            "back": "Out-Of-Distribution"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "vq-codebook-name",
+      "section": "VQ bottleneck in machine learning - Claude",
+      "tags": ["anki", "machine-learning", "vector-quantization"],
+      "sourceText": "The fundamental idea is simple: VQ maps continuous vectors to the nearest entry in a finite set of learned vectors, the codebook.",
+      "frontPrefix": "What name ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source names the finite set of learned vectors.",
+        "plausibleUserPrefixes": ["What name "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What name is given to the finite set of learned vectors in VQ? (in ML)",
+            "back": "The codebook"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "vq-voronoi-partition",
+      "section": "VQ bottleneck in machine learning - Claude",
+      "tags": ["anki", "machine-learning", "computational-geometry"],
+      "sourceText": "Think of VQ as partitioning the continuous space into regions, a Voronoi tessellation technically.",
+      "frontPrefix": "What kind ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source gives the partition type.",
+        "plausibleUserPrefixes": ["What kind "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What kind of partition of a continuous space does VQ construct?",
+            "back": "A Voronoi tessellation"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "kmeans-first-step",
+      "section": "VQ bottleneck in machine learning - Claude",
+      "tags": ["anki", "machine-learning", "algorithms"],
+      "sourceText": "You initialize k centroids randomly, then alternate two steps: assign each point to its nearest centroid, then move each centroid to the mean of its assigned points. Repeat until stable.",
+      "frontPrefix": "What is ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source states the initialization step before the alternating updates.",
+        "plausibleUserPrefixes": ["What is "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the first step of the k-means algorithm?",
+            "back": "Randomly initialize k centroids."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "autoencoder-definition",
+      "section": "VQ bottleneck in machine learning - Claude",
+      "tags": ["anki", "machine-learning", "autoencoders"],
+      "sourceText": "An autoencoder is a neural network that learns to compress data and then reconstruct it.",
+      "frontPrefix": "What is ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source provides a direct definition of autoencoder.",
+        "plausibleUserPrefixes": ["What is "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is an autoencoder?",
+            "back": "A neural network that learns to compress data and then reconstruct it."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "straight-through-estimator-gradient",
+      "section": "VQ bottleneck in machine learning - Claude",
+      "tags": ["anki", "machine-learning", "gradients"],
+      "sourceText": "The straight-through estimator bypasses this by copying the gradient at the codebook vector directly to the encoder output.",
+      "frontPrefix": "How does ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source states how the estimator bypasses the gradient issue.",
+        "plausibleUserPrefixes": ["How does "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "How does the \"straight-through\" estimator bypass the VQ bottleneck's issue with gradients?",
+            "back": "It copies the gradient at the codebook vector directly to the encoder's output."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "np-hard-in-words",
+      "section": "Knapsack Problem Complexity",
+      "tags": ["anki", "computer-science", "complexity-theory"],
+      "sourceText": "So NP-hard means: At least as hard as the hardest problems in NP.",
+      "frontPrefix": "In words, ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source gives the plain-language meaning of NP-hard.",
+        "plausibleUserPrefixes": ["In words, "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "In words, what does NP-hard mean?",
+            "back": "At least as hard as the hardest problems in NP."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "rsp-tax-expansion",
+      "section": "Fuel excise cut during inflation debate - Claude",
+      "tags": ["anki", "australia", "public-policy"],
+      "sourceText": "In 2010, the Rudd government proposed the Resource Super Profits Tax, RSPT.",
+      "frontPrefix": "What does ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source expands the policy abbreviation.",
+        "plausibleUserPrefixes": ["What does "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What does \"RSPT\" stand for in Australian policy?",
+            "back": "Resource Super Profits Tax"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "miners-ad-spend",
+      "section": "Fuel excise cut during inflation debate - Claude",
+      "tags": ["anki", "australia", "public-policy"],
+      "sourceText": "The Minerals Council of Australia and the big miners, BHP, Rio Tinto, Fortescue, spent an estimated $22 million on advertising in just six weeks.",
+      "frontPrefix": "How much ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source gives the advertising spend.",
+        "plausibleUserPrefixes": ["How much "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "How much did the Minerals Council of Australia and big miners spend on advertising in six weeks to lobby against the RSPT?",
+            "back": "$22 million"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "gillard-replaced-rspt",
+      "section": "Fuel excise cut during inflation debate - Claude",
+      "tags": ["anki", "australia", "public-policy"],
+      "sourceText": "Gillard immediately negotiated the tax down to the Minerals Resource Rent Tax, MRRT.",
+      "frontPrefix": "What did ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source states what Gillard replaced the RSPT with.",
+        "plausibleUserPrefixes": ["What did "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What did Gillard replace the RSPT with?",
+            "back": "The Minerals Resource Rent Tax (MRRT)"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "abbott-repealed-mrrt",
+      "section": "Fuel excise cut during inflation debate - Claude",
+      "tags": ["anki", "australia", "public-policy"],
+      "sourceText": "The Abbott government repealed the MRRT entirely in 2014.",
+      "frontPrefix": "Which government ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source names the government that repealed the MRRT.",
+        "plausibleUserPrefixes": ["Which government "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "Which government repealed the MRRT in its entirety?",
+            "back": "The Abbott government"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "symbolic-expression-tree",
+      "section": "Beam search for symbolic expressions - Claude",
+      "tags": ["anki", "computer-science", "symbolic-expressions"],
+      "sourceText": "A symbolic expression can be represented as a tree: operators at internal nodes and variables or constants at the leaves.",
+      "frontPrefix": "What are ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source maps tree positions to expression components.",
+        "plausibleUserPrefixes": ["What are "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What are the nodes and leaves of a symbolic expression tree?",
+            "back": "Operators at internal nodes; variables or constants at leaves."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "bert-cls-expansion",
+      "section": "Decoder-only transformers explained - Claude",
+      "tags": ["anki", "machine-learning", "nlp"],
+      "sourceText": "The email gets tokenized. BERT always prepends a special CLS token, which stands for classification.",
+      "frontPrefix": "What does ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source expands CLS in the BERT tokenization context.",
+        "plausibleUserPrefixes": ["What does "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What does CLS stand for in BERT tokenization?",
+            "back": "Classification"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "representation-collapse-core-problem",
+      "section": "EMA encoder in JEPA - Claude",
+      "tags": ["anki", "machine-learning", "representation-learning"],
+      "sourceText": "The core problem in joint-embedding architectures is representation collapse: the model could learn to map everything to the same constant embedding and achieve zero prediction error trivially.",
+      "frontPrefix": "What is ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source names the core problem.",
+        "plausibleUserPrefixes": ["What is "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the core problem in joint-embedding architectures?",
+            "back": "Representation collapse"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "preposition-function",
+      "section": "Dependency Parsing Explained",
+      "tags": ["anki", "language", "grammar"],
+      "sourceText": "A preposition is a word that shows a relationship between things.",
+      "frontPrefix": "What is ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source states the function of a preposition.",
+        "plausibleUserPrefixes": ["What is "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the function of a preposition?",
+            "back": "To show a relationship between things."
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "rocstories-contents",
+      "section": "A Corpus and Evaluation Framework for Deeper Understanding of Commonsense Stories",
+      "tags": ["anki", "nlp", "datasets"],
+      "sourceText": "We created a new corpus of about 50k five-sentence commonsense stories, ROCStories, to enable this evaluation.",
+      "frontPrefix": "What is ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source describes what the ROCStories corpus contains.",
+        "plausibleUserPrefixes": ["What is "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is contained in the ROCStories dataset?",
+            "back": "about 50k five-sentence commonsense stories"
+          }
+        ],
+        "badButPlausibleCards": []
+      }
+    }
+  ]
+}

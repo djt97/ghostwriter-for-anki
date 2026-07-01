@@ -176,9 +176,17 @@ async function refreshDebugSource() {
 
 function recordDebugRequest(details) {
   if (!debugState.enabled) return;
+  const safeDetails = { ...details };
+  if (typeof safeDetails.endpoint === "string") {
+    // Some providers (e.g. Gemini) put the API key in the URL query; never surface it.
+    safeDetails.endpoint = safeDetails.endpoint.replace(
+      /([?&](?:key|api[-_]?key|access_token)=)[^&]+/gi,
+      "$1<redacted>"
+    );
+  }
   debugState.last = {
     ...(debugState.last || {}),
-    ...details,
+    ...safeDetails,
     startedAt: new Date().toISOString(),
     completedAt: null,
     response: "",
@@ -425,6 +433,37 @@ function extractLocalFileUrl(rawUrl) {
   return "";
 }
 
+function emptyPageContextFromTab(tab = null) {
+  const url = tab?.url || "";
+  const localFileUrl = extractLocalFileUrl(url);
+  const resolvedUrl = localFileUrl || url;
+  return {
+    selection: "",
+    url: resolvedUrl,
+    title: tab?.title || "",
+    meta: {},
+    sourceUrl: resolvedUrl,
+    sourceLabel: tab?.title || resolvedUrl,
+  };
+}
+
+function canRequestTabPageContext(tab = null) {
+  if (!tab?.id) return false;
+  const url = String(tab.url || "");
+  return /^(?:https?:|file:)/i.test(url);
+}
+
+function withTimeout(promise, fallback, timeoutMs = 1200) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+  ]);
+}
+
+function withContextMessageTimeout(promise, fallback, timeoutMs = 1200) {
+  return withTimeout(promise, fallback, timeoutMs);
+}
+
 async function getPageContext() {
   const tab = await getActiveTab();
   if (!tab) {
@@ -437,33 +476,17 @@ async function getPageContext() {
       sourceLabel: "",
     };
   }
-  if (!tab?.id) {
-    const url = tab?.url || "";
-    const localFileUrl = extractLocalFileUrl(url);
-    const resolvedUrl = localFileUrl || url;
-    return {
-      selection: "",
-      url: resolvedUrl,
-      title: tab?.title || "",
-      meta: {},
-      sourceUrl: resolvedUrl,
-      sourceLabel: tab?.title || resolvedUrl,
-    };
+  const fallback = emptyPageContextFromTab(tab);
+  if (!canRequestTabPageContext(tab)) {
+    return fallback;
   }
   try {
-    return await chrome.tabs.sendMessage(tab.id, { type: "quickflash:getContext" });
+    return await withContextMessageTimeout(
+      chrome.tabs.sendMessage(tab.id, { type: "quickflash:getContext" }),
+      fallback
+    );
   } catch {
-    const url = tab?.url || "";
-    const localFileUrl = extractLocalFileUrl(url);
-    const resolvedUrl = localFileUrl || url;
-    return {
-      selection: "",
-      url: resolvedUrl,
-      title: tab?.title || "",
-      meta: {},
-      sourceUrl: resolvedUrl,
-      sourceLabel: tab?.title || resolvedUrl,
-    };
+    return fallback;
   }
 }
 
@@ -684,11 +707,11 @@ function inferProviderFromOptions(opts) {
 }
 
 const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton97.workers.dev/v1";
-const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
-const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
+const ULTIMATE_DEFAULT_MODEL = "auto";
 const CLAUDE_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
@@ -817,6 +840,29 @@ function getProviderDisplayName(provider) {
   return "UltimateAI";
 }
 
+function cleanProviderErrorMessage(message) {
+  const raw = String(message || "Unknown error").replace(/\s+/g, " ").trim();
+  if (!raw) return "Unknown error";
+  const titleMatch = raw.match(/<title[^>]*>(.*?)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].replace(/\s+/g, " ").trim() : "";
+  if (/<\s*!doctype html/i.test(raw) || /<\s*html\b/i.test(raw)) {
+    if (/502|bad gateway/i.test(title || raw)) {
+      return "Upstream provider returned a 502 Bad Gateway HTML error page.";
+    }
+    return title ? `Upstream provider returned an HTML error page: ${title}` : "Upstream provider returned an HTML error page.";
+  }
+  const cleaned = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "Unknown error";
+  return cleaned.length > 320 ? `${cleaned.slice(0, 317)}...` : cleaned;
+}
+
+function makeOpenAICompatibleHttpError(provider, status, message, headers) {
+  const err = new Error(`${getProviderDisplayName(provider)} error ${status}: ${cleanProviderErrorMessage(message)}`);
+  err.status = status;
+  err.headers = headers;
+  return err;
+}
+
 function hasProviderApiKey(opts = {}, provider) {
   if (provider === "gemini") return !!opts.geminiKey;
   if (provider === "openai") return !!opts.openaiKey;
@@ -838,13 +884,19 @@ async function assertAiHostPermission({ provider, baseUrl } = {}) {
   if (!baseUrl || provider === "free-tier" || !chrome.permissions?.contains) return;
   const origin = getKnownAiHostPermissionOrigin(baseUrl);
   if (!origin) return;
-  let granted = true;
+  let granted = false;
   try {
     granted = await chrome.permissions.contains({ origins: [origin] });
   } catch {
-    return;
+    granted = false;
   }
   if (!granted) {
+    if (chrome.permissions?.request) {
+      try {
+        granted = await chrome.permissions.request({ origins: [origin] });
+      } catch {}
+      if (granted) return;
+    }
     throw new Error(
       `Chrome has not granted Ghostwriter permission to contact ${origin}. ` +
       `Open Ghostwriter Settings, click Save, and accept the AI provider permission prompt.`
@@ -931,10 +983,7 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     if (!r.ok) {
       if (r.status === 429) copilotBackoffFrom(r);
       let e = await r.text(); try { const j = JSON.parse(e); e = j.error?.message || e; } catch {}
-      const err = new Error(`UltimateAI error ${r.status}: ${e}`);
-      err.status = r.status;
-      err.headers = r.headers;
-      throw err;
+      throw makeOpenAICompatibleHttpError(providerName, r.status, e, r.headers);
     }
     data = await r.json();
   } catch (err) {
@@ -1054,14 +1103,12 @@ async function ultimateCompletion(prompt, options = {}) {
       body: JSON.stringify(payload),
       signal,
     });
-    try { data = await res.json(); } catch {}
+    const rawResponse = await res.text().catch(() => "");
+    try { data = rawResponse ? JSON.parse(rawResponse) : null; } catch {}
     if (!res.ok) {
       if (res.status === 429) copilotBackoffFrom(res);
-      const msg = (data && (data.error?.message || data.detail)) || "Unknown error";
-      const err = new Error(`UltimateAI error ${res.status}: ${msg}`);
-      err.status = res.status;
-      err.headers = res.headers;
-      throw err;
+      const msg = (data && (data.error?.message || data.detail)) || rawResponse || "Unknown error";
+      throw makeOpenAICompatibleHttpError(provider, res.status, msg, res.headers);
     }
   } catch (err) {
     recordDebugError(err);
@@ -1495,8 +1542,18 @@ async function ultimateCompletionStream(
       // surface provider backoffs like the non-streaming path
       if (res.status === 429) copilotBackoffFrom(res);
       let msg = "Unknown error";
-      try { const j = await res.json(); msg = j?.error?.message || j?.detail || msg; } catch {}
-      throw new Error(`UltimateAI error ${res.status}: ${msg}`);
+      try {
+        const raw = await res.text();
+        if (raw) {
+          try {
+            const j = JSON.parse(raw);
+            msg = j?.error?.message || j?.detail || raw;
+          } catch {
+            msg = raw;
+          }
+        }
+      } catch {}
+      throw makeOpenAICompatibleHttpError(provider, res.status, msg, res.headers);
     }
   } catch (err) {
     recordDebugError(err);
@@ -1525,6 +1582,10 @@ async function ultimateCompletionStream(
         if (!chunk && (delta.reasoning_content || delta.thinking || delta.thinking_blocks)) sawReasoningOnly = true;
         if (choice.finish_reason === "length") sawLengthFinish = true;
         if (chunk) emitDelta(chunk);
+        if (shouldFinalizeOpenAIStreamChoice(choice)) {
+          finalizeStream();
+          return;
+        }
       } catch {}
     }
   }
@@ -1702,6 +1763,10 @@ const basePromptDefaults = {
   frontFromBack: copilot.prompts.frontFromBack,
 };
 
+const COPILOT_ABORT_CANCELLED = "ghostwriter-copilot-cancelled";
+const COPILOT_ABORT_TIMEOUT = "ghostwriter-copilot-timeout";
+const COPILOT_ABORT_EARLY_STOP = "ghostwriter-copilot-early-stop";
+
 copilot.autoFillBack = true; // default behavior: fill Back when Front is accepted
 copilot.backCooldownMs = 1500;      // min time between back drafts while typing front
 copilot._lastBackAt = 0;
@@ -1719,6 +1784,48 @@ function renderPromptTemplate(template) {
   });
 }
 
+function resetRejectedCopilotDraft(state) {
+  if (!state) return;
+  state.rejectedSuggestion = "";
+  state.rejectedPreview = "";
+  state.rejectedReason = "";
+  if (state.acceptBtn) {
+    state.acceptBtn.textContent = "Accept";
+    state.acceptBtn.title = "";
+  }
+}
+
+function rememberRejectedCopilotDraft(state, { suggestion = "", preview = "", reason = "" } = {}) {
+  const cleanSuggestion = String(suggestion || "").trim();
+  if (!state || !cleanSuggestion) return;
+  state.rejectedSuggestion = cleanSuggestion;
+  state.rejectedPreview = String(preview || cleanSuggestion).replace(/\s+/g, " ").trim();
+  state.rejectedReason = String(reason || "").trim();
+}
+
+function showRejectedCopilotDraft(state) {
+  const preview = String(state?.rejectedPreview || state?.rejectedSuggestion || "").trim();
+  if (!state || !preview) return false;
+  if (state.suggestionEl) {
+    state.suggestionEl.hidden = false;
+    state.suggestionEl.classList.remove("loading");
+    state.suggestionEl.classList.add("error");
+  }
+  if (state.textEl) state.textEl.textContent = preview;
+  if (state.hintEl) {
+    const reason = state.rejectedReason ? `${state.rejectedReason}. ` : "";
+    state.hintEl.textContent = `${reason}Use anyway or regenerate.`;
+  }
+  if (state.acceptBtn) {
+    state.acceptBtn.textContent = "Use anyway";
+    state.acceptBtn.title = "Insert this rejected AI draft anyway";
+  }
+  if (state.ghostEl) state.ghostEl.hidden = true;
+  if (state.ghostTextEl) state.ghostTextEl.textContent = "";
+  if (state.mirrorEl) state.mirrorEl.textContent = state.textarea?.value || "";
+  return true;
+}
+
 /**
  * Clear copilot suggestion UI elements for a given field state.
  * @param {Object} state - copilot field state object
@@ -1727,6 +1834,7 @@ function renderPromptTemplate(template) {
  * @param {string|null} [opts.mirrorValue=null] - if non-null, set mirrorEl.textContent to this value
  */
 function clearSuggestionUI(state, { removeClasses = false, mirrorValue = null } = {}) {
+  resetRejectedCopilotDraft(state);
   if (state.suggestionEl) {
     if (removeClasses) state.suggestionEl.classList.remove("loading", "error");
     state.suggestionEl.hidden = true;
@@ -1738,14 +1846,45 @@ function clearSuggestionUI(state, { removeClasses = false, mirrorValue = null } 
   if (mirrorValue !== null && state.mirrorEl) state.mirrorEl.textContent = mirrorValue;
 }
 
+function abortCopilotController(controller, reason = COPILOT_ABORT_CANCELLED) {
+  if (!controller || controller.signal?.aborted) return;
+  try {
+    controller.abort(reason);
+  } catch {
+    try { controller.abort(); } catch {}
+  }
+}
+
+function isCurrentCopilotRequest(state, controller) {
+  return !!state && !!controller && state.controller === controller;
+}
+
+function isCopilotTimeoutAbort(controllerOrSignal, err) {
+  const signal = controllerOrSignal?.signal || controllerOrSignal;
+  const reason = signal?.reason;
+  if (reason === COPILOT_ABORT_TIMEOUT) return true;
+  const reasonName = String(reason?.name || "");
+  const reasonMessage = String(reason?.message || reason || "");
+  const errMessage = String(err?.message || "");
+  return /timeout/i.test(reasonName) || /timeout/i.test(reasonMessage) || /timeout/i.test(errMessage);
+}
+
+function shouldFinalizeOpenAIStreamChoice(choice) {
+  return !!choice?.finish_reason;
+}
+
 function resetCopilotLocks() {
   copilot.locks = { frontAccepted: false, backAccepted: false, allSuspended: false };
   copilot._lastAt = 0;
   copilot.pauseUntil = 0;
   for (const st of copilot.fields.values()) {
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
-    if (st.controller) { st.controller.abort(); st.controller = null; }
+    if (st.controller) { abortCopilotController(st.controller); st.controller = null; }
     clearSuggestionUI(st, { removeClasses: true, mirrorValue: st.textarea?.value || "" });
+    if (st.workingEl) {
+      st.workingEl.hidden = true;
+      st.workingEl.textContent = "";
+    }
     st.suggestion = "";
     st.lastValue = "";
   }
@@ -1796,6 +1935,7 @@ function getCopilotSystemPrompt(kind = "front") {
       "In most cases the answer should be a bare noun phrase, name, term, value, or short clause.",
       "Use a full sentence only if the Front explicitly asks for a definition, explanation, or sentence completion.",
       "Answer exactly what the Front asks. Do not restate the Front or turn the Back into a passage summary.",
+      "Use only facts grounded in the Source, title, notes, or existing card fields; do not add outside definitions or related trivia.",
       "Do not append unasked dates, locations, relative clauses, or descriptors unless required to disambiguate."
     ].join(" ")));
   }
@@ -1815,6 +1955,7 @@ function getCopilotSystemPrompt(kind = "front") {
     "Continue after the user's prefix; do not repeat, correct, or restate text already typed.",
     "Complete the prefix into one durable retrieval cue: one target, unambiguous, enough context, no answer leakage.",
     "Cue, don't disclose: identify the minimal Back answer, then leave that answer missing from the Front.",
+    "Use only facts grounded in the Source, title, notes, or existing card fields; do not add outside definitions or related trivia.",
     "If the completion would need an answer-bearing phrase such as \"by defining\", \"using\", \"where\", or \"namely\", stop before that phrase.",
     "Prefer a direct question. For command prefixes like State/Define/Name/List, complete the object of the command.",
     "Do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.",
@@ -1994,7 +2135,7 @@ async function readClipboardSafe({ requestPermission = false } = {}) {
   clipboardReadState.lastReadError = "";
   if (requestPermission && !(await ensureClipboardReadPermission())) return "";
   try {
-    const text = (await navigator.clipboard.readText())?.trim() || "";
+    const text = (await withTimeout(navigator.clipboard.readText(), "", 800))?.trim() || "";
     if (text) {
       clipboardReadState.lastReadError = "";
       return text;
@@ -2060,12 +2201,12 @@ function hasVisibleSourceModeControl() {
 }
 
 // If there is no selection (or mode demands), fill pageCtx.selection from clipboard.
-async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, force = false } = {}) {
+async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, force = false, requestPermission = false } = {}) {
   if (!force) {
     const opts = await getOptions();
     if (!isClipboardFallbackEnabled(opts)) return false;
   }
-  const clip = await readClipboardSafe({ requestPermission: true });
+  const clip = await readClipboardSafe({ requestPermission });
   const hasClip = !!clip;
   if (!hasClip && !allowEmpty) return false;
   window.copilot = window.copilot || {};
@@ -2207,10 +2348,10 @@ function renderSourceMode(mode) {
   }
 }
 
-async function ensureSourceFromMode(mode, { wantPaste = false } = {}) {
+async function ensureSourceFromMode(mode, { wantPaste = false, requestPermission = false } = {}) {
   const normalized = normalizeSourceMode(mode);
   if (normalized === 'clipboard') {
-    await applyClipboardFallback({ wantPaste, allowEmpty: true, force: true });
+    await applyClipboardFallback({ wantPaste, allowEmpty: true, force: true, requestPermission });
     return normalized;
   }
   if (normalized === 'page') {
@@ -2250,31 +2391,36 @@ async function ensureSourceFromMode(mode, { wantPaste = false } = {}) {
   return normalized;
 }
 
-async function toggleSourceMode({ wantPaste = false } = {}) {
+async function toggleSourceMode({ wantPaste = false, requestPermission = false } = {}) {
   const current = await getSourceMode();
   const next = nextSourceMode(current);
   const saved = await setSourceMode(next);
   renderSourceMode(saved);
-  await ensureSourceFromMode(saved, { wantPaste });
+  await ensureSourceFromMode(saved, { wantPaste, requestPermission });
   return saved;
 }
 
-async function syncSourceMode({ wantPaste = false } = {}) {
+async function syncSourceMode({ wantPaste = false, requestPermission = false } = {}) {
   const mode = await getSourceMode();
   renderSourceMode(mode);
-  await ensureSourceFromMode(mode, { wantPaste });
+  await ensureSourceFromMode(mode, { wantPaste, requestPermission });
   return mode;
+}
+
+async function takeStoredOverlayContextDraft() {
+  try {
+    const { quickflash_lastDraft } = await chrome.storage.local.get("quickflash_lastDraft");
+    if (quickflash_lastDraft) await chrome.storage.local.remove("quickflash_lastDraft").catch(() => {});
+    return quickflash_lastDraft || null;
+  } catch {}
+  return null;
 }
 
 // Seed from storage (set by content.js on overlay open) or ask active tab
 async function seedCopilotPageContext() {
   let draftCtx = null;
   let liveCtx = null;
-  try {
-    const { quickflash_lastDraft } = await chrome.storage.local.get("quickflash_lastDraft");
-    draftCtx = quickflash_lastDraft || null;
-    if (quickflash_lastDraft) await chrome.storage.local.remove("quickflash_lastDraft").catch(() => {});
-  } catch {}
+  draftCtx = await takeStoredOverlayContextDraft();
 
   try {
     liveCtx = await getPageContext();
@@ -2302,10 +2448,19 @@ async function seedCopilotPageContext() {
 // Listen for overlay push (content.js posts this to the panel iframe)
 const EXTENSION_ORIGIN = (() => { try { return new URL(chrome.runtime.getURL("")).origin; } catch { return location.origin; } })();
 window.addEventListener("message", async (event) => {
-  // Only accept messages from the extension origin or same-origin (side panel)
-  if (event.origin !== EXTENSION_ORIGIN && event.origin !== location.origin) return;
-  if (event?.data?.type === "quickflash:context") {
-    const incomingCtx = normalizePageContext(event.data.payload || {});
+  const type = event?.data?.type;
+  if (!type) return;
+  const sameOriginMessage = event.origin === EXTENSION_ORIGIN || event.origin === location.origin;
+  const overlayParentMessage =
+    getEditorSurface() === "overlay" &&
+    window.parent !== window &&
+    event.source === window.parent;
+  if (!sameOriginMessage && !overlayParentMessage) return;
+
+  if (type === "quickflash:context") {
+    const rawContext = sameOriginMessage ? (event.data.payload || {}) : await takeStoredOverlayContextDraft();
+    if (!rawContext) return;
+    const incomingCtx = normalizePageContext(rawContext);
     const incomingSelection = getContextSourceText(incomingCtx);
     if (incomingSelection) clearClipboardSource({ notify: true });
 
@@ -2348,12 +2503,13 @@ window.addEventListener("message", async (event) => {
 
     focusFrontAtEnd();
   }
-  if (event?.data?.type === "quickflash:overlayClosed") {
+  if (type === "quickflash:overlayClosed") {
     clearClipboardSource({ notify: true });
     resetCopilotLocks();
     setCopilotStatus("Copilot ready.");
   }
-  if (event?.data?.type === "quickflash:queueCurrentCard") {
+  if (type === "quickflash:queueCurrentCard") {
+    if (!sameOriginMessage) return;
     await addToAnki();
   }
 });
@@ -2362,7 +2518,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (!message || typeof message !== "object") return;
     if (message.type === "quickflash:cycleSourceMode") {
-      const mode = await toggleSourceMode({ wantPaste: true });
+      const mode = await toggleSourceMode({ wantPaste: true, requestPermission: true });
       sendResponse?.({ ok: true, mode });
       return;
     }
@@ -2370,7 +2526,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const mode = normalizeSourceMode(message.mode);
       await setSourceMode(mode);
       renderSourceMode(mode);
-      await ensureSourceFromMode(mode, { wantPaste: true });
+      await ensureSourceFromMode(mode, { wantPaste: true, requestPermission: mode === 'clipboard' });
       sendResponse?.({ ok: true, mode });
       return;
     }
@@ -2434,8 +2590,12 @@ function showLiteFallbackToast(message = "Used lite fallback") {
 function cancelCopilotRequests() {
   for (const state of copilot.fields.values()) {
     if (state.timer) { clearTimeout(state.timer); state.timer = null; }
-    if (state.controller) { state.controller.abort(); state.controller = null; }
+    if (state.controller) { abortCopilotController(state.controller); state.controller = null; }
     clearSuggestionUI(state, { removeClasses: true, mirrorValue: state.textarea?.value || "" });
+    if (state.workingEl) {
+      state.workingEl.hidden = true;
+      state.workingEl.textContent = "";
+    }
     state.suggestion = "";
     state.lastValue = "";
   }
@@ -2887,12 +3047,694 @@ function buildStatementSourceStemCompletion(statement, prefixText, { command = f
   };
 }
 
+function cleanSourcePatternQuestionPhrase(value) {
+  return normalizeStatementSourceText(value)
+    .replace(/\[[^\]]+\]/g, "")
+    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`:;,.!?]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shortenPeriodBoundaryPhrase(value) {
+  let text = cleanSourcePatternQuestionPhrase(value)
+    .replace(/^(?:the\s+)?beginning\s+of\s+/i, "")
+    .replace(/^(?:the\s+)?first\s+known\s+use\s+of\s+/i, "the first known ")
+    .replace(/\s+by\s+hominins\b[\s\S]*$/i, "")
+    .replace(/\s+c\.\s*[\d.\s]+\s*(?:million|billion)?\s+years?\s+ago\b/ig, "")
+    .replace(/\s+with\s+the\s+invention\s+of\s+writing\s+systems\b[\s\S]*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^recorded\s+history\b/i.test(text)) return "recorded history";
+  return text;
+}
+
+function buildPatternSourceCompletion(fullFront, back, prefixText, split) {
+  const frontSuffix = stripExistingPrefixFromCompletion(finalizeFrontQuestion(fullFront), prefixText);
+  const cleanBack = cleanSourceStemAnswer(back).replace(/[.!?]+$/g, "").trim();
+  if (!frontSuffix || !cleanBack) return null;
+  return {
+    kind: "source-pattern",
+    split,
+    frontSuffix,
+    back: cleanBack,
+  };
+}
+
+function inferApproachSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^(?:what|which)\b/i.test(prefix)) return null;
+  if (!/\b(?:approach|method|technique|way|standard)\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /\b(?:an?|one|the)\s+(?:standard\s+)?(approach|method|technique|way)\s+to\s+(.{3,140}?)\s+(?:is|are|was|were)\s+(?:to\s+)?(?:make\s+use\s+of|use|uses|using|via|through)\s+(?:so-called\s+)?(.+?)(?:[:;.?!]|$)/i
+  );
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const kind = match[1].toLowerCase();
+  const target = cleanSourcePatternQuestionPhrase(match[2]);
+  const answer = cleanSourcePatternQuestionPhrase(match[3]);
+  if (!target || !answer || answer.split(/\s+/).length > 8) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${kind} to ${target}?`;
+  return buildPatternSourceCompletion(
+    fullFront,
+    `using ${answer.replace(/^(?:using|via|through)\s+/i, "")}`,
+    prefixText,
+    "approach"
+  );
+}
+
+function inferPeriodSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^which\s+(?:period|era|stage)?\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /^(.{2,90}?)(?:,\s*[^,]{2,160},)?\s+(?:is|are|was|were)\s+the\s+(period|era|stage)\s+of\s+(.{3,80}?)\s+between\s+(.{3,180}?)\s+and\s+(.+)$/i
+  );
+  if (!match?.[1] || !match?.[3] || !match?.[4] || !match?.[5]) return null;
+
+  const answer = cleanSourcePatternQuestionPhrase(match[1].split(/\s*,\s*/)[0]);
+  const domain = cleanSourcePatternQuestionPhrase(match[3]);
+  const start = shortenPeriodBoundaryPhrase(match[4]);
+  const end = shortenPeriodBoundaryPhrase(match[5]);
+  if (!answer || !domain || !start || !end) return null;
+  if (answer.split(/\s+/).length > 8) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} of ${domain} runs from ${start} to ${end}?`;
+  return buildPatternSourceCompletion(fullFront, answer, prefixText, "period");
+}
+
+function inferContextSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^in\s+what\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /^(.{2,80}?)\s+(?:is|are|was|were)\s+.{0,120}?\bused\s+primarily\s+in\s+(.{3,80}?)\s+to\s+/i
+  );
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const context = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!subject || !context || context.split(/\s+/).length > 8) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} context is the term "${subject}" primarily used?`;
+  return buildPatternSourceCompletion(fullFront, `in ${context}`, prefixText, "usage-context");
+}
+
+function inferAliasSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^(?:what|which)\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /\b(.{2,80}?)\s+(?:is|are|was|were)\s+(?:also\s+|sometimes\s+|commonly\s+|often\s+)?(?:called|known\s+as|referred\s+to\s+as|termed)\s+(.{2,80}?)(?:[.;:!?]|,|\band\b|$)/i
+  );
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const subject = cleanSourcePatternQuestionPhrase(match[1])
+    .replace(/^(?:incidentally|also|sometimes|commonly|often),?\s+/i, "")
+    .replace(/^(?:an?|the)\s+/i, "");
+  const alias = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!subject || !alias || alias.split(/\s+/).length > 8) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${subject} sometimes called?`;
+  return buildPatternSourceCompletion(fullFront, alias, prefixText, "alias");
+}
+
+function inferAbbreviationSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+does\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const parenthetical = sentence.match(
+    /^([A-Z][A-Za-z]+(?:\s+[A-Za-z][A-Za-z-]+){0,8})\s+\(([A-Z][A-Z0-9-]{1,12})\)\s+(?:is|are|was|were)\s+(.+?)(?:[.;:!?]|$)/
+  );
+  if (parenthetical?.[1] && parenthetical?.[2]) {
+    const expansion = cleanSourcePatternQuestionPhrase(parenthetical[1]);
+    const abbr = cleanSourcePatternQuestionPhrase(parenthetical[2]);
+    const contextMatch = cleanSourcePatternQuestionPhrase(parenthetical[3] || "").match(/\b(?:from|in)\s+(.{3,60})$/i);
+    const context = contextMatch?.[1] ? cleanSourcePatternQuestionPhrase(contextMatch[1]) : "";
+    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for${context ? ` in ${context}` : ""}?`;
+    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation-parenthetical");
+  }
+
+  const standsFor = sentence.match(
+    /^(?:[Ii]n\s+([^,]{2,80}),\s+)?([A-Z][A-Z0-9-]{1,12})\s+stands\s+for\s+(.+?)(?:[.;:!?]|$)/
+  );
+  if (standsFor?.[2] && standsFor?.[3]) {
+    const context = cleanSourcePatternQuestionPhrase(standsFor[1] || "");
+    const abbr = cleanSourcePatternQuestionPhrase(standsFor[2]);
+    const expansion = cleanSourcePatternQuestionPhrase(standsFor[3]);
+    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for${context ? ` in ${context}` : ""}?`;
+    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
+  }
+
+  const tokenStandsFor = sentence.match(
+    /\b([A-Z][A-Z0-9-]{1,12})\s+token,?\s+which\s+stands\s+for\s+(.+?)(?:[.;:!?]|$)/
+  );
+  if (tokenStandsFor?.[1] && tokenStandsFor?.[2]) {
+    const abbr = cleanSourcePatternQuestionPhrase(tokenStandsFor[1]);
+    const expansion = cleanSourcePatternQuestionPhrase(tokenStandsFor[2]);
+    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for?`;
+    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
+  }
+
+  const inlineStandsFor = sentence.match(
+    /\b([A-Z][A-Z0-9-]{1,12})\b.{0,80}?\bstands\s+for\s+(.+?)(?:[.;:!?]|$)/
+  );
+  if (inlineStandsFor?.[1] && inlineStandsFor?.[2]) {
+    const abbr = cleanSourcePatternQuestionPhrase(inlineStandsFor[1]);
+    const expansion = cleanSourcePatternQuestionPhrase(inlineStandsFor[2]);
+    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for?`;
+    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
+  }
+
+  const appositive = sentence.match(
+    /\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,8})\s*,\s*([A-Z][A-Z0-9-]{1,12})\b/
+  );
+  if (!appositive?.[1] || !appositive?.[2]) return null;
+
+  const expansion = cleanSourcePatternQuestionPhrase(appositive[1]);
+  const abbr = cleanSourcePatternQuestionPhrase(appositive[2]);
+  if (!expansion || !abbr) return null;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for?`;
+  return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
+}
+
+function inferCoreProblemSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+is\b/i.test(prefix)) return null;
+  if (/^what\s+is\s+meant\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /^((?:the\s+)?core\s+problem\s+.{3,120}?)\s+(?:is|are|was|were)\s+([^:.;!?]+)(?::|[.;!?]|$)/i
+  );
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const cue = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "the ");
+  const answer = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!cue || !answer || answer.split(/\s+/).length > 8) return null;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${cue}?`;
+  return buildPatternSourceCompletion(fullFront, answer, prefixText, "core-problem");
+}
+
+function inferCorpusContentsSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+is\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /\bcreated\s+(?:an?|the)?\s*(?:new\s+)?corpus\s+of\s+(.{3,120}?),\s*([A-Z][A-Za-z0-9-]{2,40})\s*,?\s+to\s+/i
+  );
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const contents = cleanSourcePatternQuestionPhrase(match[1]);
+  const name = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!contents || !name || contents.split(/\s+/).length > 10) return null;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} contained in the ${name} dataset?`;
+  return buildPatternSourceCompletion(fullFront, contents, prefixText, "corpus-contents");
+}
+
+function inferNamedSetSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+name\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /\b([A-Z][A-Z0-9-]{1,12})\s+maps\s+.{3,120}?\s+to\s+the\s+nearest\s+entry\s+in\s+(?:an?\s+)?(.{3,90}?),\s*(?:the\s+)?([A-Za-z][A-Za-z0-9 -]{2,40})(?:[.;:!?]|$)/
+  );
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const context = cleanSourcePatternQuestionPhrase(match[1]);
+  const rawNamedSet = cleanSourcePatternQuestionPhrase(match[2]);
+  const namedSet = /^(?:an?|the)\s+/i.test(rawNamedSet)
+    ? rawNamedSet.replace(/^(?:an?|the)\s+/i, "the ")
+    : `the ${rawNamedSet}`;
+  const name = cleanSourcePatternQuestionPhrase(match[3]).replace(/^(?:an?|the)\s+/i, "");
+  if (!context || !namedSet || !name || name.split(/\s+/).length > 5) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} is given to ${namedSet} in ${context}?`;
+  return buildPatternSourceCompletion(fullFront, `the ${name}`, prefixText, "named-set");
+}
+
+function inferMeaningSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^(?:in\s+words|what\s+does)\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^(.{2,80}?)\s+means:?\s+(.{3,180})$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:so|therefore|thus)\s+/i, "");
+  const meaning = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!subject || !meaning || subject.split(/\s+/).length > 6 || meaning.split(/\s+/).length > 14) return null;
+
+  const frontLead = /^in\s+words\b/i.test(prefix)
+    ? `${prefix.replace(/[,\s]+$/g, "")}, what does`
+    : prefix.replace(/\s+$/g, "");
+  const fullFront = `${frontLead} ${subject} mean?`;
+  return buildPatternSourceCompletion(fullFront, meaning, prefixText, "meaning");
+}
+
+function inferGovernmentRepealSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^which\s+government\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /^The\s+([A-Z][A-Za-z'-]+ government)\s+repealed\s+(.+?)(\s+entirely)?(?:\s+in\s+(\d{4}))?$/i
+  );
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const government = cleanSourcePatternQuestionPhrase(match[1]);
+  const target = cleanSourcePatternQuestionPhrase(match[2]);
+  const entirely = match[3] ? " entirely" : "";
+  const year = match[4] ? ` in ${match[4]}` : "";
+  if (!government || !target) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} repealed ${target}${entirely}${year}?`;
+  return buildPatternSourceCompletion(fullFront, government, prefixText, "government-repeal");
+}
+
+function inferTreeStructureSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+are\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /^(?:An?|The)\s+(.{3,80}?)\s+can\s+be\s+represented\s+as\s+a\s+tree:\s*(.{2,80}?)\s+at\s+internal\s+nodes\s+and\s+(.{2,80}?)\s+at\s+the\s+leaves$/i
+  );
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const rawSubject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const subject = `${rawSubject.charAt(0).toLowerCase()}${rawSubject.slice(1)}`;
+  const internal = cleanSourcePatternQuestionPhrase(match[2]);
+  const leaves = cleanSourcePatternQuestionPhrase(match[3]);
+  if (!subject || !internal || !leaves) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} the nodes and leaves of a ${subject} tree?`;
+  const back = `${internal} at internal nodes; ${leaves} at leaves`;
+  return buildPatternSourceCompletion(fullFront, back, prefixText, "tree-structure");
+}
+
+function inferWordFunctionSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+is\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^(?:An?|The)\s+([A-Za-z][A-Za-z0-9 -]{2,60})\s+is\s+a\s+word\s+that\s+(.{3,120})$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const term = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  let functionPhrase = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!term || !functionPhrase) return null;
+  functionPhrase = functionPhrase.replace(/^shows\b/i, "show");
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} the function of a ${term}?`;
+  return buildPatternSourceCompletion(fullFront, `to ${functionPhrase}`, prefixText, "word-function");
+}
+
+function inferDirectDefinitionSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^define\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^([A-Z][A-Za-z0-9 -]{1,50})\s+(?:is|are|means|refers\s+to)\s+(.{3,180})$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const term = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const definition = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!term || !definition || term.split(/\s+/).length > 5) return null;
+
+  return buildPatternSourceCompletion(`Define ${term}.`, definition, prefixText, "direct-definition");
+}
+
+function inferOriginSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^where\s+did\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^(.{3,80}?)\s+(?:is|are|was|were)\s+(?:generally\s+)?traced\s+back\s+to\s+(.{3,80})$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const rawSubject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const subject = `${rawSubject.charAt(0).toLowerCase()}${rawSubject.slice(1)}`;
+  const origin = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!subject || !origin || origin.split(/\s+/).length > 8) return null;
+
+  return buildPatternSourceCompletion(`Where did ${subject} originate from?`, origin, prefixText, "origin");
+}
+
+function inferContrastTypesSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+are\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(
+    /\b(?:an?|the)\s+([A-Za-z-]+)\s+([A-Za-z-]+)\s+is\s+.+?\bin\s+contrast\s+to\s+(?:an?|the)\s+([A-Za-z-]+)\s+\2\b/i
+  );
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const first = cleanSourcePatternQuestionPhrase(match[1]);
+  const kind = cleanSourcePatternQuestionPhrase(match[2]);
+  const second = cleanSourcePatternQuestionPhrase(match[3]);
+  if (!first || !kind || !second) return null;
+
+  const pluralKind = /s$/i.test(kind) ? kind : `${kind}s`;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} the two main types of ${pluralKind}?`;
+  return buildPatternSourceCompletion(fullFront, `${first} and ${second}`, prefixText, "contrast-types");
+}
+
+function inferPipelineSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^how\s+does\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^((?:the\s+)?[A-Za-z][A-Za-z0-9 -]{2,60})\s+sees\s+(.{3,90}?),\s+produces\s+(.{3,90}?),\s+and\s+(.{3,160})$/i);
+  if (!match?.[1] || !match?.[2] || !match?.[3] || !match?.[4]) return null;
+
+  const subjectCore = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const subject = `the ${subjectCore.charAt(0).toLowerCase()}${subjectCore.slice(1)}`;
+  const firstStep = cleanSourcePatternQuestionPhrase(match[2]);
+  const secondStep = cleanSourcePatternQuestionPhrase(match[3]);
+  const thirdStep = cleanSourcePatternQuestionPhrase(match[4]);
+  if (!subject || !firstStep || !secondStep || !thirdStep) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${subject} work?`;
+  const back = `sees ${firstStep}; produces ${secondStep}; guesses hidden patch embeddings`;
+  return buildPatternSourceCompletion(fullFront, back, prefixText, "pipeline");
+}
+
+function inferLabelCaptureSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+does\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^([A-Z][A-Za-z0-9-]{1,20})\s+is\s+([A-Z][A-Za-z0-9-]+)[’']?s\s+label\s+for\s+(.{3,140})$/i);
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const label = cleanSourcePatternQuestionPhrase(match[1]);
+  const tool = cleanSourcePatternQuestionPhrase(match[2]);
+  const captured = cleanSourcePatternQuestionPhrase(match[3]);
+  if (!label || !tool || !captured) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${label} capture in ${tool}?`;
+  return buildPatternSourceCompletion(fullFront, captured, prefixText, "label-capture");
+}
+
+function inferYearEventSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^in\s+what\s+year\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const repeal = sentence.match(/^The\s+(.{3,80}?)\s+repealed\s+(.+?)(\s+entirely)?\s+in\s+(\d{4})$/i);
+  if (repeal?.[1] && repeal?.[2] && repeal?.[4]) {
+    const subject = cleanSourcePatternQuestionPhrase(repeal[1]);
+    const target = cleanSourcePatternQuestionPhrase(repeal[2]);
+    const entirely = repeal[3] ? " entirely" : "";
+    const year = cleanSourcePatternQuestionPhrase(repeal[4]);
+    const fullFront = `${prefix.replace(/\s+$/g, "")} did the ${subject} repeal ${target}${entirely}?`;
+    return buildPatternSourceCompletion(fullFront, year, prefixText, "event-year");
+  }
+
+  const cameFrom = sentence.match(/^(.{2,80}?)\s+came\s+from\s+(.+?)\s+in\s+(?:late\s+)?(\d{4})$/i);
+  if (!cameFrom?.[1] || !cameFrom?.[3]) return null;
+  const subject = cleanSourcePatternQuestionPhrase(cameFrom[1]);
+  const year = cleanSourcePatternQuestionPhrase(cameFrom[3]);
+  if (!subject || !year) return null;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} did ${subject} appear?`;
+  return buildPatternSourceCompletion(fullFront, year, prefixText, "event-year");
+}
+
+function inferKindOfInverseSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+kind\s+of\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^The\s+(.{2,80}?\bencoder)\s+is\s+the\s+(.{2,80}?\bencoder)(?:\s+in\s+(.{2,60}))?$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const answer = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const rawTarget = cleanSourcePatternQuestionPhrase(match[2]);
+  const target = /^(?:an?|the)\s+/i.test(rawTarget)
+    ? rawTarget.replace(/^(?:an?|the)\s+/i, "the ")
+    : `the ${rawTarget}`;
+  const context = cleanSourcePatternQuestionPhrase(match[3] || "");
+  if (!answer || !target) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} encoder is ${target}${context ? ` in ${context}` : ""}?`;
+  return buildPatternSourceCompletion(fullFront, answer, prefixText, "kind-inverse");
+}
+
+function inferReceiveLabelsSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^when\s+\w+/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^When\s+(.+?),\s+(?:words|tokens)\s+receive\s+(.+?\s+and\s+.+)$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const context = cleanSourcePatternQuestionPhrase(match[1]);
+  const labels = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!context || !labels || labels.split(/\s+/).length > 10) return null;
+
+  const fullFront = `When ${context}, what are two labels assigned to words?`;
+  return buildPatternSourceCompletion(fullFront, labels, prefixText, "receive-labels");
+}
+
+function inferConditionsSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+are\s+the\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^(?:An?|The)\s+(.{2,80}?)\s+is\s+(.{2,80}?)\s+if\s+(.+?\s+and\s+.+)$/i);
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const subject = cleanSourcePatternQuestionPhrase(match[1]);
+  const property = cleanSourcePatternQuestionPhrase(match[2]);
+  const conditions = cleanSourcePatternQuestionPhrase(match[3]);
+  if (!subject || !property || !conditions) return null;
+
+  const count = /\s+and\s+/i.test(conditions) ? "two " : "";
+  const subjectPhrase = /^(?:language|problem|set|function)\b/i.test(subject) ? `a ${subject}` : subject;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${count}conditions for ${subjectPhrase} to be ${property}?`;
+  return buildPatternSourceCompletion(fullFront, conditions, prefixText, "conditions");
+}
+
+function inferColonExplanationSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+is\s+meant\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^The\s+core\s+problem\s+in\s+(.{3,100}?)\s+is\s+(.{2,80}?):\s+(.{3,180})$/i);
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const context = cleanSourcePatternQuestionPhrase(match[1]);
+  const term = cleanSourcePatternQuestionPhrase(match[2]);
+  const explanation = cleanSourcePatternQuestionPhrase(match[3]);
+  if (!context || !term || !explanation) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} by ${term} in ${context}?`;
+  return buildPatternSourceCompletion(fullFront, explanation, prefixText, "colon-explanation");
+}
+
+function inferContrastDifferenceSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+is\s+the\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^(.{2,80}?)\s+keeps\s+(.+?),\s+while\s+(.{2,80}?)\s+keeps\s+(.+)$/i);
+  if (!match?.[1] || !match?.[2] || !match?.[3] || !match?.[4]) return null;
+
+  const first = cleanSourcePatternQuestionPhrase(match[1]);
+  const firstAction = cleanSourcePatternQuestionPhrase(match[2]);
+  const second = cleanSourcePatternQuestionPhrase(match[3]);
+  const secondAction = cleanSourcePatternQuestionPhrase(match[4]);
+  if (!first || !firstAction || !second || !secondAction) return null;
+
+  const firstCue = `${first.charAt(0).toLowerCase()}${first.slice(1)}`;
+  const secondCue = `${second.charAt(0).toLowerCase()}${second.slice(1)}`;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} difference between ${firstCue} and ${secondCue}?`;
+  const back = `${first.replace(/\s+search$/i, "")} keeps one best choice; ${secondCue} keeps several choices`;
+  return buildPatternSourceCompletion(fullFront, back, prefixText, "contrast-difference");
+}
+
+function inferAnalogySolutionSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^i\s+cannot\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^(.{2,80}?)\s+is\s+like:\s+(I\s+cannot\s+.+?),\s+so\s+(.+)$/i);
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const subject = cleanSourcePatternQuestionPhrase(match[1]);
+  const scenario = cleanSourcePatternQuestionPhrase(match[2]);
+  let solution = cleanSourcePatternQuestionPhrase(match[3])
+    .replace(/\s+and\s+ignore\s+the\s+rest$/i, "")
+    .replace(/^at\s+each\s+fork\s+I\s+will\s+keep\s+only\s+/i, "keep only ")
+    .replace(/\bmy\s+best\s+(\w+\s+)?guesses\b/i, "the best few guesses");
+  if (!/\bat\s+each\s+fork\b/i.test(solution)) solution = `${solution} at each fork`;
+  if (!subject || !scenario || !solution) return null;
+
+  const subjectCue = `${subject.charAt(0).toLowerCase()}${subject.slice(1)}`;
+  const fullFront = `${scenario}. What is ${subjectCue}'s solution?`;
+  return buildPatternSourceCompletion(fullFront, solution, prefixText, "analogy-solution");
+}
+
+function inferPrecedesSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+does\s+(?:an?|the)?\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^(?:An?|The)\s+([A-Za-z][A-Za-z0-9 -]{2,50})\s+usually\s+(?:comes\s+before|precedes)\s+(.{3,90})$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const answer = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!subject || !answer || answer.split(/\s+/).length > 8) return null;
+
+  const fullFront = `${prefix.replace(/\s+$/g, "")} ${subject} usually precede?`;
+  return buildPatternSourceCompletion(fullFront, answer, prefixText, "precedes");
+}
+
+function inferReverseDefinitionSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!prefix || /^(?:who|what|when|where|why|how|which|define|state|name|list)\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^([A-Z][A-Za-z0-9 -]{1,50})\s+(?:means|is|refers\s+to)\s+(.{3,180})$/i);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const term = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const definition = cleanSourcePatternQuestionPhrase(match[2]);
+  if (!term || !definition) return null;
+
+  const prefixIndex = buildCompletionPrefixIndex(prefix);
+  const definitionIndex = buildCompletionPrefixIndex(definition);
+  if (!definitionIndex.text.startsWith(prefixIndex.text)) return null;
+
+  return buildPatternSourceCompletion(`${definition}.`, term, prefixText, "reverse-definition");
+}
+
+function inferTeachesPurposeSourceCompletion(sourceText, prefixText) {
+  const prefix = String(prefixText || "").trim();
+  if (!/^what\s+is\b/i.test(prefix)) return null;
+
+  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
+  if (!sentence) return null;
+
+  const match = sentence.match(/^([A-Za-z][A-Za-z0-9 -]{2,80})\s+teaches\s+([A-Z][A-Za-z0-9-]{1,30})\s+(.+?)(?::|,\s+not\b|$)/i);
+  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
+
+  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
+  const target = cleanSourcePatternQuestionPhrase(match[2]);
+  const learning = cleanSourcePatternQuestionPhrase(match[3]);
+  if (!subject || !target || !learning || learning.split(/\s+/).length > 10) return null;
+
+  const subjectPhrase = `${subject.charAt(0).toLowerCase()}${subject.slice(1)}`;
+  const frontSubject = subject.toLowerCase().includes(target.toLowerCase())
+    ? subjectPhrase
+    : `${subjectPhrase} ${target}`;
+  const fullFront = `${prefix.replace(/\s+$/g, "")} the purpose of ${frontSubject}?`;
+  return buildPatternSourceCompletion(fullFront, `to teach ${target} ${learning}`, prefixText, "teaches-purpose");
+}
+
+function inferSourcePatternCompletion(sourceText, prefixText) {
+  return inferApproachSourceCompletion(sourceText, prefixText)
+    || inferPeriodSourceCompletion(sourceText, prefixText)
+    || inferContextSourceCompletion(sourceText, prefixText)
+    || inferAliasSourceCompletion(sourceText, prefixText)
+    || inferAbbreviationSourceCompletion(sourceText, prefixText)
+    || inferCoreProblemSourceCompletion(sourceText, prefixText)
+    || inferCorpusContentsSourceCompletion(sourceText, prefixText)
+    || inferNamedSetSourceCompletion(sourceText, prefixText)
+    || inferMeaningSourceCompletion(sourceText, prefixText)
+    || inferGovernmentRepealSourceCompletion(sourceText, prefixText)
+    || inferTreeStructureSourceCompletion(sourceText, prefixText)
+    || inferWordFunctionSourceCompletion(sourceText, prefixText)
+    || inferDirectDefinitionSourceCompletion(sourceText, prefixText)
+    || inferOriginSourceCompletion(sourceText, prefixText)
+    || inferContrastTypesSourceCompletion(sourceText, prefixText)
+    || inferPipelineSourceCompletion(sourceText, prefixText)
+    || inferLabelCaptureSourceCompletion(sourceText, prefixText)
+    || inferYearEventSourceCompletion(sourceText, prefixText)
+    || inferKindOfInverseSourceCompletion(sourceText, prefixText)
+    || inferReceiveLabelsSourceCompletion(sourceText, prefixText)
+    || inferConditionsSourceCompletion(sourceText, prefixText)
+    || inferColonExplanationSourceCompletion(sourceText, prefixText)
+    || inferContrastDifferenceSourceCompletion(sourceText, prefixText)
+    || inferAnalogySolutionSourceCompletion(sourceText, prefixText)
+    || inferPrecedesSourceCompletion(sourceText, prefixText)
+    || inferReverseDefinitionSourceCompletion(sourceText, prefixText)
+    || inferTeachesPurposeSourceCompletion(sourceText, prefixText)
+    || null;
+}
+
 function inferSourceStemCompletion(sourceText, prefixText) {
   if (isStateCommandPrefix(prefixText)) {
     const statement = getSourceStatementSplit(sourceText);
     const completion = buildStatementSourceStemCompletion(statement, prefixText, { command: true });
     if (completion) return { ...completion, kind: "source-stem", split: "statement-command" };
   }
+
+  const sourcePatternCompletion = inferSourcePatternCompletion(sourceText, prefixText);
+  if (sourcePatternCompletion) return sourcePatternCompletion;
 
   const match = getSourceStemMatch(sourceText, prefixText);
   if (!match?.continuation) return null;
@@ -2917,6 +3759,13 @@ function inferSourceStemCompletion(sourceText, prefixText) {
     if (completion) return { ...completion, kind: "source-stem", split: "source-complement" };
   }
 
+  const iff = sentence.match(/^(.{5,120}?\b(?:iff|if\s+and\s+only\s+if)\b)\s+(.+)$/i);
+  if (iff) {
+    const frontLead = iff[1].replace(/\biff\b/i, "if and only if");
+    const completion = buildSourceStemCompletion(frontLead, iff[2]);
+    if (completion) return { ...completion, kind: "source-stem", split: "iff" };
+  }
+
   const contrast = sentence.match(/^(.{8,}?\b(?:not|never|without)\b.{0,140}?)\s+(?:and|but|rather\s+than|rather|instead)\s+(.+)$/i);
   if (contrast) {
     const completion = buildSourceStemCompletion(contrast[1], contrast[2]);
@@ -2929,6 +3778,31 @@ function inferSourceStemCompletion(sourceText, prefixText) {
   if (passiveComplement) {
     const completion = buildSourceStemCompletion(passiveComplement[1], passiveComplement[2]);
     if (completion) return { ...completion, kind: "source-stem", split: "passive-complement" };
+  }
+
+  const activeMethodComplement = sentence.match(
+    /^(.{5,160}?\b(?:by|via|through|using))\s+(.+)$/i
+  );
+  if (activeMethodComplement) {
+    const completion = buildSourceStemCompletion(activeMethodComplement[1], activeMethodComplement[2]);
+    if (completion) return { ...completion, kind: "source-stem", split: "active-method-complement" };
+  }
+
+  const combinedSentence = `${match.prefix} ${sentence}`.replace(/\s+/g, " ").trim();
+  const copularComplement = combinedSentence.match(
+    /^(.{2,180}?\b(?:is defined as|are defined as|refers to|consists of|is called|are called|is named after|are named after|was named after|were named after|is named for|are named for|was named for|were named for|means|mean|denotes|equals|is|are|was|were))\s+(.+)$/i
+  );
+  if (copularComplement) {
+    const completion = buildSourceStemCompletion(copularComplement[1], copularComplement[2]);
+    const frontSuffix = stripExistingPrefixFromCompletion(completion?.frontSuffix || "", prefixText);
+    if (completion && frontSuffix) {
+      return {
+        ...completion,
+        frontSuffix,
+        kind: "source-stem",
+        split: "copular-complement",
+      };
+    }
   }
 
   return null;
@@ -3081,6 +3955,17 @@ function finalizeFrontQuestion(text) {
   return s; // leave as-is
 }
 
+function normalizeFrontSuggestionForPrefix(existingText, suggestionText) {
+  const suggestion = String(suggestionText || "").trim();
+  if (!suggestion) return "";
+  const existing = String(existingText || "");
+  const needsSpace = existing && !/[\s\n]$/.test(existing) && !suggestion.startsWith(" ");
+  const draft = `${existing}${needsSpace ? " " : ""}${suggestion}`.replace(/\s+/g, " ").trim();
+  const finalized = finalizeFrontQuestion(draft);
+  const suffix = stripExistingPrefixFromCompletion(finalized, existing);
+  return suffix || suggestion;
+}
+
 const FRONT_ANSWER_CUE_TERMS = new Set([
   "also", "known", "called", "named", "termed", "referred",
   "what", "which", "type", "kind", "class", "category", "form",
@@ -3091,6 +3976,11 @@ const FRONT_ANSWER_CUE_TERMS = new Set([
 const FRONT_ANSWER_CONTEXT_TERMS = new Set([
   "artificial", "neural", "network", "networks",
   "data", "feature", "features", "model", "models", "representation", "representations",
+  "gradient", "gradients", "vector", "vectors", "quantization",
+  "tax", "node", "nodes", "leaf", "leaves",
+  "encoder", "encoders", "embedding", "embeddings", "patch", "patches",
+  "token", "tokens", "search", "beam", "greedy", "language", "verb", "verbs",
+  "context",
 ]);
 
 const FRONT_ANSWER_GENERIC_TERMS = new Set([
@@ -3138,6 +4028,47 @@ function getAnswerTerms(value, { distinctiveOnly = false } = {}) {
   const distinctive = unique.filter((term) => !FRONT_ANSWER_GENERIC_TERMS.has(term));
   if (distinctive.length) return distinctive;
   return unique.filter((term) => !FRONT_ANSWER_CUE_TERMS.has(term));
+}
+
+function getSourceGroundingTerms(value) {
+  const nonGroundingTerms = new Set([
+    ...FRONT_ANSWER_GENERIC_TERMS,
+    "about", "after", "before", "between", "during", "from", "into", "onto",
+    "over", "under", "through", "toward", "towards", "without", "within",
+    "standard", "main", "primary", "basic", "important", "specific",
+    "source", "card", "front", "back", "question", "answer",
+  ]);
+  return getAnswerTerms(value, { distinctiveOnly: true })
+    .filter((term) => term.length >= 4)
+    .filter((term) => !nonGroundingTerms.has(term));
+}
+
+function getFrontSourceGroundingIssue(frontText, { sourceText = "", title = "", notes = "", existingText = "" } = {}) {
+  const source = String(sourceText || "").trim();
+  const existing = String(existingText || "").trim();
+  const front = String(frontText || "").trim();
+  if (!source || !existing || !front) return "";
+  if (getSourceStemMatch(source, existing)) return "";
+
+  const availableTerms = new Set(getSourceGroundingTerms([source, title, notes].filter(Boolean).join(" ")));
+  if (availableTerms.size < 3) return "";
+
+  const existingTerms = new Set(getSourceGroundingTerms(existing));
+  const addedTerms = getSourceGroundingTerms(front).filter((term) => !existingTerms.has(term));
+  if (!addedTerms.length) return "";
+
+  const missingTerms = addedTerms.filter((term) => !availableTerms.has(term));
+  if (missingTerms.length >= 2) {
+    return "Front adds concepts not present in the Source";
+  }
+
+  const asksForDefinition = /\b(?:definition|define|defined)\b/i.test(front);
+  const sourceDefinesTerm = /\b(?:defined\s+as|definition|means?|refers?\s+to)\b/i.test(source);
+  if (missingTerms.length && asksForDefinition && !sourceDefinesTerm) {
+    return "Front turns a source fact into an outside definition";
+  }
+
+  return "";
 }
 
 function isAdvantageFront(frontText) {
@@ -3359,6 +4290,131 @@ function inferProtectedAnswerFromAdvantageSource(sourceText, existingText) {
   return normalized;
 }
 
+function inferProtectedAnswerFromApproachSource(sourceText, existingText) {
+  const prefix = String(existingText || "").trim();
+  if (!/^(?:what|which|how)\b/i.test(prefix)) return "";
+  if (!/\b(?:approach|method|technique|way|standard)\b/i.test(prefix)) return "";
+
+  const sentence = String(sourceText || "")
+    .trim()
+    .split(/(?:[.!?]\s+|\n)/)[0]
+    ?.trim() || "";
+  if (!sentence) return "";
+
+  const match = sentence.match(
+    /\b(?:an?|one|the)\s+(?:standard\s+)?(?:approach|method|technique|way)\s+to\s+.{3,140}?\s+(?:is|are|was|were)\s+(?:to\s+)?(?:make\s+use\s+of|use|uses|using|via|through)\s+(?:so-called\s+)?(.+?)(?:[:;.?!]|$)/i
+  );
+  if (!match?.[1]) return "";
+
+  const answer = match[1]
+    .replace(/\[[^\]]+\]/g, "")
+    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!answer || answer.split(/\s+/).length > 8) return "";
+  return `using ${answer.replace(/^(?:using|via|through)\s+/i, "")}`;
+}
+
+function inferProtectedAnswerFromContextSource(sourceText, existingText) {
+  return inferContextSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromAliasSource(sourceText, existingText) {
+  return inferAliasSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromAbbreviationSource(sourceText, existingText) {
+  return inferAbbreviationSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromCoreProblemSource(sourceText, existingText) {
+  return inferCoreProblemSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromCorpusContentsSource(sourceText, existingText) {
+  return inferCorpusContentsSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromNamedSetSource(sourceText, existingText) {
+  return inferNamedSetSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromMeaningSource(sourceText, existingText) {
+  return inferMeaningSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromGovernmentRepealSource(sourceText, existingText) {
+  return inferGovernmentRepealSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromTreeStructureSource(sourceText, existingText) {
+  return inferTreeStructureSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromWordFunctionSource(sourceText, existingText) {
+  return inferWordFunctionSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromDirectDefinitionSource(sourceText, existingText) {
+  return inferDirectDefinitionSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromOriginSource(sourceText, existingText) {
+  return inferOriginSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromContrastTypesSource(sourceText, existingText) {
+  return inferContrastTypesSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromPipelineSource(sourceText, existingText) {
+  return inferPipelineSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromLabelCaptureSource(sourceText, existingText) {
+  return inferLabelCaptureSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromYearEventSource(sourceText, existingText) {
+  return inferYearEventSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromKindOfInverseSource(sourceText, existingText) {
+  return inferKindOfInverseSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromReceiveLabelsSource(sourceText, existingText) {
+  return inferReceiveLabelsSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromConditionsSource(sourceText, existingText) {
+  return inferConditionsSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromColonExplanationSource(sourceText, existingText) {
+  return inferColonExplanationSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromContrastDifferenceSource(sourceText, existingText) {
+  return inferContrastDifferenceSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromAnalogySolutionSource(sourceText, existingText) {
+  return inferAnalogySolutionSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromPrecedesSource(sourceText, existingText) {
+  return inferPrecedesSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromReverseDefinitionSource(sourceText, existingText) {
+  return inferReverseDefinitionSourceCompletion(sourceText, existingText)?.back || "";
+}
+
+function inferProtectedAnswerFromTeachesPurposeSource(sourceText, existingText) {
+  return inferTeachesPurposeSourceCompletion(sourceText, existingText)?.back || "";
+}
+
 function inferProtectedAnswerFromSimpleFactSource(sourceText, existingText) {
   const prefix = String(existingText || "").trim();
   if (!/^(?:what|which|who|where)\b/i.test(prefix)) return "";
@@ -3373,6 +4429,7 @@ function inferProtectedAnswerFromSimpleFactSource(sourceText, existingText) {
   if (!match) return "";
 
   const subject = match[1]
+    .replace(/\[[^\]]+\]/g, "")
     .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -3388,15 +4445,16 @@ function inferProtectedAnswerFromSimpleFactSource(sourceText, existingText) {
   }
 
   if (!/^(?:what|which|who)\b/i.test(prefix)) return "";
-  if (/^(?:it|this|that|these|those|there|methods?|some|many|several)\b/i.test(subject)) return "";
-  if (subject.split(/\s+/).length > 8) return "";
+  const answerSubject = (subject.split(/\s*,\s*/)[0] || subject).trim();
+  if (/^(?:it|this|that|these|those|there|methods?|some|many|several)\b/i.test(answerSubject)) return "";
+  if (answerSubject.split(/\s+/).length > 8) return "";
 
   const predicateSignalsSubjectAnswer =
-    /\b(?:capital|largest|highest|lowest|longest|shortest|smallest|biggest|oldest|youngest|first|last|only|official|chief|main|primary|largest-known|highest-known)\b/i
+    /\b(?:capital|largest|highest|lowest|longest|shortest|smallest|biggest|oldest|youngest|first|last|only|official|chief|main|primary|period|era|stage|largest-known|highest-known)\b/i
       .test(predicate);
   if (!predicateSignalsSubjectAnswer) return "";
 
-  return subject;
+  return answerSubject;
 }
 
 function getSourceTextForProtectedAnswer(page = null) {
@@ -3407,6 +4465,84 @@ function getSourceTextForProtectedAnswer(page = null) {
 function inferProtectedAnswerFromSource(sourceText, existingText) {
   const advantageAnswer = inferProtectedAnswerFromAdvantageSource(sourceText, existingText);
   if (advantageAnswer) return advantageAnswer;
+
+  const approachAnswer = inferProtectedAnswerFromApproachSource(sourceText, existingText);
+  if (approachAnswer) return approachAnswer;
+
+  const contextAnswer = inferProtectedAnswerFromContextSource(sourceText, existingText);
+  if (contextAnswer) return contextAnswer;
+
+  const aliasAnswer = inferProtectedAnswerFromAliasSource(sourceText, existingText);
+  if (aliasAnswer) return aliasAnswer;
+
+  const abbreviationAnswer = inferProtectedAnswerFromAbbreviationSource(sourceText, existingText);
+  if (abbreviationAnswer) return abbreviationAnswer;
+
+  const coreProblemAnswer = inferProtectedAnswerFromCoreProblemSource(sourceText, existingText);
+  if (coreProblemAnswer) return coreProblemAnswer;
+
+  const corpusContentsAnswer = inferProtectedAnswerFromCorpusContentsSource(sourceText, existingText);
+  if (corpusContentsAnswer) return corpusContentsAnswer;
+
+  const namedSetAnswer = inferProtectedAnswerFromNamedSetSource(sourceText, existingText);
+  if (namedSetAnswer) return namedSetAnswer;
+
+  const meaningAnswer = inferProtectedAnswerFromMeaningSource(sourceText, existingText);
+  if (meaningAnswer) return meaningAnswer;
+
+  const governmentRepealAnswer = inferProtectedAnswerFromGovernmentRepealSource(sourceText, existingText);
+  if (governmentRepealAnswer) return governmentRepealAnswer;
+
+  const treeStructureAnswer = inferProtectedAnswerFromTreeStructureSource(sourceText, existingText);
+  if (treeStructureAnswer) return treeStructureAnswer;
+
+  const wordFunctionAnswer = inferProtectedAnswerFromWordFunctionSource(sourceText, existingText);
+  if (wordFunctionAnswer) return wordFunctionAnswer;
+
+  const directDefinitionAnswer = inferProtectedAnswerFromDirectDefinitionSource(sourceText, existingText);
+  if (directDefinitionAnswer) return directDefinitionAnswer;
+
+  const originAnswer = inferProtectedAnswerFromOriginSource(sourceText, existingText);
+  if (originAnswer) return originAnswer;
+
+  const contrastTypesAnswer = inferProtectedAnswerFromContrastTypesSource(sourceText, existingText);
+  if (contrastTypesAnswer) return contrastTypesAnswer;
+
+  const pipelineAnswer = inferProtectedAnswerFromPipelineSource(sourceText, existingText);
+  if (pipelineAnswer) return pipelineAnswer;
+
+  const labelCaptureAnswer = inferProtectedAnswerFromLabelCaptureSource(sourceText, existingText);
+  if (labelCaptureAnswer) return labelCaptureAnswer;
+
+  const yearEventAnswer = inferProtectedAnswerFromYearEventSource(sourceText, existingText);
+  if (yearEventAnswer) return yearEventAnswer;
+
+  const kindOfInverseAnswer = inferProtectedAnswerFromKindOfInverseSource(sourceText, existingText);
+  if (kindOfInverseAnswer) return kindOfInverseAnswer;
+
+  const receiveLabelsAnswer = inferProtectedAnswerFromReceiveLabelsSource(sourceText, existingText);
+  if (receiveLabelsAnswer) return receiveLabelsAnswer;
+
+  const conditionsAnswer = inferProtectedAnswerFromConditionsSource(sourceText, existingText);
+  if (conditionsAnswer) return conditionsAnswer;
+
+  const colonExplanationAnswer = inferProtectedAnswerFromColonExplanationSource(sourceText, existingText);
+  if (colonExplanationAnswer) return colonExplanationAnswer;
+
+  const contrastDifferenceAnswer = inferProtectedAnswerFromContrastDifferenceSource(sourceText, existingText);
+  if (contrastDifferenceAnswer) return contrastDifferenceAnswer;
+
+  const analogySolutionAnswer = inferProtectedAnswerFromAnalogySolutionSource(sourceText, existingText);
+  if (analogySolutionAnswer) return analogySolutionAnswer;
+
+  const precedesAnswer = inferProtectedAnswerFromPrecedesSource(sourceText, existingText);
+  if (precedesAnswer) return precedesAnswer;
+
+  const reverseDefinitionAnswer = inferProtectedAnswerFromReverseDefinitionSource(sourceText, existingText);
+  if (reverseDefinitionAnswer) return reverseDefinitionAnswer;
+
+  const teachesPurposeAnswer = inferProtectedAnswerFromTeachesPurposeSource(sourceText, existingText);
+  if (teachesPurposeAnswer) return teachesPurposeAnswer;
 
   const source = String(sourceText || "").trim();
   const prefix = String(existingText || "").trim();
@@ -3544,6 +4680,18 @@ function getFrontCompletionFitIssue(frontText) {
   if (/^what\s+is\s+(?:is|are|was|were)\b/i.test(text)) {
     return "Front repeats an auxiliary verb after 'What is'";
   }
+  if (/^what\s+is\s+(?:an?|the)\s+(?:is|are|was|were)\b/i.test(text)) {
+    return "Front repeats an auxiliary verb after an article";
+  }
+  if (/^what\s+does\s+(?:an?|the)\s+(?:do|does|did)\b/i.test(text)) {
+    return "Front repeats an auxiliary verb after an article";
+  }
+  if (/^when\b.{0,120},\s+(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
+    return "";
+  }
+  if (/^[^?!.]{3,160}\.\s+(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
+    return "";
+  }
   if (/\b(where|what|who|when|why|how|does|do|did|is|are|was|were|can|could|should|would)\s+\1\b/i.test(text)) {
     return "Front repeats a question word or auxiliary verb";
   }
@@ -3556,6 +4704,9 @@ function getFrontCompletionFitIssue(frontText) {
   if (/^(?:who|what|when|where|why|how|which|whom|whose)\b[\s\S]{0,90}\b(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
     return "Front repeats a question starter";
   }
+  if (/^in\s+(?:words|short|brief|one\s+word),?\s+(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
+    return "";
+  }
   if (!/^(?:who|what|when|where|why|how|which|whom|whose|do|does|did|is|are|was|were|can|could|should|would|has|have|had|define|state|name|list|describe|explain)\b/i.test(text)
       && /\b(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
     return "Front grafts a question fragment onto a declarative cue";
@@ -3566,7 +4717,10 @@ function getFrontCompletionFitIssue(frontText) {
   if (/\b(?:in|into|of|for|with|by|to|from)\s+(?:a|an|the|one|two|three|several|multiple|many)\s*[?.!]?$/i.test(text)) {
     return "Front ends with a dangling phrase";
   }
-  if (/\brefer\s+to\s*\?$/i.test(text)) {
+  if (/\b(?:refer\s+to|stand\s+for)\s*\?$/i.test(text)) {
+    return "";
+  }
+  if (/\bdown\s+to\s*\?$/i.test(text)) {
     return "";
   }
   if (/\b(?:of|to|than|with|by|for|because|that|which|who|where|when|how)\s*[?.!]?$/i.test(text)) {
@@ -3605,6 +4759,11 @@ function getFrontDefinitionDriftIssue(frontText, { sourceText = "", existingText
   if (!definition?.aliases?.length) return "";
   const simpleFactAnswer = inferProtectedAnswerFromSimpleFactSource(sourceText, existingText);
   if (simpleFactAnswer && frontIncludesDefinedTermAlias(simpleFactAnswer, definition.aliases)) return "";
+  const sourcePattern = inferSourcePatternCompletion(sourceText, existingText);
+  if (sourcePattern?.frontSuffix) {
+    const expectedFront = `${String(existingText || "").trim()} ${sourcePattern.frontSuffix}`.replace(/\s+/g, " ").trim();
+    if (normalizeFrontLeakText(expectedFront) === normalizeFrontLeakText(frontText)) return "";
+  }
   if (frontIncludesDefinedTermAlias(frontText, definition.aliases)) return "";
   return "Front substitutes a related term instead of the source-defined term";
 }
@@ -3621,6 +4780,11 @@ function getFrontSuggestionBlockReason(suggestion, existingText, ctx = {}) {
     existingText,
   }) || getFrontDefinitionDriftIssue(fullDraft, {
     sourceText: getContextSourceText(ctx.page),
+    existingText,
+  }) || getFrontSourceGroundingIssue(fullDraft, {
+    sourceText: getContextSourceText(ctx.page),
+    title: ctx.page?.title || "",
+    notes: ctx.notes || "",
     existingText,
   });
 }
@@ -3687,6 +4851,11 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
     }
     state._lastFrontLeakBlocked = true;
     clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
+    rememberRejectedCopilotDraft(state, {
+      suggestion: retry || suggestion,
+      preview: retry ? (existingText + ` ${retry}`).trim() : fullDraft,
+      reason: retryReason || blockReason,
+    });
     return "";
   } finally {
     if (state._frontValidationCtx === ctx) {
@@ -3707,20 +4876,21 @@ function updateSuggestionUI(state, text) {
 
 function getDisplayableFrontSuggestion(state, suggestion, existingText) {
   const ctx = state?._frontValidationCtx || {};
-  const blockReason = getFrontSuggestionBlockReason(suggestion, existingText, ctx);
+  const displaySuggestion = normalizeFrontSuggestionForPrefix(existingText, suggestion);
+  const blockReason = getFrontSuggestionBlockReason(displaySuggestion, existingText, ctx);
   if (blockReason) {
     state._lastFrontLiveBlockReason = blockReason;
     return "";
   }
   state._lastFrontLiveBlockReason = "";
-  return suggestion;
+  return displaySuggestion;
 }
 
 function makeLinkedAbort(parentSignal) {
   const local = new AbortController();
-  const abortFromParent = () => local.abort();
+  const abortFromParent = () => abortCopilotController(local, parentSignal?.reason || COPILOT_ABORT_CANCELLED);
   if (parentSignal) {
-    if (parentSignal.aborted) local.abort();
+    if (parentSignal.aborted) abortCopilotController(local, parentSignal.reason || COPILOT_ABORT_CANCELLED);
     else parentSignal.addEventListener?.("abort", abortFromParent, { once: true });
   }
   const cleanup = () => parentSignal?.removeEventListener?.("abort", abortFromParent);
@@ -3756,15 +4926,13 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
         anyVisible = anyVisible || !!live;
         updateSuggestionUI(state, live);
         if (live.split(/\s+/).filter(Boolean).length >= capWords && !local.signal.aborted) {
-          try { local.abort(); } catch {}
+          abortCopilotController(local, COPILOT_ABORT_EARLY_STOP);
         }
       },
       onDone: () => {
         const live = getDisplayableFrontSuggestion(
           state,
-          finalizeFrontQuestion(
-            normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords })
-          ),
+          normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords }),
           existingText
         );
         updateSuggestionUI(state, live);
@@ -3779,7 +4947,7 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
     console.warn("Gemini stream failed; falling back to non-stream.", err);
   }
 
-  const liveNow = finalizeFrontQuestion((state.textEl?.textContent || "").trim());
+  const liveNow = normalizeFrontSuggestionForPrefix(existingText, (state.textEl?.textContent || "").trim());
   updateSuggestionUI(state, liveNow);
   if (liveNow) return liveNow;
 
@@ -3810,7 +4978,7 @@ async function geminiFrontNonStream(prompt, sys, local, existingText, capWords) 
     }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
     single = normalizeCopilotSuggestion(rawLite || "", existingText, { role: "front", maxWords: capWords });
   }
-  return finalizeFrontQuestion(single);
+  return normalizeFrontSuggestionForPrefix(existingText, single);
 }
 
 async function openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal) {
@@ -3822,7 +4990,7 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
   const hardTimer = setTimeout(() => {
     if (!local.signal.aborted) {
       abortedByEarlyStop = true;
-      try { local.abort(); } catch {}
+      abortCopilotController(local, COPILOT_ABORT_EARLY_STOP);
     }
   }, timeoutMs);
   try {
@@ -3845,7 +5013,7 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
         const reachedCap = live.split(/\s+/).filter(Boolean).length >= capWords;
         if ((reachedCap || Date.now() > deadline) && !local.signal.aborted) {
           abortedByEarlyStop = true;
-          try { local.abort(); } catch {}
+          abortCopilotController(local, COPILOT_ABORT_EARLY_STOP);
         }
       },
     });
@@ -3866,7 +5034,7 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
     if (parentSignal?.aborted) return "";
     suggestion = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
   }
-  return finalizeFrontQuestion(suggestion);
+  return normalizeFrontSuggestionForPrefix(existingText, suggestion);
 }
 
 async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
@@ -3947,7 +5115,8 @@ async function claudeFrontCall(prompt, sys, local, existingText, capWords) {
     system: sys,
     signal: local.signal,
   }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
-  return finalizeFrontQuestion(
+  return normalizeFrontSuggestionForPrefix(
+    existingText,
     normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords })
   );
 }
@@ -4045,6 +5214,7 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
         "Rules:",
         "- Continue after Prefix; do not repeat, correct, or restate text already typed.",
         "- Preserve the user's target from Prefix/Front/Back before using the Source.",
+        "- Source-grounding: Front and Back must be answerable from the Source/title/notes/card fields only; do not introduce outside definitions, fields, or related facts.",
         `- FRONT: one atomic cue, full Front <= ${copilot.frontWordCap} words, unambiguous, enough context, no answer leakage.`,
         "- FRONT: prefer a direct question; for command prefixes like State/Define/Name/List, complete the object of the command.",
         "- FRONT: do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.",
@@ -4053,10 +5223,11 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
     : [
         "Rules:",
         "- Continue after Prefix; do not repeat, correct, or restate text already typed.",
+        "- Source-grounding: answer only from the Source/title/notes/card fields; do not add outside definitions or related facts.",
         `- BACK: one atomic answer <= ${copilot.backWordCap} words, usually a bare noun phrase/name/term/value/short clause.`,
         "- BACK: answer exactly the Front; do not restate it, summarize the passage, or add unasked dates/descriptors.",
       ];
-  rules.push("- If the target is unsupported, unclear, or non-atomic, output nothing.");
+  rules.push("- If a source-grounded atomic cue is possible, complete it; output nothing only when the target is unsupported, unclear, or non-atomic.");
   lines.push(...rules.filter(Boolean));
   if (pageSourceText) {
     lines.push(`Source:\n${clip(pageSourceText, sourceCap)}`);
@@ -4087,9 +5258,10 @@ function setBackDraftSuggestionFromSourceStem(backText, frontText) {
   );
   if (!suggestion || getBackAnswerFitIssue(frontText, suggestion)) return;
 
-  try { backState.controller?.abort(); } catch {}
+  abortCopilotController(backState.controller);
   backState.controller = null;
   if (backState.timer) { clearTimeout(backState.timer); backState.timer = null; }
+  resetRejectedCopilotDraft(backState);
   backState.suggestion = suggestion;
   if (backState.suggestionEl) {
     backState.suggestionEl.hidden = false;
@@ -4122,8 +5294,26 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   const notes = document.querySelector("#notes")?.value || "";
   const mode = await getSourceMode();
 
+  // Cancel any in-flight back request before source resolution, so stale
+  // async work cannot resume and overwrite a newer suggestion.
+  if (backState.controller) {
+    abortCopilotController(backState.controller);
+  }
+  const controller = new AbortController();
+  backState.controller = controller;
+
   // Keep page/clipboard handling consistent with main Copilot path.
   await ensureSourceFromMode(mode, { wantPaste: false });
+  if (!isCurrentCopilotRequest(backState, controller)) return;
+  if (controller.signal.aborted) {
+    if (isCopilotTimeoutAbort(controller) && isCurrentCopilotRequest(backState, controller)) {
+      backState.suggestion = "";
+      clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
+      setCopilotStatus("Copilot timed out.", true);
+    }
+    if (isCurrentCopilotRequest(backState, controller)) backState.controller = null;
+    return;
+  }
 
   const page = copilot.pageCtx || null;
   const sourceTextForLimit = getCopilotSourceTextForLimit(page);
@@ -4132,11 +5322,13 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     notifyNoSourceText({ target: "copilot", sourceIssue });
     clearSuggestionUI(backState, { mirrorValue: existingBack });
     backState.suggestion = "";
+    if (isCurrentCopilotRequest(backState, controller)) backState.controller = null;
     return;
   }
   if (!ensureAiSourceInputWithinLimit(sourceTextForLimit, { notify: "copilot" })) {
     clearSuggestionUI(backState, { mirrorValue: existingBack });
     backState.suggestion = "";
+    if (isCurrentCopilotRequest(backState, controller)) backState.controller = null;
     return;
   }
 
@@ -4144,15 +5336,9 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   if (Date.now() < (copilot.pauseUntil || 0)) {
     clearSuggestionUI(backState, { mirrorValue: existingBack });
     backState.suggestion = "";
+    if (isCurrentCopilotRequest(backState, controller)) backState.controller = null;
     return;
   }
-
-  // Cancel any in‑flight back request.
-  if (backState.controller) {
-    backState.controller.abort();
-  }
-  const controller = new AbortController();
-  backState.controller = controller;
 
   if (backState.workingEl) {
     backState.workingEl.textContent = "Copilot working…";
@@ -4161,12 +5347,11 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
 
   const timeoutMs = Number.isFinite(+copilot.timeoutMs) ? +copilot.timeoutMs : 30000;
   const abortTimer = setTimeout(() => {
-    try {
-      controller.abort(new DOMException("timeout", "AbortError"));
-    } catch {}
+    abortCopilotController(controller, COPILOT_ABORT_TIMEOUT);
   }, timeoutMs);
 
   backState.suggestion = "";
+  resetRejectedCopilotDraft(backState);
   if (backState.suggestionEl) {
     backState.suggestionEl.hidden = false;
     backState.suggestionEl.classList.remove("error");
@@ -4195,6 +5380,15 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     if (!force && since < copilot.minIntervalMs) {
       await new Promise((r) => setTimeout(r, copilot.minIntervalMs - since));
     }
+    if (!isCurrentCopilotRequest(backState, controller)) return;
+    if (controller.signal.aborted) {
+      if (isCopilotTimeoutAbort(controller)) {
+        backState.suggestion = "";
+        clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
+        setCopilotStatus("Copilot timed out.", true);
+      }
+      return;
+    }
     copilot._lastAt = Date.now();
     updateLocalMetrics((metrics) => {
       bumpMetric(metrics, "ai_suggestions_requested");
@@ -4202,7 +5396,15 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     });
 
     const raw = await callBackLLM(prompt, sys, controller, existingBack);
-    if (controller.signal.aborted) return;
+    if (!isCurrentCopilotRequest(backState, controller)) return;
+    if (controller.signal.aborted) {
+      if (isCopilotTimeoutAbort(controller)) {
+        backState.suggestion = "";
+        clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
+        setCopilotStatus("Copilot timed out.", true);
+      }
+      return;
+    }
 
     let suggestion = raw || "";
     const frontForStrip = frontForBack || (document.querySelector("#front")?.value || "");
@@ -4216,7 +5418,9 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     if (fitIssue) {
       clearSuggestionUI(backState, { mirrorValue: existingBack });
       backState.suggestion = "";
-      setCopilotStatus("AI returned a grammatically incomplete Back answer. Try again or edit the Back.", true);
+      rememberRejectedCopilotDraft(backState, { suggestion, reason: fitIssue });
+      showRejectedCopilotDraft(backState);
+      setCopilotStatus(`AI returned a grammatically incomplete Back answer (${fitIssue}). Review the rejected draft or regenerate.`, true);
       return;
     }
 
@@ -4241,11 +5445,15 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     }
   } catch (e) {
     if (e?.name === "AbortError") {
+      if (!isCurrentCopilotRequest(backState, controller)) return;
       backState.suggestion = "";
       clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
-      setCopilotStatus("Copilot timed out.", true);
+      if (isCopilotTimeoutAbort(controller, e)) {
+        setCopilotStatus("Copilot timed out.", true);
+      }
       return;
     }
+    if (!isCurrentCopilotRequest(backState, controller)) return;
     if (String(e?.message || e).includes("rate-paused")) {
       clearSuggestionUI(backState, { mirrorValue: existingBack });
       backState.suggestion = "";
@@ -4256,6 +5464,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       backState.suggestionEl.classList.remove("loading");
       backState.suggestionEl.classList.add("error");
     }
+    backState.suggestion = "";
     const msg = e?.message || "Copilot error";
     if (backState.textEl) backState.textEl.textContent = msg;
     if (backState.hintEl) backState.hintEl.textContent = "";
@@ -4265,20 +5474,30 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     setCopilotStatus(msg, true);
   } finally {
     clearTimeout(abortTimer);
-    if (backState.workingEl) {
+    if (isCurrentCopilotRequest(backState, controller)) {
+      backState.controller = null;
+    }
+    if (!backState.controller && backState.workingEl) {
       backState.workingEl.hidden = true;
       backState.workingEl.textContent = "";
     }
   }
 }
 
-function applyCopilotSuggestion(state) {
-  const suggestion = (state?.suggestion || state?.textEl?.textContent || "").trim();
+function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
+  const usingRejected = allowRejected
+    && state?.suggestionEl?.classList?.contains?.("error")
+    && !!String(state?.rejectedSuggestion || "").trim();
+  if (state?.suggestionEl?.classList?.contains?.("error") && !usingRejected) return false;
+  let suggestion = (usingRejected ? state?.rejectedSuggestion : state?.suggestion || "").trim();
   if (!suggestion) return false;
   const area = state.textarea;
   if (!area) return false;
   const before = area.value.slice(0, area.selectionStart ?? area.value.length);
   const after = area.value.slice(area.selectionEnd ?? area.value.length);
+  if (state.fieldId === "front") {
+    suggestion = normalizeFrontSuggestionForPrefix(before, suggestion);
+  }
   const needsSpace = before && !/[\s\n]$/.test(before) && suggestion && !suggestion.startsWith(" ");
   const insertion = `${needsSpace ? " " : ""}${suggestion}`;
   area.value = `${before}${insertion}${after}`;
@@ -4294,9 +5513,10 @@ function applyCopilotSuggestion(state) {
     copilot._suspendCrossClear = false;
   }
   state.lastValue = area.value.trim();
-  if (state.controller) { state.controller.abort(); state.controller = null; }
+  if (state.controller) { abortCopilotController(state.controller); state.controller = null; }
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   state.suggestion = "";
+  resetRejectedCopilotDraft(state);
   if (state.suggestionEl) {
     state.suggestionEl.hidden = true;
     state.suggestionEl.classList.remove("loading", "error");
@@ -4346,10 +5566,11 @@ function acceptBothSuggestions() {
 
 function rejectCopilotSuggestion(state) {
   if (!state) return;
-  try { state.controller?.abort(); } catch {}
+  abortCopilotController(state.controller);
   state.controller = null;
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   state.suggestion = "";
+  resetRejectedCopilotDraft(state);
   state.lastValue  = state.textarea?.value?.trim() || "";
   if (state.suggestionEl) {
     state.suggestionEl.classList.remove("loading", "error");
@@ -4450,7 +5671,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   }
 
   if (state.controller) {
-    state.controller.abort();
+    abortCopilotController(state.controller);
   }
   const controller = new AbortController();
   state.controller = controller;
@@ -4462,9 +5683,10 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
 
   const timeoutMs = Number.isFinite(+copilot.timeoutMs) ? +copilot.timeoutMs : 30000;
   const abortTimer = setTimeout(() => {
-    try { controller.abort(new DOMException("timeout", "AbortError")); } catch {}
+    abortCopilotController(controller, COPILOT_ABORT_TIMEOUT);
   }, timeoutMs);
   state.suggestion = "";
+  resetRejectedCopilotDraft(state);
   if (state.suggestionEl) {
     state.suggestionEl.hidden = false;
     state.suggestionEl.classList.remove("error");
@@ -4479,8 +5701,31 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   const other = state.fieldId === "back" ? frontVal : (otherState?.textarea?.value || "");
   const notes = document.querySelector("#notes")?.value || "";
   const mode = await getSourceMode();
+  const cleanupBeforeLlm = () => {
+    clearTimeout(abortTimer);
+    if (isCurrentCopilotRequest(state, controller)) {
+      state.controller = null;
+      if (state.workingEl) {
+        state.workingEl.hidden = true;
+        state.workingEl.textContent = "";
+      }
+    }
+  };
 
   await ensureSourceFromMode(mode, { wantPaste: false });
+  if (!isCurrentCopilotRequest(state, controller)) {
+    cleanupBeforeLlm();
+    return;
+  }
+  if (controller.signal.aborted) {
+    if (isCopilotTimeoutAbort(controller)) {
+      state.suggestion = "";
+      clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
+      setCopilotStatus("Copilot timed out.", true);
+    }
+    cleanupBeforeLlm();
+    return;
+  }
 
   const page = copilot.pageCtx || null;
   const sourceTextForLimit = getCopilotSourceTextForLimit(page);
@@ -4546,9 +5791,19 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     if (!force && since < copilot.minIntervalMs) {
       await new Promise(r => setTimeout(r, copilot.minIntervalMs - since));
     }
+    if (!isCurrentCopilotRequest(state, controller)) return;
+    if (controller.signal.aborted) {
+      if (isCopilotTimeoutAbort(controller)) {
+        state.suggestion = "";
+        clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
+        setCopilotStatus("Copilot timed out.", true);
+      }
+      return;
+    }
     copilot._lastAt = Date.now();
     copilot._skipRateLimit = true;
     state._lastFrontLeakBlocked = false;
+    state._lastFrontLiveBlockReason = "";
     state._lastBackFitIssue = "";
     updateLocalMetrics((metrics) => {
       bumpMetric(metrics, "ai_suggestions_requested");
@@ -4563,7 +5818,15 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
           sourceMode: mode,
         })
       : await callBackLLM(prompt, sys, controller, trimmed);
-    if (controller.signal.aborted) return;
+    if (!isCurrentCopilotRequest(state, controller)) return;
+    if (controller.signal.aborted) {
+      if (isCopilotTimeoutAbort(controller)) {
+        state.suggestion = "";
+        clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
+        setCopilotStatus("Copilot timed out.", true);
+      }
+      return;
+    }
     if (state.fieldId === "back" && suggestion) {
       const frontForAnswer = other || frontVal;
       if (!trimmed) {
@@ -4583,6 +5846,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
             const fitIssue = getBackAnswerFitIssue(frontForAnswer, displayedBack);
             if (fitIssue) {
               state._lastBackFitIssue = fitIssue;
+              rememberRejectedCopilotDraft(state, { suggestion: displayedBack, reason: fitIssue });
               console.debug("[Copilot] Suppressed Back suggestion:", fitIssue, displayedBack);
               suggestion = "";
             }
@@ -4593,6 +5857,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
         const fitIssue = getBackAnswerFitIssue(frontForAnswer, suggestion);
         if (fitIssue) {
           state._lastBackFitIssue = fitIssue;
+          rememberRejectedCopilotDraft(state, { suggestion, reason: fitIssue });
           console.debug("[Copilot] Suppressed Back suggestion:", fitIssue, suggestion);
           suggestion = "";
         }
@@ -4602,9 +5867,12 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       ? `${existingForCopilot}${suggestion ? (/\s$/.test(existingForCopilot) ? "" : " ") + suggestion : ""}`.trim().slice(0, 500)
       : (trimmed + (suggestion ? (" " + suggestion) : "")).trim().slice(0, 500);
     if (!suggestion) {
-      if (state.suggestionEl) state.suggestionEl.hidden = true;
       state.suggestion = "";
-      if (state.hintEl) state.hintEl.textContent = "";
+      const showedRejected = showRejectedCopilotDraft(state);
+      if (!showedRejected) {
+        if (state.suggestionEl) state.suggestionEl.hidden = true;
+        if (state.hintEl) state.hintEl.textContent = "";
+      }
       if (state.ghostEl) state.ghostEl.hidden = true;
       if (state.ghostTextEl) state.ghostTextEl.textContent = "";
       if (state.mirrorEl) state.mirrorEl.textContent = value;
@@ -4614,7 +5882,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       const rejectionReason = state._lastFrontBlockReason || state._lastBackFitIssue || state._lastFrontLiveBlockReason || "";
       setCopilotStatus(
         rejectionReason
-          ? `AI returned no usable card text (${rejectionReason}). Try a shorter cue or regenerate.`
+          ? `AI returned no usable card text (${rejectionReason}). ${showedRejected ? "Review the rejected draft or regenerate." : "Try a shorter cue or regenerate."}`
           : "AI returned no usable card text. Try the cue again or use a different model.",
         true
       );
@@ -4635,7 +5903,9 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     updateShortcutCoach(state.fieldId);
     if (state.fieldId === "front") {
       const backIsBlank = !((document.querySelector("#back")?.value || "").trim());
-      if (withOther && backIsBlank && frontForBack) {
+      if (protectedAnswer && backIsBlank && frontForBack && !getBackAnswerFitIssue(frontForBack, protectedAnswer)) {
+        setBackDraftSuggestionFromSourceStem(protectedAnswer, frontForBack);
+      } else if (withOther && backIsBlank && frontForBack) {
         copilot._skipRateLimit = true; // bypass local limiter for speed
         requestBackDraftFromFront(frontForBack, { force: true }); // already passes Front + Source + Notes
       } else {
@@ -4653,11 +5923,15 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     }
   } catch (e) {
     if (e?.name === "AbortError") {
+      if (!isCurrentCopilotRequest(state, controller)) return;
       state.suggestion = "";
       clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
-      setCopilotStatus("Copilot timed out.", true);
+      if (isCopilotTimeoutAbort(controller, e)) {
+        setCopilotStatus("Copilot timed out.", true);
+      }
       return;
     }
+    if (!isCurrentCopilotRequest(state, controller)) return;
     if (String(e?.message || e).includes("rate-paused")) {
       clearSuggestionUI(state, { mirrorValue: value });
       state.suggestion = "";
@@ -4680,6 +5954,7 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       state.suggestionEl.classList.remove("loading");
       state.suggestionEl.classList.add("error");
     }
+    state.suggestion = "";
     const msg = e?.message || "Copilot error";
     if (state.textEl) state.textEl.textContent = msg;
     if (state.hintEl) state.hintEl.textContent = "";
@@ -4689,8 +5964,8 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     setCopilotStatus(msg, true);
   } finally {
     clearTimeout(abortTimer);
-    if (state.workingEl) state.workingEl.hidden = true;
-    if (state.controller === controller) {
+    if (isCurrentCopilotRequest(state, controller) && state.workingEl) state.workingEl.hidden = true;
+    if (isCurrentCopilotRequest(state, controller)) {
       state.controller = null;
     }
   }
@@ -4823,7 +6098,7 @@ function setupCopilotField(fieldId) {
   if (acceptBtn) {
     acceptBtn.addEventListener("click", () => {
       if (!copilot.enabled) return;
-      applyCopilotSuggestion(state);
+      applyCopilotSuggestion(state, { allowRejected: true });
     });
   }
   if (refreshBtn) {
@@ -4845,7 +6120,7 @@ async function initCopilot() {
   if (useClipboardBtn && !useClipboardBtn.dataset.boundClipboardShortcut) {
     useClipboardBtn.dataset.boundClipboardShortcut = '1';
     useClipboardBtn.addEventListener('click', async () => {
-      await applyClipboardFallback({ wantPaste: true, force: true });
+      await applyClipboardFallback({ wantPaste: true, force: true, requestPermission: true });
     });
   }
   const sourceModeSelect = document.querySelector('#sourceMode');
@@ -4855,22 +6130,23 @@ async function initCopilot() {
       const value = normalizeSourceMode(e.target?.value);
       const saved = await setSourceMode(value);
       renderSourceMode(saved);
-      await ensureSourceFromMode(saved, { wantPaste: true });
+      await ensureSourceFromMode(saved, { wantPaste: true, requestPermission: saved === 'clipboard' });
     });
   }
   const sourceModeBtn = document.querySelector('#sourceModeToggle');
   if (sourceModeBtn && !sourceModeBtn.dataset.boundSourceMode) {
     sourceModeBtn.dataset.boundSourceMode = '1';
     sourceModeBtn.addEventListener('click', () => {
-      toggleSourceMode({ wantPaste: true });
+      toggleSourceMode({ wantPaste: true, requestPermission: true });
     });
   }
   try {
 	    const opts = await getOptions();
 	    copilot.provider = inferProviderFromOptions(opts);
     copilot.apiConfigured = hasProviderApiKey(opts, copilot.provider);
-    // Free-tier: even without an API key, copilot can work via proxy
-    if (!copilot.apiConfigured && copilot.provider !== "openrouter") {
+    // Free-tier proxy only serves the OpenAI-compatible path (openai/ultimate).
+    // Gemini/Claude have no proxy fallback, so don't mark them configured without a key.
+    if (!copilot.apiConfigured && (copilot.provider === "openai" || copilot.provider === "ultimate")) {
       try {
         const ft = await chrome.storage.local.get("ghostwriter_free_tier");
         const ftState = ft?.ghostwriter_free_tier || {};
@@ -4937,8 +6213,8 @@ async function initCopilot() {
         const next = { ...syncNext, ...(await getProviderSecrets()) };
         copilot.provider = inferProviderFromOptions(next);
         copilot.apiConfigured = hasProviderApiKey(next, copilot.provider);
-        // Free-tier fallback
-        if (!copilot.apiConfigured && copilot.provider !== "openrouter") {
+        // Free-tier proxy only serves openai/ultimate; keep gemini/claude gated on a real key.
+        if (!copilot.apiConfigured && (copilot.provider === "openai" || copilot.provider === "ultimate")) {
           try {
             chrome.storage.local.get("ghostwriter_free_tier").then((ft) => {
               const ftState = ft?.ghostwriter_free_tier || {};
@@ -7155,6 +8431,68 @@ function getPreviewTextColor(sourceEl) {
   return textColor;
 }
 
+function getExtensionMessageOrigin() {
+  try {
+    if (typeof chrome !== "undefined" && chrome?.runtime?.getURL) {
+      return new URL(chrome.runtime.getURL("")).origin;
+    }
+  } catch {}
+  try {
+    return window.location.origin && window.location.origin !== "null"
+      ? window.location.origin
+      : "*";
+  } catch {
+    return "*";
+  }
+}
+
+const SANDBOX_TARGET_ORIGIN = "*";
+
+function createPreviewMessageChannel() {
+  try {
+    if (crypto?.randomUUID) return crypto.randomUUID();
+  } catch {}
+  return `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function ensurePreviewFrameChannel(frame) {
+  if (!frame) return "";
+  if (!frame.dataset.previewChannel) {
+    frame.dataset.previewChannel = createPreviewMessageChannel();
+  }
+  return frame.dataset.previewChannel;
+}
+
+function buildMathjaxSandboxUrl(frame) {
+  const baseUrl = (typeof chrome !== "undefined" && chrome?.runtime?.getURL)
+    ? chrome.runtime.getURL("mathjax-sandbox.html")
+    : "mathjax-sandbox.html";
+  const channel = ensurePreviewFrameChannel(frame);
+  const parentOrigin = getExtensionMessageOrigin();
+  try {
+    const url = new URL(baseUrl, window.location.href);
+    url.searchParams.set("parentOrigin", parentOrigin);
+    url.searchParams.set("channel", channel);
+    return url.toString();
+  } catch {
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}parentOrigin=${encodeURIComponent(parentOrigin)}&channel=${encodeURIComponent(channel)}`;
+  }
+}
+
+function setPreviewFrameSrc(frame) {
+  if (!frame) return;
+  frame.setAttribute("src", buildMathjaxSandboxUrl(frame));
+}
+
+function postPreviewFrameMessage(frame, payload) {
+  const channel = ensurePreviewFrameChannel(frame);
+  frame.contentWindow?.postMessage(
+    { ...payload, channel },
+    SANDBOX_TARGET_ORIGIN
+  );
+}
+
 function queuePreviewFrameRender(frame, markdown, sourceEl) {
   if (!frame) return;
   const html = renderMarkdownToHtml(markdown || "");
@@ -7166,7 +8504,7 @@ function queuePreviewFrameRender(frame, markdown, sourceEl) {
 
   const deliver = () => {
     try {
-      frame.contentWindow?.postMessage(payload, "*");
+      postPreviewFrameMessage(frame, payload);
     } catch (err) {
       console.warn("Preview frame postMessage failed", err);
     }
@@ -7185,7 +8523,7 @@ function queuePreviewFrameRender(frame, markdown, sourceEl) {
       const queued = previewFrameState.queued.get(frame);
       if (!queued) return;
       try {
-        frame.contentWindow?.postMessage(queued, "*");
+        postPreviewFrameMessage(frame, queued);
       } catch (err) {
         console.warn("Preview frame postMessage failed", err);
       } finally {
@@ -7194,10 +8532,7 @@ function queuePreviewFrameRender(frame, markdown, sourceEl) {
     });
   }
   if (!frame.getAttribute("src")) {
-    const sandboxUrl = (typeof chrome !== "undefined" && chrome?.runtime?.getURL)
-      ? chrome.runtime.getURL("mathjax-sandbox.html")
-      : "mathjax-sandbox.html";
-    frame.setAttribute("src", sandboxUrl);
+    setPreviewFrameSrc(frame);
   }
 }
 
@@ -7283,39 +8618,50 @@ function bindMarkdownPreviewInputs() {
   }
 }
 
-function getPreviewFrameForMessageSource(source) {
+function isTrustedPreviewFrameMessage(frame, data) {
+  return !!frame &&
+    !!data &&
+    typeof data === "object" &&
+    !!frame.dataset.previewChannel &&
+    data.channel === frame.dataset.previewChannel;
+}
+
+function getPreviewFrameForMessageSource(source, data) {
   const frameIds = [
     ...markdownPreviewState.fields.map((field) => field.previewId),
     "previewSource",
   ];
   return frameIds
     .map((id) => document.getElementById(id))
-    .find((candidate) => candidate && candidate.contentWindow === source) || null;
+    .find((candidate) =>
+      candidate &&
+      candidate.contentWindow === source &&
+      isTrustedPreviewFrameMessage(candidate, data)
+    ) || null;
 }
 
 window.addEventListener("message", (event) => {
   const data = event?.data;
   if (!data) return;
   if (data.type === "quickflash:previewError") {
+    const frame = getPreviewFrameForMessageSource(event.source, data);
+    if (!frame) return;
     const errorMessage =
       (typeof data.error === "string" && data.error.trim()
         ? data.error
         : typeof data?.error?.message === "string" && data.error.message.trim()
           ? data.error.message
           : "") || "MathJax not loaded";
-    const frame = getPreviewFrameForMessageSource(event.source);
-    if (frame) {
-      const warning = frame.closest("[data-preview-block]")?.querySelector("[data-preview-warning]");
-      if (warning) {
-        warning.textContent = errorMessage;
-        warning.hidden = false;
-      }
+    const warning = frame.closest("[data-preview-block]")?.querySelector("[data-preview-warning]");
+    if (warning) {
+      warning.textContent = errorMessage;
+      warning.hidden = false;
     }
     console.warn("[QuickFlash][previewError]", errorMessage);
     return;
   }
   if (data.type !== "quickflash:previewRendered") return;
-  const frame = getPreviewFrameForMessageSource(event.source);
+  const frame = getPreviewFrameForMessageSource(event.source, data);
   if (!frame) return;
   const nextHeight = Number(data.height);
   if (Number.isFinite(nextHeight)) {
@@ -7662,9 +9008,8 @@ function initInlineMathPreview() {
     return;
   }
 
-  const sandboxUrl = chrome.runtime.getURL('mathjax-sandbox.html');
-  frontFrame.src = sandboxUrl;
-  backFrame.src = sandboxUrl;
+  setPreviewFrameSrc(frontFrame);
+  setPreviewFrameSrc(backFrame);
 
   const state = {
     front: { ready: false, lastText: '' },
@@ -7734,12 +9079,12 @@ function initInlineMathPreview() {
       // Sandbox isn't ready yet; keep lastText for previewReady fallback.
     }
 
-    frame.contentWindow.postMessage(
+    postPreviewFrameMessage(
+      frame,
       {
         type: 'quickflash:previewUpdate',
         text
-      },
-      '*'
+      }
     );
   }
 
@@ -7760,14 +9105,15 @@ function initInlineMathPreview() {
 
   // Listen for messages from both iframes
   window.addEventListener('message', (event) => {
+    const data = event.data || {};
     const src = event.source;
     const field =
       src === frontFrame.contentWindow ? 'front' :
       src === backFrame.contentWindow ? 'back' :
       null;
     if (!field) return;
+    if (!isTrustedPreviewFrameMessage(iframeFor(field), data)) return;
 
-    const data = event.data || {};
     if (data.type === 'quickflash:previewReady') {
       state[field].ready = true;
       setWarning(field, false);
@@ -8609,6 +9955,7 @@ async function ensureGhostwriterModel(models, { autoCreate = false } = {}) {
     try {
       await anki("createModel", {
         modelName: GHOSTWRITER_CLOZE_MODEL_NAME,
+        isCloze: true,
         inOrderFields: ["Text", "Extra", "Context", "Source"],
         css: GHOSTWRITER_MODEL_CSS,
         cardTemplates: [
@@ -8631,7 +9978,56 @@ async function ensureGhostwriterModel(models, { autoCreate = false } = {}) {
   if (hasBasic || hasCloze) {
     await updateGhostwriterModelTemplates(list, { force: createdAny });
   }
+  await warnIfClozeModelMistyped(list);
   return list;
+}
+
+// Older versions (<= 0.3.3) created "Cloze [Ghostwriter]" without isCloze:true, so it was a
+// Standard note type and clozes never occluded. AnkiConnect cannot safely convert or delete an
+// existing note type, so detect the mistyped model once and guide the user to recreate it.
+// Fully defensive: never throws into the model-load path.
+async function warnIfClozeModelMistyped(list) {
+  try {
+    const clozeName = (Array.isArray(list) ? list : []).find(
+      (name) => name === GHOSTWRITER_CLOZE_MODEL_NAME || GHOSTWRITER_CLOZE_MODEL_REGEX.test(name)
+    );
+    if (!clozeName) return;
+    let found;
+    try {
+      const models = await anki("findModelsByName", { modelNames: [clozeName] });
+      found = Array.isArray(models) ? models.find((m) => m && m.name === clozeName) : null;
+    } catch {
+      return; // older AnkiConnect without findModelsByName: skip rather than warn falsely
+    }
+    if (!found || typeof found.type !== "number") return;
+    const isMistyped = found.type !== 1; // Anki: 1 = cloze note type, 0 = standard
+    const flagKey = "ghostwriter_cloze_repair_notified_v1";
+    const stored = await chrome.storage.local.get(flagKey).catch(() => ({}));
+    const alreadyNotified = !!stored?.[flagKey];
+    if (!isMistyped) {
+      if (alreadyNotified) await chrome.storage.local.set({ [flagKey]: false }).catch(() => {});
+      return;
+    }
+    if (alreadyNotified) return;
+    console.warn(
+      `"${clozeName}" was created by an older version as a non-cloze note type; cloze cards will ` +
+        `not hide their answers. Delete or rename it in Anki (Tools -> Manage Note Types), then ` +
+        `reopen Ghostwriter to recreate it correctly.`
+    );
+    try {
+      chrome.notifications?.create?.("ghostwriter-cloze-repair", {
+        type: "basic",
+        iconUrl: "icons/icon128.png",
+        title: "Ghostwriter: fix your Cloze note type",
+        message:
+          `Your "${clozeName}" note type was made by an older version and won't hide cloze answers. ` +
+          `In Anki: Tools -> Manage Note Types -> delete or rename it, then reopen Ghostwriter to recreate it.`,
+      });
+    } catch {}
+    await chrome.storage.local.set({ [flagKey]: true }).catch(() => {});
+  } catch (err) {
+    console.warn("Cloze model health check failed:", err);
+  }
 }
 
 function orderModelsWithGhostwriter(models) {

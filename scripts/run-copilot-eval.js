@@ -7,12 +7,12 @@ const path = require("node:path");
 const ROOT = path.resolve(__dirname, "..");
 const DEFAULT_FIXTURE = path.join(ROOT, "tests/evals/deep-learning-wikipedia.json");
 const DEFAULT_OUT_DIR = path.join(ROOT, "tests/evals/reports");
-const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
-const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
+const ULTIMATE_DEFAULT_MODEL = "auto";
 const FRONT_WORD_CAP = 18;
 const BACK_WORD_CAP = 14;
 
@@ -171,6 +171,16 @@ function buildTaskNarrationIssue(config, role, rawText) {
   };
 }
 
+function buildProviderCallIssue(config, role, err) {
+  const preview = clip(err?.message || String(err), 260);
+  return {
+    kind: `${role.toLowerCase()}-provider-error`,
+    role,
+    message: `${config.provider} model ${config.model} failed during ${role} generation.`,
+    preview,
+  };
+}
+
 function buildMissingApiKeyError(config) {
   const providerHint = config.provider === "ultimate"
     ? "Set ULTIMATE_API_KEY or ULTIMATEAI_API_KEY."
@@ -271,6 +281,37 @@ function loadEngine() {
     ${extractFunction(panelSource, "isExactComplementSourceStemPrefix")}
     ${extractFunction(panelSource, "buildExactComplementSourceStemCompletion")}
     ${extractFunction(panelSource, "buildStatementSourceStemCompletion")}
+    ${extractFunction(panelSource, "cleanSourcePatternQuestionPhrase")}
+    ${extractFunction(panelSource, "shortenPeriodBoundaryPhrase")}
+    ${extractFunction(panelSource, "buildPatternSourceCompletion")}
+    ${extractFunction(panelSource, "inferApproachSourceCompletion")}
+    ${extractFunction(panelSource, "inferPeriodSourceCompletion")}
+    ${extractFunction(panelSource, "inferContextSourceCompletion")}
+    ${extractFunction(panelSource, "inferAliasSourceCompletion")}
+    ${extractFunction(panelSource, "inferAbbreviationSourceCompletion")}
+    ${extractFunction(panelSource, "inferCoreProblemSourceCompletion")}
+    ${extractFunction(panelSource, "inferCorpusContentsSourceCompletion")}
+    ${extractFunction(panelSource, "inferNamedSetSourceCompletion")}
+    ${extractFunction(panelSource, "inferMeaningSourceCompletion")}
+    ${extractFunction(panelSource, "inferGovernmentRepealSourceCompletion")}
+    ${extractFunction(panelSource, "inferTreeStructureSourceCompletion")}
+    ${extractFunction(panelSource, "inferWordFunctionSourceCompletion")}
+    ${extractFunction(panelSource, "inferDirectDefinitionSourceCompletion")}
+    ${extractFunction(panelSource, "inferOriginSourceCompletion")}
+    ${extractFunction(panelSource, "inferContrastTypesSourceCompletion")}
+    ${extractFunction(panelSource, "inferPipelineSourceCompletion")}
+    ${extractFunction(panelSource, "inferLabelCaptureSourceCompletion")}
+    ${extractFunction(panelSource, "inferYearEventSourceCompletion")}
+    ${extractFunction(panelSource, "inferKindOfInverseSourceCompletion")}
+    ${extractFunction(panelSource, "inferReceiveLabelsSourceCompletion")}
+    ${extractFunction(panelSource, "inferConditionsSourceCompletion")}
+    ${extractFunction(panelSource, "inferColonExplanationSourceCompletion")}
+    ${extractFunction(panelSource, "inferContrastDifferenceSourceCompletion")}
+    ${extractFunction(panelSource, "inferAnalogySolutionSourceCompletion")}
+    ${extractFunction(panelSource, "inferPrecedesSourceCompletion")}
+    ${extractFunction(panelSource, "inferReverseDefinitionSourceCompletion")}
+    ${extractFunction(panelSource, "inferTeachesPurposeSourceCompletion")}
+    ${extractFunction(panelSource, "inferSourcePatternCompletion")}
     ${extractFunction(panelSource, "inferSourceStemCompletion")}
     ${extractFunction(panelSource, "stripExistingPrefixFromCompletion")}
     ${extractFunction(panelSource, "stripCopilotMetaOutput")}
@@ -279,10 +320,13 @@ function loadEngine() {
     ${extractFunction(panelSource, "normalizeCopilotSuggestion")}
     ${extractFunction(panelSource, "stripFrontFromBack")}
     ${extractFunction(panelSource, "finalizeFrontQuestion")}
+    ${extractFunction(panelSource, "normalizeFrontSuggestionForPrefix")}
     ${extractFunction(panelSource, "normalizeFrontLeakText")}
     ${extractFunction(panelSource, "normalizeAnswerTerm")}
     ${extractFunction(panelSource, "singularizeAnswerTerm")}
     ${extractFunction(panelSource, "getAnswerTerms")}
+    ${extractFunction(panelSource, "getSourceGroundingTerms")}
+    ${extractFunction(panelSource, "getFrontSourceGroundingIssue")}
     ${extractFunction(panelSource, "isAdvantageFront")}
     ${extractFunction(panelSource, "inferAnswerRoleFromFront")}
     ${extractFunction(panelSource, "stripAdvantageComparisonTail")}
@@ -296,6 +340,32 @@ function loadEngine() {
     ${extractFunction(panelSource, "normalizeBackSuggestionForFront")}
     ${extractFunction(panelSource, "stripAnswerCueLead")}
     ${extractFunction(panelSource, "inferProtectedAnswerFromAdvantageSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromApproachSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromContextSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromAliasSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromAbbreviationSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromCoreProblemSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromCorpusContentsSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromNamedSetSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromMeaningSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromGovernmentRepealSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromTreeStructureSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromWordFunctionSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromDirectDefinitionSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromOriginSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromContrastTypesSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromPipelineSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromLabelCaptureSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromYearEventSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromKindOfInverseSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromReceiveLabelsSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromConditionsSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromColonExplanationSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromContrastDifferenceSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromAnalogySolutionSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromPrecedesSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromReverseDefinitionSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromTeachesPurposeSource")}
     ${extractFunction(panelSource, "inferProtectedAnswerFromSimpleFactSource")}
     ${extractFunction(panelSource, "inferProtectedAnswerFromSource")}
     ${extractFunction(panelSource, "getAnswerTermLeakReason")}
@@ -311,6 +381,7 @@ function loadEngine() {
       inferSourceStemCompletion,
       stripFrontFromBack,
       finalizeFrontQuestion,
+      normalizeFrontSuggestionForPrefix,
       inferAnswerRoleFromFront,
       inferProtectedAnswerFromSource,
       getFrontAnswerLeakReason,
@@ -646,11 +717,16 @@ async function chatCompletion(config, { system, prompt, maxTokens }) {
     throw new Error(`${config.provider} error ${response.status}: ${message}`);
   }
   const content = data?.choices?.[0]?.message?.content;
-  if (typeof content === "string") return content.trim();
-  if (Array.isArray(content)) {
-    return content.map((part) => part?.text || part?.content || "").join("").trim();
+  if (typeof content === "string") {
+    return { text: content.trim(), model: String(data?.model || "") };
   }
-  return "";
+  if (Array.isArray(content)) {
+    return {
+      text: content.map((part) => part?.text || part?.content || "").join("").trim(),
+      model: String(data?.model || ""),
+    };
+  }
+  return { text: "", model: String(data?.model || "") };
 }
 
 async function geminiCompletion(config, { system, prompt, maxTokens }) {
@@ -711,9 +787,12 @@ async function geminiCompletion(config, { system, prompt, maxTokens }) {
   const candidates = Array.isArray(data?.candidates) ? data.candidates : [];
   const parts = candidates[0]?.content?.parts;
   if (Array.isArray(parts)) {
-    return parts.map((part) => part?.text || "").join("").trim();
+    return {
+      text: parts.map((part) => part?.text || "").join("").trim(),
+      model: String(data?.modelVersion || data?.model || config.model || ""),
+    };
   }
-  return "";
+  return { text: "", model: String(data?.modelVersion || data?.model || config.model || "") };
 }
 
 async function listProviderModels(config) {
@@ -888,6 +967,8 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     front: "",
     rawBack: "",
     back: "",
+    frontActualModel: "",
+    backActualModel: "",
     localGuard: null,
     answerRole: null,
     modelOutputIssue: null,
@@ -901,7 +982,8 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
 
   if (sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back) {
     row.rawFront = sourceStemCompletion.frontSuffix;
-    row.frontSuffix = helpers.finalizeFrontQuestion(
+    row.frontSuffix = helpers.normalizeFrontSuggestionForPrefix(
+      frontPrefix,
       helpers.normalizeCopilotSuggestion(sourceStemCompletion.frontSuffix, frontPrefix, {
         role: "front",
         maxWords: FRONT_WORD_CAP,
@@ -926,12 +1008,21 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     return row;
   }
 
-  row.rawFront = await chatCompletion(config, {
-    system: frontPrompt.system,
-    prompt: frontPrompt.prompt,
-    maxTokens: 40,
-  });
-  row.frontSuffix = helpers.finalizeFrontQuestion(
+  try {
+    const frontCompletion = await chatCompletion(config, {
+      system: frontPrompt.system,
+      prompt: frontPrompt.prompt,
+      maxTokens: 40,
+    });
+    row.rawFront = frontCompletion.text;
+    row.frontActualModel = frontCompletion.model;
+  } catch (err) {
+    row.modelOutputIssue = buildProviderCallIssue(config, "front", err);
+    row.judgment = judgeCase(testCase, row, helpers);
+    return row;
+  }
+  row.frontSuffix = helpers.normalizeFrontSuggestionForPrefix(
+    frontPrefix,
     helpers.normalizeCopilotSuggestion(row.rawFront, frontPrefix, {
       role: "front",
       maxWords: FRONT_WORD_CAP,
@@ -979,11 +1070,19 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
       row.backPrompt = backPrompt.prompt;
       row.backSystem = backPrompt.system;
     }
-    row.rawBack = await chatCompletion(config, {
-      system: backPrompt.system,
-      prompt: backPrompt.prompt,
-      maxTokens: 30,
-    });
+    try {
+      const backCompletion = await chatCompletion(config, {
+        system: backPrompt.system,
+        prompt: backPrompt.prompt,
+        maxTokens: 30,
+      });
+      row.rawBack = backCompletion.text;
+      row.backActualModel = backCompletion.model;
+    } catch (err) {
+      row.modelOutputIssue = buildProviderCallIssue(config, "back", err);
+      row.judgment = judgeCase(testCase, row, helpers);
+      return row;
+    }
     let back = helpers.normalizeCopilotSuggestion(row.rawBack, "", {
       role: "back",
       maxWords: BACK_WORD_CAP,
@@ -1011,6 +1110,11 @@ function renderCardList(cards) {
 
 function renderMarkdown({ fixture, config, live, rows }) {
   const generatedAt = new Date().toISOString();
+  const reportedModels = Array.from(new Set(
+    rows.flatMap((row) => [row.frontActualModel, row.backActualModel])
+      .map((model) => String(model || "").trim())
+      .filter(Boolean)
+  ));
   const lines = [
     `# ${fixture.name}`,
     "",
@@ -1018,6 +1122,7 @@ function renderMarkdown({ fixture, config, live, rows }) {
     `Mode: ${live ? "live model calls" : "dry prompt build"}`,
     `Source: [${fixture.source?.title || "source"}](${fixture.source?.url || ""})`,
     live ? `Provider/model: ${config.provider} / ${config.model}` : "Provider/model: not called",
+    ...(live && reportedModels.length ? [`Provider reported model(s): ${reportedModels.join(", ")}`] : []),
     "",
     "| Case | Verdict | Prefix | Generated Front | Generated Back | Preferred Target | Flags |",
     "| --- | --- | --- | --- | --- | --- | --- |",
@@ -1052,6 +1157,13 @@ function renderMarkdown({ fixture, config, live, rows }) {
           "",
         ]
       : [];
+    const actualModelLines = row.frontActualModel || row.backActualModel
+      ? [
+          `Provider Reported Front Model: ${row.frontActualModel || "(none)"}`,
+          `Provider Reported Back Model: ${row.backActualModel || "(none)"}`,
+          "",
+        ]
+      : [];
     lines.push(
       `### ${row.id}`,
       "",
@@ -1076,6 +1188,7 @@ function renderMarkdown({ fixture, config, live, rows }) {
       `Source Stem Mode: ${row.sourceStem ? "yes" : "no"}`,
       `Protected Answer Inferred: ${row.protectedAnswer || "(none)"}`,
       `Answer Role: ${row.answerRole || "(none)"}`,
+      ...actualModelLines,
       ...modelOutputIssueLines,
       `Flags: ${row.judgment?.flags?.join("; ") || "(none)"}`,
       ...matchedBadCardLine,

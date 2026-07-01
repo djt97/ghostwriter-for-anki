@@ -44,7 +44,7 @@ describe('Copilot eval runner', () => {
     assert.ok(runnerSource.includes('ULTIMATE_API_KEY'));
     assert.ok(runnerSource.includes('ULTIMATEAI_API_KEY'));
     assert.ok(runnerSource.includes('https://api.ultimateai.org/v1'));
-    assert.ok(runnerSource.includes('gemini-flash-lite'));
+    assert.ok(runnerSource.includes('const ULTIMATE_DEFAULT_MODEL = "auto"'));
     assert.ok(runnerSource.includes('Chrome extension settings'));
     assert.ok(runnerSource.includes('Do not include a leading'));
   });
@@ -55,6 +55,13 @@ describe('Copilot eval runner', () => {
     assert.ok(runnerSource.includes('${config.baseUrl}/models'));
     assert.ok(runnerSource.includes('GEMINI_API_KEY'));
     assert.ok(runnerSource.includes('generateContent'));
+  });
+
+  it('records provider-reported model names in live reports', () => {
+    assert.ok(runnerSource.includes('frontActualModel'));
+    assert.ok(runnerSource.includes('backActualModel'));
+    assert.ok(runnerSource.includes('Provider reported model(s)'));
+    assert.ok(runnerSource.includes('Provider Reported Front Model'));
   });
 
   it('normalizes accidental Bearer prefixes before sending Authorization headers', () => {
@@ -73,6 +80,14 @@ describe('Copilot eval runner', () => {
     assert.ok(runnerSource.includes('function buildTaskNarrationIssue'));
     assert.ok(runnerSource.includes('model-output:${generated.modelOutputIssue.kind}'));
     assert.ok(runnerSource.includes('Model Output Preview'));
+  });
+
+  it('records provider call failures as flagged rows instead of aborting the batch', () => {
+    assert.ok(runnerSource.includes('function buildProviderCallIssue'));
+    assert.ok(runnerSource.includes('${role.toLowerCase()}-provider-error'));
+    assert.ok(runnerSource.includes('buildProviderCallIssue(config, "front", err)'));
+    assert.ok(runnerSource.includes('buildProviderCallIssue(config, "back", err)'));
+    assert.ok(runnerSource.includes('failed during ${role} generation'));
   });
 
   it('does not treat an unchanged prefix as a generated Front', () => {

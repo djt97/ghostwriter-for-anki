@@ -11,6 +11,10 @@ const simpleFactsFixture = JSON.parse(fs.readFileSync(
   path.resolve(__dirname, '../evals/simple-facts-wikipedia.json'),
   'utf8'
 ));
+const ankiSmokeFixture = JSON.parse(fs.readFileSync(
+  path.resolve(__dirname, '../evals/ghostwriter-anki-smoke.json'),
+  'utf8'
+));
 
 describe('Copilot eval fixtures', () => {
   it('documents the source page', () => {
@@ -144,6 +148,28 @@ describe('Copilot eval fixtures', () => {
       assert.ok(preferred.front.toLowerCase().startsWith(testCase.frontPrefix.toLowerCase()), testCase.id);
       assert.ok(preferred.back.trim().split(/\s+/).length <= 6, testCase.id);
       assert.ok(testCase.carding.badButPlausibleCards.length >= 1, testCase.id);
+    }
+  });
+
+  it('includes a source-backed smoke fixture from Ghostwriter-tagged Anki notes', () => {
+    assert.equal(ankiSmokeFixture.schemaVersion, 2);
+    assert.equal(ankiSmokeFixture.source.title, 'Local Anki notes tagged ghostwriter');
+    assert.equal(ankiSmokeFixture.cases.length, 20);
+
+    const ids = new Set();
+    for (const testCase of ankiSmokeFixture.cases) {
+      assert.equal(ids.has(testCase.id), false, `duplicate id: ${testCase.id}`);
+      ids.add(testCase.id);
+      assert.equal(testCase.carding.verdict, 'basic', testCase.id);
+      assert.ok(testCase.sourceText.length >= 45, testCase.id);
+      assert.ok(testCase.frontPrefix.trim().split(/\s+/).length >= 2, testCase.id);
+      assert.ok(testCase.carding.preferredCards.length >= 1, testCase.id);
+
+      const preferred = testCase.carding.preferredCards[0];
+      assert.equal(preferred.type, 'basic', testCase.id);
+      assert.ok(preferred.front.toLowerCase().startsWith(testCase.frontPrefix.toLowerCase()), testCase.id);
+      assert.ok(preferred.back.trim().length >= 2, testCase.id);
+      assert.ok(Array.isArray(testCase.carding.badButPlausibleCards), testCase.id);
     }
   });
 });

@@ -59,12 +59,15 @@ jobs:
       - name: Install Playwright browsers (Chromium)
         run: npx playwright install --with-deps chromium
 
+      - name: Build release extension
+        run: npm run build:release
+
       # Run UI tests in a virtual display with Playwright browser debug logs
       - name: Run UI tests (with virtual display, Playwright debug logs)
         timeout-minutes: 12
         env:
           DEBUG: pw:browser*
-          EXT_PATH: ${{ github.workspace }}
+          EXT_PATH: ${{ github.workspace }}/dist/ghostwriter
         run: xvfb-run -s "-screen 0 1280x800x24" -a npm run test:ui
 
       # Always upload the Playwright report for debugging

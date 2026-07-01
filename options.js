@@ -1,14 +1,14 @@
 
-// options.js (v0.3.2)
+// options.js (v0.4.0)
 const $ = (sel) => document.querySelector(sel);
 const DEFAULT_SHORTCUT = "Meta+Shift+A";
 const DEFAULT_COPILOT_SHORTCUT = "Cmd+Shift+X";
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
-const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
 const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
-const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
+const ULTIMATE_DEFAULT_MODEL = "auto";
 const CLAUDE_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_COPILOT_FRONT_PROMPT = `
@@ -109,43 +109,37 @@ const KNOWN_MODELS = {
     { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite" },
   ],
   openai: [
-    { id: "gpt-4.1-mini", label: "GPT-4.1 Mini (recommended)" },
+    { id: "gpt-4o-mini", label: "GPT-4o Mini (recommended fastest)" },
+    { id: "gpt-4.1-nano", label: "GPT-4.1 Nano (alternate)" },
+    { id: "gpt-4.1-mini", label: "GPT-4.1 Mini (more context)" },
     { id: "gpt-4o", label: "GPT-4o (reliable fallback)" },
-    { id: "gpt-4o-mini", label: "GPT-4o Mini (cheap fallback)" },
-    { id: "gpt-4.1-nano", label: "GPT-4.1 Nano (test first)" },
     { id: "o4-mini", label: "o4-mini (avoid for autocomplete)" },
   ],
   openrouter: [
     { id: "openrouter/auto", label: "Auto Router (test first)" },
   ],
   ultimate: [
-    { id: "gemini-flash-lite", label: "Gemini Flash Lite (recommended)" },
-    { id: "Claude 4.5 Haiku", label: "Claude 4.5 Haiku (backup)" },
-    { id: "auto", label: "Auto Router (not recommended)" },
-    { id: "task", label: "Task (low-cost grunt work)" },
-    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite (may be unavailable)" },
-    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini (avoid for autocomplete)" },
-    { id: "gpt-5.5-mini", label: "GPT-5.5 Mini (avoid for autocomplete)" },
-    { id: "Gemini 2.5 Flash Lite", label: "Gemini 2.5 Flash Lite (alias)" },
-    { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
+    { id: "auto", label: "Auto Version (recommended)" },
+    { id: "task", label: "Task (low-cost utility)" },
+    { id: "claude-4-5-haiku", label: "Claude 4.5 Haiku (backup)" },
+    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
+    { id: "gemini-3-flash-lite", label: "Gemini 3 Flash Lite" },
+    { id: "gemini-3-flash", label: "Gemini 3 Flash" },
+    { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
     { id: "claude-latest", label: "Claude latest" },
     { id: "chatgpt-latest", label: "ChatGPT latest" },
     { id: "gemini-latest", label: "Gemini latest" },
-    { id: "gpt-5.5", label: "GPT-5.5" },
+    { id: "gpt-5-mini", label: "GPT-5 Mini" },
+    { id: "gpt-5", label: "GPT-5" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { id: "gpt-5.4", label: "GPT-5.4" },
-    { id: "Claude 4.6 Sonnet", label: "Claude 4.6 Sonnet" },
-    { id: "Claude 4.6 Opus", label: "Claude 4.6 Opus" },
-    { id: "Claude 4.7 Opus", label: "Claude 4.7 Opus" },
-    { id: "Gemini 3 Flash", label: "Gemini 3 Flash" },
-    { id: "Gemini 3.0 Pro", label: "Gemini 3.0 Pro" },
-    { id: "Gemini 3.1 Pro", label: "Gemini 3.1 Pro" },
+    { id: "gpt-5.5", label: "GPT-5.5" },
     { id: "grok-4-1-fast-reasoning", label: "Grok 4.1 Fast Reasoning" },
+    { id: "grok-4-1-fast-non-reasoning", label: "Grok 4.1 Fast Non-Reasoning" },
     { id: "deepseek-v3.2", label: "DeepSeek V3.2" },
     { id: "deepseek-v3.2-speciale", label: "DeepSeek V3.2 Speciale" },
-    { id: "Deepseek-Reasoner", label: "DeepSeek Reasoner" },
-    { id: "MiniMax-M2.5", label: "MiniMax M2.5" },
-    { id: "MiniMax-M2.7", label: "MiniMax M2.7" },
-    { id: "flashcard-generator", label: "Flashcard Generator" },
+    { id: "deepseek-chat", label: "DeepSeek Chat" },
+    { id: "minimax-m2.7", label: "MiniMax M2.7" },
   ],
   claude: [
     { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (recommended)" },
@@ -157,13 +151,13 @@ const PROVIDER_MODEL_HELP = Object.freeze({
   gemini:
     "Recommended: Gemini 2.5 Flash Lite. Direct Gemini 2.0 models may require billing/quota; use Flash or Pro only if Lite misses simple facts.",
   openai:
-    "Recommended: GPT-4.1 Mini. It was clean in live simple-fact tests and has no reasoning step; use GPT-4o if Mini misses context. Avoid o-series/reasoning models for autocomplete.",
+    "Recommended: GPT-4o Mini for fastest low-latency autocomplete. Use GPT-4.1 Nano, GPT-4.1 Mini, or GPT-4o if Mini misses source context. Avoid o-series/reasoning models for autocomplete.",
   openrouter:
     "Recommended: choose a specific fast non-reasoning model instead of Auto Router. Good custom picks are Gemini Flash Lite, GPT-4o, or Claude Haiku when your account exposes them.",
   claude:
     "Recommended: Claude Haiku 4.5 for short, low-latency completions. Use Sonnet only when Haiku is missing facts or context.",
   ultimate:
-    "Recommended: Gemini Flash Lite. Live tests found Auto, GPT-5 mini variants, and MiniMax unreliable for simple card autocomplete.",
+    "Recommended: Auto Version. Direct Gemini routes can return upstream gateway errors through UltimateAI; choose a specific documented model only after a live test.",
 });
 const OPTIONS_KEY = "quickflash_options";
 const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
@@ -174,11 +168,11 @@ const FREE_TIER_DAILY_LIMIT = 10;
 const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v2";
 const SHORTCUT_COACH_KEY = "ghostwriter_onboarding_v1";
 const PERMISSION_JUSTIFICATIONS = {
-  clipboardRead: {
-    reason:
-      "Reads clipboard text to populate the Source field when Clipboard mode is selected or Auto mode has no page selection, including on panel open or Copilot runs without a selection.",
-  },
-};
+	  clipboardRead: {
+	    reason:
+	      "Reads clipboard text to populate the Source field in Clipboard Source mode, or as Auto Source fallback when no page selection is available. This optional permission is requested from explicit Source controls.",
+	  },
+	};
 
 let currentOptionsCache = null;
 
@@ -924,15 +918,22 @@ async function save() {
   const modelSelectVal = document.querySelector("#providerModelSelect")?.value || "";
   const modelCustomVal = document.querySelector("#providerModelCustom")?.value.trim() || "";
   const providerModel = modelSelectVal === "__custom__" ? modelCustomVal : modelSelectVal;
+  const base = await loadOptionsWithSecrets();
+  const providerKeyField = {
+    ultimate: "ultimateKey",
+    openai: "openaiKey",
+    openrouter: "openrouterKey",
+    gemini: "geminiKey",
+    claude: "claudeKey",
+  }[provider] || "ultimateKey";
   const providerStreamFront = document.querySelector("#providerStreamFront")?.value === "true";
-  const permissionResultPromise = providerApiKey
+  const hasProviderCredential = !!providerApiKey || !!base[providerKeyField];
+  const permissionResultPromise = hasProviderCredential
     ? requestProviderHostPermissions(
         provider,
         providerBaseUrl || (PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.ultimate).baseUrl
       )
     : Promise.resolve({ ok: true, granted: true, origins: [] });
-
-  const base = await loadOptionsWithSecrets();
 
   // Parse custom editor field config (optional)
   let editorFieldConfig = base.editorFieldConfig || null;

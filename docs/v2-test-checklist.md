@@ -15,7 +15,7 @@ If something fails, note what happened and move on — don't let one failure blo
 - [ ] Load the unpacked extension — no errors in `chrome://extensions`
 - [ ] Extension icon appears in toolbar with correct icon
 - [ ] Click icon opens the default editor surface (overlay by default)
-- [ ] Side panel header shows "Ghostwriter for Anki" with version `0.3.3`
+- [ ] Side panel header shows "Ghostwriter for Anki" with version `0.4.0`
 - [ ] Options page opens from the three-dot menu on the extensions page
 - [ ] Options page sections all render (Connection, AI suggestions, Defaults, Setup, Help, Privacy)
 - [ ] Options left menu switches panes and only one settings pane is visible at a time

@@ -224,6 +224,60 @@
           }
         ]
       }
+    },
+    {
+      "id": "lebesgue-simple-functions-approach",
+      "section": "Lebesgue integral",
+      "tags": ["math", "source-grounding", "approach"],
+      "sourceText": "One approach to constructing the Lebesgue integral is to make use of so-called simple functions:",
+      "frontPrefix": "What is the standard ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source supports an approach-to-construction card, not a general definition of simple functions.",
+        "plausibleUserPrefixes": ["What is the standard "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "What is the standard approach to constructing the Lebesgue integral?",
+            "back": "using simple functions"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is the standard definition of a simple function in measure theory?",
+            "back": "A measurable function taking only finitely many values",
+            "whyBad": "True but not grounded in the highlighted source; it switches from the source's construction approach to outside definition trivia."
+          }
+        ]
+      }
+    },
+    {
+      "id": "prehistory-period",
+      "section": "Prehistory",
+      "tags": ["history", "source-grounding", "period"],
+      "sourceText": "Prehistory, sometimes referred to as pre-literary history,[1] is the period of human history between the first known use of stone tools by hominins c. 3.3 million years ago and the beginning of recorded history with the invention of writing systems.",
+      "frontPrefix": "Which period ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The source gives one named period and enough descriptive context for a source-grounded cue.",
+        "plausibleUserPrefixes": ["Which period "],
+        "preferredCards": [
+          {
+            "type": "basic",
+            "front": "Which period of human history runs from the first known stone tools to recorded history?",
+            "back": "Prehistory"
+          }
+        ],
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "Which period is sometimes referred to as pre-literary history?",
+            "back": "Prehistory",
+            "whyBad": "It is answerable, but the weaker cue misses the main source contrast between stone tools and recorded history."
+          }
+        ]
+      }
     }
   ]
 }

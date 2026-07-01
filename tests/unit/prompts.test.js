@@ -16,8 +16,9 @@ describe('prompts.js', () => {
       assert.ok(PROMPTS.frontSystem.includes("Continue after the user's prefix"));
       assert.ok(PROMPTS.frontSystem.includes('durable retrieval cue'));
       assert.ok(PROMPTS.frontSystem.includes("Cue, don't disclose"));
+      assert.ok(PROMPTS.frontSystem.includes('Use only facts grounded in the Source'));
       assert.ok(!PROMPTS.frontSystem.includes('Protected Back answer'));
-      assert.ok(PROMPTS.frontSystem.length < 950);
+      assert.ok(PROMPTS.frontSystem.length < 1100);
     });
 
     it('keeps Back autocomplete minimal and answer-only', () => {
@@ -66,6 +67,7 @@ describe('prompts.js', () => {
       assert.ok(result.includes('Complete FRONT'));
       assert.ok(result.includes('Prefix: What do'));
       assert.ok(result.includes('Continue after Prefix'));
+      assert.ok(result.includes('Source-grounding'));
       assert.ok(result.includes('one atomic cue'));
       assert.ok(result.endsWith('Output:'));
     });

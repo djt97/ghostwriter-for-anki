@@ -12,6 +12,12 @@ const optionsHtml = fs.readFileSync(
 const optionsCss = fs.readFileSync(
   path.resolve(__dirname, '../../options.css'), 'utf8'
 );
+const panelSource = fs.readFileSync(
+  path.resolve(__dirname, '../../panel.js'), 'utf8'
+);
+const backgroundSource = fs.readFileSync(
+  path.resolve(__dirname, '../../background.js'), 'utf8'
+);
 const manifest = JSON.parse(fs.readFileSync(
   path.resolve(__dirname, '../../manifest.json'), 'utf8'
 ));
@@ -20,36 +26,37 @@ const ultimateModelsBlock = optionsSource.match(
 )?.[1] || '';
 
 describe('options.js model presets', () => {
-  it('defaults UltimateAI to the tested Flash Lite autocomplete model', () => {
-    assert.ok(optionsSource.includes('const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite"'));
+  it('defaults UltimateAI to the working Auto Version router', () => {
+    assert.ok(optionsSource.includes('const ULTIMATE_DEFAULT_MODEL = "auto"'));
     assert.match(optionsSource, /ultimate:\s*\{[\s\S]*?model:\s*ULTIMATE_DEFAULT_MODEL/);
   });
 
   it('defaults direct providers to low-latency autocomplete recommendations', () => {
-    assert.ok(optionsSource.includes('const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini"'));
+    assert.ok(optionsSource.includes('const OPENAI_DEFAULT_MODEL = "gpt-4o-mini"'));
     assert.ok(optionsSource.includes('const CLAUDE_DEFAULT_MODEL = "claude-haiku-4-5-20251001"'));
     assert.match(optionsSource, /openai:\s*\{[\s\S]*?model:\s*OPENAI_DEFAULT_MODEL/);
     assert.match(optionsSource, /claude:\s*\{[\s\S]*?model:\s*CLAUDE_DEFAULT_MODEL/);
   });
 
   it('includes fast/current UltimateAI presets used for Copilot testing', () => {
-    for (const id of ['gemini-flash-lite', 'auto', 'task', 'gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite', 'Claude 4.5 Haiku', 'MiniMax-M2.7']) {
+    for (const id of ['auto', 'task', 'claude-4-5-haiku', 'gemini-2.5-flash-lite', 'gemini-3-flash-lite', 'gemini-3.1-pro', 'grok-4-1-fast-non-reasoning', 'minimax-m2.7']) {
       assert.ok(ultimateModelsBlock.includes(`id: "${id}"`), `missing ${id}`);
     }
   });
 
   it('shows provider-specific model recommendations in the model picker help', () => {
     assert.ok(optionsSource.includes('PROVIDER_MODEL_HELP'));
-    assert.ok(optionsSource.includes('Recommended: Gemini Flash Lite'));
-    assert.ok(optionsSource.includes('Recommended: GPT-4.1 Mini'));
-    assert.ok(optionsSource.includes('no reasoning step'));
+    assert.ok(optionsSource.includes('Recommended: Auto Version'));
+    assert.ok(optionsSource.includes('Direct Gemini routes can return upstream gateway errors'));
+    assert.ok(optionsSource.includes('Recommended: GPT-4o Mini'));
+    assert.ok(optionsSource.includes('low-latency autocomplete'));
+    assert.ok(optionsSource.includes('Use GPT-4.1 Nano, GPT-4.1 Mini, or GPT-4o if Mini misses source context'));
     assert.ok(optionsSource.includes('Recommended: Claude Haiku 4.5'));
     assert.ok(optionsSource.includes('Avoid o-series/reasoning models'));
-    assert.ok(optionsSource.includes('Auto, GPT-5 mini variants, and MiniMax unreliable'));
   });
 
   it('does not suggest UltimateAI model slugs rejected by the current API catalog', () => {
-    for (const id of ['claude-4-5-haiku', 'gpt-4.1-mini', 'grok-4-1-fast-non-reasoning']) {
+    for (const id of ['gemini-flash-lite', 'Claude 4.5 Haiku', 'Gemini 2.5 Flash Lite', 'gemini-3.1-flash-lite', 'gpt-5.5-mini', 'MiniMax-M2.7']) {
       assert.ok(!ultimateModelsBlock.includes(`id: "${id}"`), `unexpected ${id}`);
     }
   });
@@ -70,8 +77,11 @@ describe('options.js model presets', () => {
     assert.ok(optionsSource.includes('"https://api.ultimateai.org/*"'));
     assert.ok(optionsSource.includes('openrouter: ["https://openrouter.ai/*"]'));
     assert.ok(optionsSource.includes('requestProviderHostPermissions'));
+    assert.ok(optionsSource.includes('const hasProviderCredential = !!providerApiKey || !!base[providerKeyField]'));
     assert.ok(optionsSource.includes('chrome.permissions.contains'));
     assert.ok(optionsSource.includes('chrome.permissions.request'));
+    assert.ok(panelSource.includes('chrome.permissions.request({ origins: [origin] })'));
+    assert.ok(backgroundSource.includes('chrome.permissions.request({ origins: [origin] })'));
   });
 
   it('stores provider API keys outside synced options', () => {
@@ -132,9 +142,11 @@ describe('options.js source defaults', () => {
     assert.match(optionsSource, /typeof opts\.clipboardFallback === "boolean"[\s\S]*D\.clipboardFallback !== false/);
   });
 
-  it('declares clipboard read permission for default Source fallback', () => {
-    assert.ok(manifest.permissions.includes('clipboardRead'));
-    assert.equal((manifest.optional_permissions || []).includes('clipboardRead'), false);
-    assert.ok(optionsHtml.includes('reads clipboard text only when Clipboard Source is selected'));
+  it('requests clipboard read as an optional runtime permission for Source fallback', () => {
+    assert.equal(manifest.permissions.includes('clipboardRead'), false);
+    assert.ok((manifest.optional_permissions || []).includes('clipboardRead'));
+    assert.ok(panelSource.includes('chrome.permissions.request({ permissions: ["clipboardRead"] })'));
+    assert.ok(optionsHtml.includes('can use clipboard text when Clipboard Source is selected'));
+    assert.ok(optionsSource.includes('optional permission is requested from explicit Source controls'));
   });
 });

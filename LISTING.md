@@ -48,7 +48,9 @@ The extension communicates only with the domains below, based on user configurat
 - `http://127.0.0.1:*`, `http://localhost:*` — Local AnkiConnect endpoint for creating flashcards in the user's desktop Anki instance.
 - `https://ghostwriter-proxy.djthornton97.workers.dev` — Free-tier suggestion proxy for first-time users (no API key required).
 - `https://api.openai.com` — OpenAI API requests when the user selects the OpenAI provider in Settings.
-- `https://smart.ultimateai.org` — UltimateAI API requests when the user selects the UltimateAI provider in Settings. `https://chat.ultimateai.org` may also be used if entered manually.
+- `https://openrouter.ai` — OpenRouter API requests when the user selects the OpenRouter provider in Settings.
+- `https://api.ultimateai.org` — Default UltimateAI API endpoint used when the user selects the UltimateAI provider in Settings.
+- `https://smart.ultimateai.org`, `https://chat.ultimateai.org` — Alternate UltimateAI endpoints that may be used if the user enters one of them manually.
 - `https://generativelanguage.googleapis.com` — Google Gemini API requests when the user selects the Gemini provider in Settings.
 - `https://api.anthropic.com` — Anthropic Claude API requests when the user selects the Claude provider in Settings.
 
@@ -56,11 +58,11 @@ The extension communicates only with the domains below, based on user configurat
 
 - **Storage**: saves settings, local drafts, and API keys locally in browser storage.
 - **Active tab + Scripting**: injects the content script after the user invokes the extension, to capture text selection and page context.
-- **Tabs**: reads the active tab's selection/context and opens extension surfaces when requested.
+- **Tabs**: reads the active tab's selection/context and opens extension surfaces when requested. It also detects navigations across tabs (URL changes) so stale per-tab source context is cleared when you move to a new page.
 - **Context menus**: adds "Create Anki card with Ghostwriter" to the right-click menu when text is selected.
 - **Side panel**: provides the card editor as a side panel alongside web pages.
 - **Notifications**: gentle nudges when saved highlights accumulate (at 5 and 10 items).
-- **Clipboard read** (optional): used only when the user enables clipboard-as-source mode. Requested at runtime, not on install.
+- **Clipboard read** (optional): used for Clipboard Source mode and Auto Source fallback when no page selection is available. Requested at runtime, not on install.
 - **AI API hosts** (optional): requested at runtime only when the user configures a specific AI provider in Settings.
 - **AnkiConnect hosts** (required): local-only access to send cards to the user's Anki installation.
 
@@ -68,4 +70,8 @@ The extension communicates only with the domains below, based on user configurat
 
 Settings are stored in browser storage and may sync if browser sync is enabled. API keys are stored in local extension storage and are not written to browser sync storage.
 
-Read the privacy policy: [PRIVACY_POLICY.md](PRIVACY_POLICY.md).
+Read the privacy policy: [PRIVACY_POLICY.md](https://github.com/djt97/ghostwriter-for-anki/blob/main/PRIVACY_POLICY.md).
+
+## Support
+
+For questions, bug reports, or feature requests, use the GitHub Issues page: https://github.com/djt97/ghostwriter-for-anki/issues

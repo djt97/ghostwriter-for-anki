@@ -973,6 +973,7 @@ if (window.__QUICKFLASH_INJECTED__) {
     }
 
     if (type === 'quickflash:closeOverlay') {
+      if (event.origin !== EXT_ORIGIN) return;
       try { closePopover(); } catch {}
     } else if (type === 'quickflash:panelReady') {
       if (event.origin !== EXT_ORIGIN) return;

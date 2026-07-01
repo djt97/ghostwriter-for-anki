@@ -1,6 +1,6 @@
 # Ghostwriter for Anki (Chrome/Edge, Manifest V3)
 
-**Current Version:** `0.3.3`
+**Current Version:** `0.4.0`
 
 Ghostwriter for Anki helps you turn web highlights into Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional AI suggestions, then send the card straight to Anki.
 
@@ -39,10 +39,10 @@ Release zips are published on the [Releases](https://github.com/djt97/ghostwrite
 
 ## Privacy and policy docs
 
-- [Privacy Policy](./PRIVACY_POLICY.md)
+- [Privacy Policy](https://github.com/djt97/ghostwriter-for-anki/blob/main/PRIVACY_POLICY.md)
 - [Privacy Notes](./privacy.md)
 - [Store Listing Draft](./LISTING.md)
 
 ## Third-party notices
 
-License texts for bundled dependencies are provided under [`licences/`](./licences).
+Release-facing notices for bundled dependencies are provided in [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).

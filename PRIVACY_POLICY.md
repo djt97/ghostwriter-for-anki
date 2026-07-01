@@ -18,7 +18,7 @@ Ghostwriter for Anki does **not** run background analytics or collect usage tele
 Depending on your configuration, the extension may send data to:
 
 - **Free-tier proxy**: For new users without an API key, a limited number of AI suggestions are routed through a hosted proxy (`ghostwriter-proxy.djthornton97.workers.dev`). The proxy receives the prompt text and a per-install UUID. No personal data beyond the prompt content is sent.
-- **AI provider APIs** (OpenAI, UltimateAI, Google Gemini, Anthropic Claude): When you request AI suggestions or auto-tag/context helpers, the extension sends the source text, prompts, and any relevant settings to the selected provider. This is required to produce AI output.
+- **AI provider APIs** (OpenAI, OpenRouter, UltimateAI, Google Gemini, Anthropic Claude): When you request AI suggestions or auto-tag/context helpers, the extension sends the source text, prompts, and any relevant settings to the selected provider. This is required to produce AI output.
 - **AnkiConnect (local)**: When you create cards in Anki, the extension sends the card fields and metadata to your local AnkiConnect endpoint (typically `http://127.0.0.1:*` or `http://localhost:*`) so they can be saved in your desktop Anki collection.
 
 ## Third-Party Endpoints
@@ -27,7 +27,9 @@ The extension may connect to the following endpoints, depending on user settings
 - `http://127.0.0.1:*`, `http://localhost:*` — Local AnkiConnect endpoint for creating flashcards in the user's desktop Anki instance.
 - `https://ghostwriter-proxy.djthornton97.workers.dev` — Free-tier suggestion proxy for first-time users (20 lifetime suggestions, capped at 10 per day, no API key required).
 - `https://api.openai.com` — OpenAI API requests when the user selects the OpenAI provider.
-- `https://smart.ultimateai.org` — UltimateAI OpenAI-compatible API requests when the user selects the UltimateAI provider. `https://chat.ultimateai.org` may also be used if the user enters that endpoint manually.
+- `https://openrouter.ai` — OpenRouter API requests when the user selects the OpenRouter provider.
+- `https://api.ultimateai.org` — Default UltimateAI OpenAI-compatible API endpoint used when the user selects the UltimateAI provider.
+- `https://smart.ultimateai.org`, `https://chat.ultimateai.org` — Alternate UltimateAI endpoints that may be used if the user enters one of them manually.
 - `https://generativelanguage.googleapis.com` — Google Gemini API requests when the user selects the Gemini provider.
 - `https://api.anthropic.com` — Anthropic Claude API requests when the user selects the Claude provider.
 
@@ -35,4 +37,4 @@ The extension may connect to the following endpoints, depending on user settings
 You choose which provider is used, whether AI suggestions and auto-helpers are enabled, and how your cards are managed. You can disable these features at any time in the options page.
 
 ## Contact
-For privacy questions or requests, please contact the maintainer via the support channel listed in the store listing.
+For privacy questions or requests, please open an issue on the GitHub Issues page: https://github.com/djt97/ghostwriter-for-anki/issues

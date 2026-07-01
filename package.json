@@ -1,15 +1,15 @@
 {
   "name": "ghostwriter",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "build:release": "node scripts/build-release.js",
     "test": "node --test tests/unit/*.test.js",
     "lint": "eslint .",
     "eval:copilot": "node scripts/run-copilot-eval.js",
-    "test:ui": "playwright test -c playwright.config.ts --grep @screenshots",
+    "test:ui": "playwright test -c playwright.config.ts --grep \"@screenshots|@release\"",
     "test:install": "playwright install --with-deps chromium",
-    "test:screenshots": "playwright test -c playwright.config.ts --grep @screenshots",
+    "test:screenshots": "playwright test -c playwright.config.ts --grep \"@screenshots|@release\"",
     "build:mathjax": "node ./node_modules/mathjax-full/components/bin/makeAll"
   },
   "devDependencies": {

@@ -50,6 +50,11 @@ test.describe('Ghostwriter for Anki UI', () => {
     return context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 10_000 });
   }
 
+  async function extensionUrl(pathname: string) {
+    const worker = await extensionWorker();
+    return worker.evaluate((path) => chrome.runtime.getURL(path), pathname);
+  }
+
   async function injectContentScriptIntoFixtureTab() {
     const worker = await extensionWorker();
     const result = await worker.evaluate(async () => {
@@ -85,6 +90,27 @@ test.describe('Ghostwriter for Anki UI', () => {
       }
     });
     if (!result?.ok) throw new Error(`Failed to open overlay: ${result?.error || 'unknown error'}`);
+  }
+
+  async function resetPageSourceState() {
+    const worker = await extensionWorker();
+    await worker.evaluate(async () => {
+      await chrome.storage.sync.set({ quickflash_source_mode_v1: 'auto' });
+      await chrome.storage.local.remove('quickflash_lastDraft');
+    });
+  }
+
+  async function selectFixtureText(selector: string) {
+    await page.bringToFront();
+    await page.evaluate((targetSelector) => {
+      const target = document.querySelector(targetSelector);
+      if (!target) throw new Error(`Missing fixture element: ${targetSelector}`);
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }, selector);
   }
 
   test.beforeAll(async () => {
@@ -142,7 +168,7 @@ test.describe('Ghostwriter for Anki UI', () => {
       await route.fulfill({
         status: 200,
         contentType: 'text/html',
-        body: '<!doctype html><html><head><title>Ghostwriter fixture</title></head><body><main><h1>Ghostwriter fixture</h1><p id="fixture-text">Highlights become focused Anki cards.</p><figure><img id="fixture-image" src="/diagram.png" alt="Layered neural network diagram"><figcaption>Layered network diagram</figcaption></figure></main></body></html>',
+        body: '<!doctype html><html><head><title>Ghostwriter fixture</title></head><body><main><h1>Ghostwriter fixture</h1><p id="fixture-text">Highlights become focused Anki cards.</p><p id="fixture-text-2">Fresh selections should replace stale overlay sources.</p><figure><img id="fixture-image" src="/diagram.png" alt="Layered neural network diagram"><figcaption>Layered network diagram</figcaption></figure></main></body></html>',
       });
     });
 
@@ -155,6 +181,54 @@ test.describe('Ghostwriter for Anki UI', () => {
     if (userDataDir) {
       await fs.promises.rm(userDataDir, { recursive: true, force: true });
     }
+  });
+
+  test('@release permissions keep clipboard optional before use', async () => {
+    const worker = await extensionWorker();
+    const permissionState = await worker.evaluate(async () => {
+      const manifest = chrome.runtime.getManifest();
+      const clipboardRead = await chrome.permissions.contains({ permissions: ['clipboardRead'] });
+      const ankiConnectHost = await chrome.permissions.contains({ origins: ['http://127.0.0.1/*'] });
+      return {
+        permissions: manifest.permissions || [],
+        optionalPermissions: manifest.optional_permissions || [],
+        sandboxPages: manifest.sandbox?.pages || [],
+        clipboardRead,
+        ankiConnectHost,
+      };
+    });
+
+    expect(permissionState.permissions).not.toContain('clipboardRead');
+    expect(permissionState.optionalPermissions).toContain('clipboardRead');
+    expect(permissionState.sandboxPages).toContain('mathjax-sandbox.html');
+    expect(permissionState.clipboardRead).toBe(false);
+    expect(permissionState.ankiConnectHost).toBe(true);
+  });
+
+  test('@release MathJax sandbox renders preview without console errors', async () => {
+    const panelUrl = await extensionUrl('panel.html?__qf_ci=1');
+    const panelPage = await context.newPage();
+    const errors: string[] = [];
+    panelPage.on('console', (msg) => {
+      if (msg.type() === 'error') errors.push(msg.text());
+    });
+    panelPage.on('pageerror', (err) => errors.push(err.message));
+
+    await panelPage.goto(panelUrl, { waitUntil: 'load' });
+    await expect(panelPage.locator('html')).toHaveAttribute('data-qf-panel', 'ready', { timeout: 30_000 });
+    await panelPage.locator('#mathjaxPreview').setChecked(true, { force: true });
+    await panelPage.locator('#front').fill('Energy $E=mc^2$');
+
+    const frontPreviewFrame = panelPage.locator('#previewFront');
+    await expect(frontPreviewFrame).toHaveAttribute('src', /mathjax-sandbox\.html/);
+    await expect(frontPreviewFrame).toHaveAttribute('src', /parentOrigin=/);
+    await expect(frontPreviewFrame).toHaveAttribute('src', /channel=/);
+    const preview = panelPage.frameLocator('#previewFront');
+    await expect(preview.locator('#root')).toContainText('Energy', { timeout: 30_000 });
+    await expect(preview.locator('mjx-container')).toHaveCount(1, { timeout: 30_000 });
+    expect(errors).toEqual([]);
+
+    await panelPage.close();
   });
 
   test('@screenshots overlay + tab screenshots (light & dark)', async () => {
@@ -224,20 +298,15 @@ test.describe('Ghostwriter for Anki UI', () => {
 
     await panelPage.emulateMedia({ colorScheme: 'dark' });
     await panelPage.screenshot({ path: path.join(OUT_DIR, 'panel-tab-dark.png'), fullPage: true });
+    await panelPage.close();
+    await page.bringToFront();
   });
 
   test('@online-smoke text selection sends directly to Anki', async () => {
     ankiActions = [];
     await page.goto('http://localhost:31337/', { waitUntil: 'domcontentloaded' });
     await injectContentScriptIntoFixtureTab();
-    await page.evaluate(() => {
-      const target = document.querySelector('#fixture-text');
-      const range = document.createRange();
-      range.selectNodeContents(target!);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    });
+    await selectFixtureText('#fixture-text');
     await openOverlayInFixtureTab();
 
     const iframe = page.locator('#quickflash-panel-iframe');
@@ -254,5 +323,28 @@ test.describe('Ghostwriter for Anki UI', () => {
 
     await expect.poll(() => ankiActions.filter((action) => action === 'addNote' || action === 'addNotes').length).toBeGreaterThan(0);
     await expect(panel.locator('#status')).toContainText(/Added note|Added .* note/, { timeout: 30_000 });
+  });
+
+  test('@release overlay refreshes Source after selecting new text without adding the previous draft', async () => {
+    await page.goto('http://localhost:31337/?__qf_ci=1', { waitUntil: 'domcontentloaded' });
+    await injectContentScriptIntoFixtureTab();
+    await resetPageSourceState();
+
+    await selectFixtureText('#fixture-text');
+    await openOverlayInFixtureTab();
+
+    const panel = page.frameLocator('#quickflash-panel-iframe');
+    await expect(panel.locator('html')).toHaveAttribute('data-qf-panel', 'ready', { timeout: 30_000 });
+    await expect(panel.locator('#source')).toHaveValue('Highlights become focused Anki cards.');
+    await panel.locator('#front').fill('What do highlights become?');
+
+    await page.evaluate(() => window.postMessage({ type: 'quickflash:closeOverlay' }, '*'));
+    await expect(page.locator('html')).not.toHaveAttribute('data-qf-overlay', 'open', { timeout: 15_000 });
+
+    await selectFixtureText('#fixture-text-2');
+    await openOverlayInFixtureTab();
+
+    await expect(panel.locator('#source')).toHaveValue('Fresh selections should replace stale overlay sources.');
+    await expect(panel.locator('#front')).toHaveValue('What do highlights become?');
   });
 });

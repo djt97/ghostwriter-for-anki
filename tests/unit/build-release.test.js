@@ -28,6 +28,12 @@ const isExcluded = new Function(`
   return isExcluded;
 `)();
 
+function extractConstArray(name) {
+  const match = buildScriptSource.match(new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`));
+  assert.ok(match, `Could not find ${name}`);
+  return match[1].match(/'[^']+'/g).map(s => s.slice(1, -1));
+}
+
 describe('build-release.js pure functions', () => {
   describe('normalizePath', () => {
     it('returns path unchanged on posix', () => {
@@ -115,9 +121,54 @@ describe('build-release.js pure functions', () => {
       assert.ok(EXCLUDES.includes('licences'));
     });
   });
+
+  describe('release contents contract', () => {
+    const required = extractConstArray('REQUIRED_RELEASE_FILES');
+    const forbidden = extractConstArray('FORBIDDEN_RELEASE_PATHS');
+
+    it('requires release-facing privacy and notice files', () => {
+      for (const relPath of [
+        'privacy.md',
+        'PRIVACY_POLICY.md',
+        'THIRD_PARTY_NOTICES.md',
+        'APACHE-2.0.txt',
+        'libs/markdown-it.min.js',
+        'libs/mathjax/mathjax-bundle.js.LICENSE.txt',
+      ]) {
+        assert.ok(required.includes(relPath), `missing required release file: ${relPath}`);
+        assert.ok(fs.existsSync(path.resolve(__dirname, '../..', relPath)), `source missing: ${relPath}`);
+      }
+    });
+
+    it('keeps development-only and stale license paths out of the release', () => {
+      for (const relPath of [
+        'node_modules',
+        'tests',
+        'docs',
+        'scripts',
+        'package.json',
+        'package-lock.json',
+        'licences',
+      ]) {
+        assert.ok(forbidden.includes(relPath), `missing forbidden release path: ${relPath}`);
+        assert.ok(isExcluded(relPath, forbidden));
+      }
+    });
+
+    it('does not exclude files required by the release contents check', () => {
+      for (const relPath of required) {
+        assert.equal(isExcluded(relPath, forbidden), false, `required file is forbidden: ${relPath}`);
+      }
+    });
+  });
 });
 
 describe('manifest shortcuts', () => {
+  it('declares the MathJax preview page as a Chrome sandboxed page', () => {
+    assert.ok(manifest.sandbox?.pages?.includes('mathjax-sandbox.html'));
+    assert.ok(manifest.content_security_policy?.sandbox?.includes('sandbox allow-scripts'));
+  });
+
   it('defaults the explicit overlay command to the overlay-first shortcut', () => {
     const overlayCommand = manifest.commands?.['open-ghostwriter-overlay'];
     assert.equal(overlayCommand?.description, 'Open Ghostwriter for Anki Overlay');

@@ -45,6 +45,9 @@ const sourceFns = new Function(`
   ${extractFunction(panelSource, 'getContextSourceText')}
   ${extractFunction(panelSource, 'normalizePageContext')}
   ${extractFunction(panelSource, 'normalizeContextPageUrl')}
+  ${extractFunction(panelSource, 'extractLocalFileUrl')}
+  ${extractFunction(panelSource, 'emptyPageContextFromTab')}
+  ${extractFunction(panelSource, 'canRequestTabPageContext')}
   ${extractFunction(panelSource, 'getContextPageUrl')}
   ${extractFunction(panelSource, 'sameContextPage')}
   ${extractFunction(panelSource, 'chooseSeedPageContext')}
@@ -55,6 +58,8 @@ const sourceFns = new Function(`
     getContextSourceText,
     normalizePageContext,
     normalizeContextPageUrl,
+    emptyPageContextFromTab,
+    canRequestTabPageContext,
     getContextPageUrl,
     sameContextPage,
     chooseSeedPageContext,
@@ -172,6 +177,37 @@ describe('panel.js page source context', () => {
     assert.equal(sourceFns.getContextSourceText(chosen), 'Source captured before opening the panel tab.');
   });
 
+  it('does not request content-script context from extension or browser pages', () => {
+    assert.equal(
+      sourceFns.canRequestTabPageContext({ id: 12, url: 'chrome-extension://abc/panel.html' }),
+      false
+    );
+    assert.equal(
+      sourceFns.canRequestTabPageContext({ id: 13, url: 'chrome://extensions/' }),
+      false
+    );
+    assert.equal(
+      sourceFns.canRequestTabPageContext({ id: 14, url: 'https://example.test/article' }),
+      true
+    );
+
+    assert.deepEqual(
+      sourceFns.emptyPageContextFromTab({
+        id: 12,
+        url: 'chrome-extension://abc/panel.html',
+        title: 'Ghostwriter for Anki',
+      }),
+      {
+        selection: '',
+        url: 'chrome-extension://abc/panel.html',
+        title: 'Ghostwriter for Anki',
+        meta: {},
+        sourceUrl: 'chrome-extension://abc/panel.html',
+        sourceLabel: 'Ghostwriter for Anki',
+      }
+    );
+  });
+
   it('does not persist or restore the hidden Source field from manual drafts', () => {
     const manualDraftPayload = panelSource.match(/function getManualDraftPayload\(\)[\s\S]*?function hasManualDraftContent/);
     assert.ok(manualDraftPayload, 'Could not find manual draft payload helper');
@@ -189,11 +225,30 @@ describe('panel.js page source context', () => {
 
     assert.match(
       ensureSourceFromMode[0],
-      /normalized === 'clipboard'[\s\S]*applyClipboardFallback\(\{ wantPaste, allowEmpty: true, force: true \}\)/
+      /normalized === 'clipboard'[\s\S]*applyClipboardFallback\(\{ wantPaste, allowEmpty: true, force: true, requestPermission \}\)/
     );
     assert.match(
       ensureSourceFromMode[0],
       /normalized === 'auto'[\s\S]*refreshPageSelectionFromTab\(\{ applyToEditor: true, clearStale: true \}\)[\s\S]*applyClipboardFallback\(\{ wantPaste, allowEmpty: true \}\)/
+    );
+    assert.doesNotMatch(
+      ensureSourceFromMode[0],
+      /normalized === 'auto'[\s\S]*requestPermission:\s*true/
+    );
+  });
+
+  it('requests clipboard permission only from explicit clipboard controls', () => {
+    assert.match(
+      panelSource,
+      /useClipboardBtn[\s\S]*applyClipboardFallback\(\{ wantPaste: true, force: true, requestPermission: true \}\)/
+    );
+    assert.match(
+      panelSource,
+      /sourceModeBtn[\s\S]*toggleSourceMode\(\{ wantPaste: true, requestPermission: true \}\)/
+    );
+    assert.match(
+      panelSource,
+      /async function applyClipboardFallback\(\{ wantPaste = false, allowEmpty = false, force = false, requestPermission = false \}/
     );
   });
 
@@ -224,5 +279,23 @@ describe('panel.js page source context', () => {
       /normalized === 'page'[\s\S]*isClipboardFallbackEnabled\(opts\)[\s\S]*!hasVisibleSourceModeControl\(\)[\s\S]*applyClipboardFallback\(\{ wantPaste, allowEmpty: true \}\)/
     );
     assert.match(ensureSourceFromMode[0], /setSourceMode\("auto"\)/);
+  });
+
+  it('refreshes overlay source from extension storage while keeping queueing same-origin only', () => {
+    const messageListener = panelSource.match(/window\.addEventListener\("message"[\s\S]*?chrome\.runtime\.onMessage/);
+    assert.ok(messageListener, 'Could not find panel message listener');
+
+    assert.match(
+      messageListener[0],
+      /overlayParentMessage[\s\S]*getEditorSurface\(\) === "overlay"[\s\S]*event\.source === window\.parent/
+    );
+    assert.match(
+      messageListener[0],
+      /const rawContext = sameOriginMessage \? \(event\.data\.payload \|\| \{\}\) : await takeStoredOverlayContextDraft\(\)/
+    );
+    assert.match(
+      messageListener[0],
+      /if \(type === "quickflash:queueCurrentCard"\)[\s\S]*if \(!sameOriginMessage\) return;[\s\S]*await addToAnki\(\)/
+    );
   });
 });

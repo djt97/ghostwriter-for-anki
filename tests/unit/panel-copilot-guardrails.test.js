@@ -54,7 +54,19 @@ function extractStringConst(source, name) {
 }
 
 const copilotFns = new Function(`
-  const copilot = { frontWordCap: 20, backWordCap: 16 };
+  const copilot = {
+    frontWordCap: 20,
+    backWordCap: 16,
+    fields: new Map(),
+    locks: { frontAccepted: false, backAccepted: false, allSuspended: false },
+    autoFillBack: false,
+    _suspendCrossClear: false,
+  };
+  function abortCopilotController() {}
+  function recordShortcutCoachEvent() { return { catch() {} }; }
+  function updateLocalMetrics(fn) { if (typeof fn === 'function') fn({}); }
+  function bumpMetric() {}
+  function updateShortcutCoach() {}
   ${extractDeclaration(panelSource, 'FRONT_ANSWER_CUE_TERMS')}
   ${extractDeclaration(panelSource, 'FRONT_ANSWER_CONTEXT_TERMS')}
   ${extractDeclaration(panelSource, 'FRONT_ANSWER_GENERIC_TERMS')}
@@ -66,6 +78,9 @@ const copilotFns = new Function(`
   ${extractFunction(panelSource, 'isStateCommandPrefix')}
   ${extractFunction(panelSource, 'isDistinctiveSingleSourceStemPrefix')}
   ${extractFunction(panelSource, 'getSourceStemMatch')}
+  ${extractFunction(panelSource, 'getProviderDisplayName')}
+  ${extractFunction(panelSource, 'cleanProviderErrorMessage')}
+  ${extractFunction(panelSource, 'makeOpenAICompatibleHttpError')}
   ${extractFunction(panelSource, 'normalizeStatementSourceText')}
   ${extractFunction(panelSource, 'cleanStatementSubject')}
   ${extractFunction(panelSource, 'cleanStatementAlias')}
@@ -87,16 +102,51 @@ const copilotFns = new Function(`
   ${extractFunction(panelSource, 'isExactComplementSourceStemPrefix')}
   ${extractFunction(panelSource, 'buildExactComplementSourceStemCompletion')}
   ${extractFunction(panelSource, 'buildStatementSourceStemCompletion')}
+  ${extractFunction(panelSource, 'cleanSourcePatternQuestionPhrase')}
+  ${extractFunction(panelSource, 'shortenPeriodBoundaryPhrase')}
+  ${extractFunction(panelSource, 'buildPatternSourceCompletion')}
+  ${extractFunction(panelSource, 'inferApproachSourceCompletion')}
+  ${extractFunction(panelSource, 'inferPeriodSourceCompletion')}
+  ${extractFunction(panelSource, 'inferContextSourceCompletion')}
+  ${extractFunction(panelSource, 'inferAliasSourceCompletion')}
+  ${extractFunction(panelSource, 'inferAbbreviationSourceCompletion')}
+  ${extractFunction(panelSource, 'inferCoreProblemSourceCompletion')}
+  ${extractFunction(panelSource, 'inferCorpusContentsSourceCompletion')}
+  ${extractFunction(panelSource, 'inferNamedSetSourceCompletion')}
+  ${extractFunction(panelSource, 'inferMeaningSourceCompletion')}
+  ${extractFunction(panelSource, 'inferGovernmentRepealSourceCompletion')}
+  ${extractFunction(panelSource, 'inferTreeStructureSourceCompletion')}
+  ${extractFunction(panelSource, 'inferWordFunctionSourceCompletion')}
+  ${extractFunction(panelSource, 'inferDirectDefinitionSourceCompletion')}
+  ${extractFunction(panelSource, 'inferOriginSourceCompletion')}
+  ${extractFunction(panelSource, 'inferContrastTypesSourceCompletion')}
+  ${extractFunction(panelSource, 'inferPipelineSourceCompletion')}
+  ${extractFunction(panelSource, 'inferLabelCaptureSourceCompletion')}
+  ${extractFunction(panelSource, 'inferYearEventSourceCompletion')}
+  ${extractFunction(panelSource, 'inferKindOfInverseSourceCompletion')}
+  ${extractFunction(panelSource, 'inferReceiveLabelsSourceCompletion')}
+  ${extractFunction(panelSource, 'inferConditionsSourceCompletion')}
+  ${extractFunction(panelSource, 'inferColonExplanationSourceCompletion')}
+  ${extractFunction(panelSource, 'inferContrastDifferenceSourceCompletion')}
+  ${extractFunction(panelSource, 'inferAnalogySolutionSourceCompletion')}
+  ${extractFunction(panelSource, 'inferPrecedesSourceCompletion')}
+  ${extractFunction(panelSource, 'inferReverseDefinitionSourceCompletion')}
+  ${extractFunction(panelSource, 'inferTeachesPurposeSourceCompletion')}
+  ${extractFunction(panelSource, 'inferSourcePatternCompletion')}
   ${extractFunction(panelSource, 'inferSourceStemCompletion')}
   ${extractFunction(panelSource, 'stripExistingPrefixFromCompletion')}
   ${extractFunction(panelSource, 'stripCopilotMetaOutput')}
   ${extractFunction(panelSource, 'isDanglingCompletionWord')}
   ${extractFunction(panelSource, 'truncateCopilotSuggestionWords')}
   ${extractFunction(panelSource, 'normalizeCopilotSuggestion')}
+  ${extractFunction(panelSource, 'finalizeFrontQuestion')}
+  ${extractFunction(panelSource, 'normalizeFrontSuggestionForPrefix')}
   ${extractFunction(panelSource, 'normalizeFrontLeakText')}
   ${extractFunction(panelSource, 'normalizeAnswerTerm')}
   ${extractFunction(panelSource, 'singularizeAnswerTerm')}
   ${extractFunction(panelSource, 'getAnswerTerms')}
+  ${extractFunction(panelSource, 'getSourceGroundingTerms')}
+  ${extractFunction(panelSource, 'getFrontSourceGroundingIssue')}
   ${extractFunction(panelSource, 'isAdvantageFront')}
   ${extractFunction(panelSource, 'inferAnswerRoleFromFront')}
   ${extractFunction(panelSource, 'stripAdvantageComparisonTail')}
@@ -116,6 +166,32 @@ const copilotFns = new Function(`
   ${extractFunction(panelSource, 'normalizeBackSuggestionForFront')}
   ${extractFunction(panelSource, 'stripAnswerCueLead')}
   ${extractFunction(panelSource, 'inferProtectedAnswerFromAdvantageSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromApproachSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromContextSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromAliasSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromAbbreviationSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromCoreProblemSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromCorpusContentsSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromNamedSetSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromMeaningSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromGovernmentRepealSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromTreeStructureSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromWordFunctionSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromDirectDefinitionSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromOriginSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromContrastTypesSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromPipelineSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromLabelCaptureSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromYearEventSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromKindOfInverseSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromReceiveLabelsSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromConditionsSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromColonExplanationSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromContrastDifferenceSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromAnalogySolutionSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromPrecedesSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromReverseDefinitionSource')}
+  ${extractFunction(panelSource, 'inferProtectedAnswerFromTeachesPurposeSource')}
   ${extractFunction(panelSource, 'inferProtectedAnswerFromSimpleFactSource')}
   ${extractFunction(panelSource, 'inferProtectedAnswerFromSource')}
   ${extractFunction(panelSource, 'getAnswerTermLeakReason')}
@@ -126,20 +202,64 @@ const copilotFns = new Function(`
   function getContextSourceText(page) { return String(page?.sourceText || page?.selection || '').trim(); }
   ${extractFunction(panelSource, 'getFrontSuggestionBlockReason')}
   ${extractFunction(panelSource, 'getDisplayableFrontSuggestion')}
+  const COPILOT_ABORT_TIMEOUT = "ghostwriter-copilot-timeout";
+  ${extractFunction(panelSource, 'isCurrentCopilotRequest')}
+  ${extractFunction(panelSource, 'isCopilotTimeoutAbort')}
+  ${extractFunction(panelSource, 'shouldFinalizeOpenAIStreamChoice')}
+  ${extractFunction(panelSource, 'resetRejectedCopilotDraft')}
+  ${extractFunction(panelSource, 'applyCopilotSuggestion')}
   return {
     stripExistingPrefixFromCompletion,
     getSourceStemMatch,
     getSourceStatementSplit,
+    inferApproachSourceCompletion,
+    inferPeriodSourceCompletion,
+    inferContextSourceCompletion,
+    inferAliasSourceCompletion,
+    inferAbbreviationSourceCompletion,
+    inferCoreProblemSourceCompletion,
+    inferCorpusContentsSourceCompletion,
+    inferNamedSetSourceCompletion,
+    inferMeaningSourceCompletion,
+    inferGovernmentRepealSourceCompletion,
+    inferTreeStructureSourceCompletion,
+    inferWordFunctionSourceCompletion,
+    inferDirectDefinitionSourceCompletion,
+    inferOriginSourceCompletion,
+    inferContrastTypesSourceCompletion,
+    inferPipelineSourceCompletion,
+    inferLabelCaptureSourceCompletion,
+    inferYearEventSourceCompletion,
+    inferKindOfInverseSourceCompletion,
+    inferReceiveLabelsSourceCompletion,
+    inferConditionsSourceCompletion,
+    inferColonExplanationSourceCompletion,
+    inferContrastDifferenceSourceCompletion,
+    inferAnalogySolutionSourceCompletion,
+    inferPrecedesSourceCompletion,
+    inferReverseDefinitionSourceCompletion,
+    inferTeachesPurposeSourceCompletion,
+    inferSourcePatternCompletion,
     inferSourceStemCompletion,
     normalizeCopilotSuggestion,
+    normalizeFrontSuggestionForPrefix,
+    inferProtectedAnswerFromApproachSource,
+    inferProtectedAnswerFromTeachesPurposeSource,
     inferProtectedAnswerFromSimpleFactSource,
     inferProtectedAnswerFromSource,
     getFrontAnswerLeakReason,
     getFrontCompletionFitIssue,
+    getFrontSourceGroundingIssue,
     getFrontRelationshipDriftIssue,
     getFrontDefinitionDriftIssue,
     getFrontSuggestionBlockReason,
     getDisplayableFrontSuggestion,
+    isCurrentCopilotRequest,
+    isCopilotTimeoutAbort,
+    shouldFinalizeOpenAIStreamChoice,
+    cleanProviderErrorMessage,
+    makeOpenAICompatibleHttpError,
+    applyCopilotSuggestion,
     inferAnswerRoleFromFront,
     normalizeBackSuggestionForFront,
     preserveSourceLatexForBackSuggestion,
@@ -155,6 +275,133 @@ describe('panel.js Copilot guardrails', () => {
     assert.match(panelSource, /state\.fieldId === "front"\s*\?\s*await callFrontLLMWithLocalGuard/);
     assert.ok(panelSource.includes('Copilot rewriting cue'));
     assert.ok(panelSource.includes('Suppressed Front suggestion after rewrite'));
+  });
+
+  it('finalizes OpenAI-compatible streams when a finish reason arrives', () => {
+    assert.equal(
+      copilotFns.shouldFinalizeOpenAIStreamChoice({ finish_reason: 'stop' }),
+      true
+    );
+    assert.equal(
+      copilotFns.shouldFinalizeOpenAIStreamChoice({ finish_reason: 'length' }),
+      true
+    );
+    assert.equal(
+      copilotFns.shouldFinalizeOpenAIStreamChoice({ delta: { content: 'partial' } }),
+      false
+    );
+    assert.ok(panelSource.includes('if (shouldFinalizeOpenAIStreamChoice(choice))'));
+  });
+
+  it('does not accept visible provider error text as a Copilot suggestion', () => {
+    const state = {
+      suggestion: '',
+      textEl: { textContent: 'UltimateAI error 500: upstream failure' },
+      suggestionEl: { classList: { contains: (name) => name === 'error' } },
+      textarea: { value: '', selectionStart: 0, selectionEnd: 0 },
+    };
+
+    assert.equal(copilotFns.applyCopilotSuggestion(state), false);
+    const applySource = extractFunction(panelSource, 'applyCopilotSuggestion');
+    assert.doesNotMatch(applySource, /textEl\?\.textContent/);
+    assert.ok(applySource.includes('classList?.contains?.("error")'));
+  });
+
+  it('requires explicit opt-in before inserting a rejected Copilot draft', () => {
+    let dispatched = false;
+    const state = {
+      suggestion: '',
+      rejectedSuggestion: 'definition of a simple function in measure theory?',
+      rejectedPreview: 'What is the standard definition of a simple function in measure theory?',
+      rejectedReason: 'Front adds concepts not present in the Source',
+      acceptBtn: { textContent: 'Use anyway', title: 'Insert this rejected AI draft anyway' },
+      suggestionEl: {
+        hidden: false,
+        classList: {
+          contains: (name) => name === 'error',
+          remove() {},
+        },
+      },
+      textarea: {
+        value: 'What is the standard ',
+        selectionStart: 'What is the standard '.length,
+        selectionEnd: 'What is the standard '.length,
+        dispatchEvent() { dispatched = true; },
+      },
+    };
+
+    assert.equal(copilotFns.applyCopilotSuggestion(state), false);
+    assert.equal(state.textarea.value, 'What is the standard ');
+
+    assert.equal(copilotFns.applyCopilotSuggestion(state, { allowRejected: true }), true);
+    assert.equal(
+      state.textarea.value,
+      'What is the standard definition of a simple function in measure theory?'
+    );
+    assert.equal(dispatched, true);
+    assert.equal(state.rejectedSuggestion, '');
+  });
+
+  it('finalizes Front punctuation after joining the typed prefix and suggestion', () => {
+    assert.equal(
+      copilotFns.normalizeFrontSuggestionForPrefix(
+        'What kind of ',
+        'verbs express the start of a state or process'
+      ),
+      'verbs express the start of a state or process?'
+    );
+
+    let dispatched = false;
+    const state = {
+      fieldId: 'front',
+      suggestion: 'verbs express the start of a state or process',
+      suggestionEl: { classList: { contains: () => false, remove() {} }, hidden: false },
+      textarea: {
+        value: 'What kind of ',
+        selectionStart: 'What kind of '.length,
+        selectionEnd: 'What kind of '.length,
+        dispatchEvent() { dispatched = true; },
+      },
+    };
+
+    assert.equal(copilotFns.applyCopilotSuggestion(state), true);
+    assert.equal(
+      state.textarea.value,
+      'What kind of verbs express the start of a state or process?'
+    );
+    assert.equal(dispatched, true);
+  });
+
+  it('collapses HTML provider failures before showing them in Copilot UI', () => {
+    const html = '<!DOCTYPE html><html><head><title>ultimateai.org | 502: Bad gateway</title></head><body>bad</body></html>';
+    assert.equal(
+      copilotFns.cleanProviderErrorMessage(html),
+      'Upstream provider returned a 502 Bad Gateway HTML error page.'
+    );
+    const err = copilotFns.makeOpenAICompatibleHttpError('ultimate', 500, html, {});
+    assert.match(err.message, /UltimateAI error 500: Upstream provider returned a 502 Bad Gateway/);
+    assert.doesNotMatch(err.message, /<!DOCTYPE|<html/i);
+  });
+
+  it('distinguishes real Copilot timeouts from stale request cancellation', () => {
+    const currentController = { signal: { aborted: false, reason: '' } };
+    const staleController = { signal: { aborted: true, reason: 'ghostwriter-copilot-cancelled' } };
+    assert.equal(
+      copilotFns.isCurrentCopilotRequest({ controller: currentController }, currentController),
+      true
+    );
+    assert.equal(
+      copilotFns.isCurrentCopilotRequest({ controller: currentController }, staleController),
+      false
+    );
+    assert.equal(
+      copilotFns.isCopilotTimeoutAbort({ signal: { aborted: true, reason: 'ghostwriter-copilot-timeout' } }),
+      true
+    );
+    assert.equal(
+      copilotFns.isCopilotTimeoutAbort(staleController),
+      false
+    );
   });
 
   it('guards obvious answer-bearing Front phrases', () => {
@@ -184,6 +431,18 @@ describe('panel.js Copilot guardrails', () => {
     assert.equal(
       copilotFns.getFrontCompletionFitIssue('Deep learning what does it enable?'),
       'Front grafts a question fragment onto a declarative cue'
+    );
+    assert.equal(
+      copilotFns.getFrontCompletionFitIssue('In words, what does NP-hard mean in computational complexity?'),
+      ''
+    );
+    assert.equal(
+      copilotFns.getFrontCompletionFitIssue('What did Gillard negotiate the tax down to?'),
+      ''
+    );
+    assert.equal(
+      copilotFns.getFrontCompletionFitIssue('What does RSPT stand for?'),
+      ''
     );
     assert.equal(
       copilotFns.getFrontCompletionFitIssue('What advantage do DNNs have; they model complex data with fewer units'),
@@ -257,6 +516,473 @@ describe('panel.js Copilot guardrails', () => {
         }
       ),
       ''
+    );
+  });
+
+  it('guards Front completions that drift into outside-source concepts', () => {
+    const source = 'One approach to constructing the Lebesgue integral is to make use of so-called simple functions:';
+    assert.deepEqual(
+      copilotFns.inferSourcePatternCompletion(source, 'What is the standard '),
+      {
+        kind: 'source-pattern',
+        split: 'approach',
+        frontSuffix: 'approach to constructing the Lebesgue integral?',
+        back: 'using simple functions',
+      }
+    );
+    assert.deepEqual(
+      copilotFns.inferSourceStemCompletion(source, 'What is the standard '),
+      {
+        kind: 'source-pattern',
+        split: 'approach',
+        frontSuffix: 'approach to constructing the Lebesgue integral?',
+        back: 'using simple functions',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromApproachSource(source, 'What is the standard '),
+      'using simple functions'
+    );
+    assert.equal(
+      copilotFns.getFrontSuggestionBlockReason(
+        'definition of a simple function in measure theory?',
+        'What is the standard ',
+        { page: { selection: source } }
+      ),
+      'Front adds concepts not present in the Source'
+    );
+    assert.equal(
+      copilotFns.getFrontSuggestionBlockReason(
+        'approach to constructing the Lebesgue integral?',
+        'What is the standard ',
+        { page: { selection: source } }
+      ),
+      ''
+    );
+  });
+
+  it('does not treat shared technical context words as answer leakage', () => {
+    assert.equal(
+      copilotFns.getFrontAnswerLeakReason(
+        'How does the straight-through estimator bypass gradient issues in vector quantization?',
+        {
+          existingText: 'How does ',
+          backText: 'copying the gradient at the codebook vector directly to the encoder output',
+        }
+      ),
+      ''
+    );
+    assert.equal(
+      copilotFns.getFrontAnswerLeakReason(
+        'How does the straight-through estimator bypass gradient issues by copying to the encoder output?',
+        {
+          existingText: 'How does ',
+          backText: 'copying the gradient at the codebook vector directly to the encoder output',
+        }
+      ),
+      'front includes distinctive Back answer terms'
+    );
+  });
+
+  it('infers source-grounded protected answers from appositive period facts', () => {
+    const source = 'Prehistory, sometimes referred to as pre-literary history,[1] is the period of human history between the first known use of stone tools by hominins c. 3.3 million years ago and the beginning of recorded history with the invention of writing systems.';
+    assert.deepEqual(
+      copilotFns.inferPeriodSourceCompletion(source, 'Which period '),
+      {
+        kind: 'source-pattern',
+        split: 'period',
+        frontSuffix: 'of human history runs from the first known stone tools to recorded history?',
+        back: 'Prehistory',
+      }
+    );
+    assert.deepEqual(
+      copilotFns.inferSourceStemCompletion(source, 'Which period '),
+      {
+        kind: 'source-pattern',
+        split: 'period',
+        frontSuffix: 'of human history runs from the first known stone tools to recorded history?',
+        back: 'Prehistory',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(source, 'Which period '),
+      'Prehistory'
+    );
+    assert.equal(
+      copilotFns.getFrontSuggestionBlockReason(
+        'of human history runs between the first known stone tools and recorded history?',
+        'Which period ',
+        {
+          protectedAnswer: 'Prehistory',
+          page: { selection: source },
+        }
+      ),
+      ''
+    );
+  });
+
+  it('infers source-pattern completions for usage context and aliases', () => {
+    const cruft = 'Cruft is a slang term used primarily in computing and technology to describe unnecessary, redundant, or poorly written code.';
+    assert.deepEqual(
+      copilotFns.inferContextSourceCompletion(cruft, 'In what '),
+      {
+        kind: 'source-pattern',
+        split: 'usage-context',
+        frontSuffix: 'context is the term "Cruft" primarily used?',
+        back: 'in computing and technology',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(cruft, 'In what '),
+      'in computing and technology'
+    );
+
+    const alias = 'Incidentally, sigma is sometimes called the logistic function, and this new class of neurons called logistic neurons.';
+    assert.deepEqual(
+      copilotFns.inferAliasSourceCompletion(alias, 'What is '),
+      {
+        kind: 'source-pattern',
+        split: 'alias',
+        frontSuffix: 'sigma sometimes called?',
+        back: 'the logistic function',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(alias, 'What is '),
+      'the logistic function'
+    );
+  });
+
+  it('infers source-pattern completions for abbreviation expansions', () => {
+    const rsp = 'In 2010, the Rudd government proposed the Resource Super Profits Tax, RSPT.';
+    assert.deepEqual(
+      copilotFns.inferAbbreviationSourceCompletion(rsp, 'What does '),
+      {
+        kind: 'source-pattern',
+        split: 'abbreviation',
+        frontSuffix: 'RSPT stand for?',
+        back: 'Resource Super Profits Tax',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(rsp, 'What does '),
+      'Resource Super Profits Tax'
+    );
+
+    const ood = 'In machine learning, OOD stands for Out-Of-Distribution.';
+    assert.deepEqual(
+      copilotFns.inferAbbreviationSourceCompletion(ood, 'What does '),
+      {
+        kind: 'source-pattern',
+        split: 'abbreviation',
+        frontSuffix: 'OOD stand for in machine learning?',
+        back: 'Out-Of-Distribution',
+      }
+    );
+
+    const cls = 'BERT always prepends a special CLS token, which stands for classification.';
+    assert.deepEqual(
+      copilotFns.inferAbbreviationSourceCompletion(cls, 'What does '),
+      {
+        kind: 'source-pattern',
+        split: 'abbreviation',
+        frontSuffix: 'CLS stand for?',
+        back: 'classification',
+      }
+    );
+  });
+
+  it('infers source-pattern completions for named core problems', () => {
+    const source = 'The core problem in joint-embedding architectures is representation collapse: the model could learn to map everything to the same constant embedding.';
+    assert.deepEqual(
+      copilotFns.inferCoreProblemSourceCompletion(source, 'What is '),
+      {
+        kind: 'source-pattern',
+        split: 'core-problem',
+        frontSuffix: 'the core problem in joint-embedding architectures?',
+        back: 'representation collapse',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(source, 'What is '),
+      'representation collapse'
+    );
+  });
+
+  it('infers source-pattern completions for corpus contents', () => {
+    const source = 'We created a new corpus of about 50k five-sentence commonsense stories, ROCStories, to enable this evaluation.';
+    assert.deepEqual(
+      copilotFns.inferCorpusContentsSourceCompletion(source, 'What is '),
+      {
+        kind: 'source-pattern',
+        split: 'corpus-contents',
+        frontSuffix: 'contained in the ROCStories dataset?',
+        back: 'about 50k five-sentence commonsense stories',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(source, 'What is '),
+      'about 50k five-sentence commonsense stories'
+    );
+  });
+
+  it('infers source-pattern completions for named sets, meanings, and repeal subjects', () => {
+    const codebook = 'The fundamental idea is simple: VQ maps continuous vectors to the nearest entry in a finite set of learned vectors, the codebook.';
+    assert.deepEqual(
+      copilotFns.inferNamedSetSourceCompletion(codebook, 'What name '),
+      {
+        kind: 'source-pattern',
+        split: 'named-set',
+        frontSuffix: 'is given to the finite set of learned vectors in VQ?',
+        back: 'the codebook',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(codebook, 'What name '),
+      'the codebook'
+    );
+
+    const meaning = 'So NP-hard means: At least as hard as the hardest problems in NP.';
+    assert.deepEqual(
+      copilotFns.inferMeaningSourceCompletion(meaning, 'In words, '),
+      {
+        kind: 'source-pattern',
+        split: 'meaning',
+        frontSuffix: 'what does NP-hard mean?',
+        back: 'At least as hard as the hardest problems in NP',
+      }
+    );
+
+    const repeal = 'The Abbott government repealed the MRRT entirely in 2014.';
+    assert.deepEqual(
+      copilotFns.inferGovernmentRepealSourceCompletion(repeal, 'Which government '),
+      {
+        kind: 'source-pattern',
+        split: 'government-repeal',
+        frontSuffix: 'repealed the MRRT entirely in 2014?',
+        back: 'Abbott government',
+      }
+    );
+  });
+
+  it('infers source-pattern completions for tree structures and word functions', () => {
+    const tree = 'A symbolic expression can be represented as a tree: operators at internal nodes and variables or constants at the leaves.';
+    assert.deepEqual(
+      copilotFns.inferTreeStructureSourceCompletion(tree, 'What are '),
+      {
+        kind: 'source-pattern',
+        split: 'tree-structure',
+        frontSuffix: 'the nodes and leaves of a symbolic expression tree?',
+        back: 'operators at internal nodes; variables or constants at leaves',
+      }
+    );
+
+    const preposition = 'A preposition is a word that shows a relationship between things.';
+    assert.deepEqual(
+      copilotFns.inferWordFunctionSourceCompletion(preposition, 'What is '),
+      {
+        kind: 'source-pattern',
+        split: 'word-function',
+        frontSuffix: 'the function of a preposition?',
+        back: 'to show a relationship between things',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(preposition, 'What is '),
+      'to show a relationship between things'
+    );
+  });
+
+  it('infers out-of-sample source-pattern completions for definitions, origins, and type contrasts', () => {
+    assert.deepEqual(
+      copilotFns.inferDirectDefinitionSourceCompletion(
+        'Pleonasm is the use of more words than those necessary to denote mere sense.',
+        'Define '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'direct-definition',
+        frontSuffix: 'Pleonasm.',
+        back: 'the use of more words than those necessary to denote mere sense',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferOriginSourceCompletion(
+        'Beam search is generally traced back to speech recognition.',
+        'Where did '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'origin',
+        frontSuffix: 'beam search originate from?',
+        back: 'speech recognition',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferContrastTypesSourceCompletion(
+        'In linguistics, a stative verb is a verb that describes a state of being, in contrast to a dynamic verb, which describes an action.',
+        'What are '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'contrast-types',
+        frontSuffix: 'the two main types of verbs?',
+        back: 'stative and dynamic',
+      }
+    );
+  });
+
+  it('infers out-of-sample source-pattern completions for labels, years, and conditions', () => {
+    assert.deepEqual(
+      copilotFns.inferLabelCaptureSourceCompletion(
+        'Dep is spaCy’s label for the grammatical relationship a token has to another token in the sentence.',
+        'What does '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'label-capture',
+        frontSuffix: 'Dep capture in spaCy?',
+        back: 'the grammatical relationship a token has to another token in the sentence',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferYearEventSourceCompletion(
+        'The Abbott government repealed the MRRT entirely in 2014.',
+        'In what year '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'event-year',
+        frontSuffix: 'did the Abbott government repeal the MRRT entirely?',
+        back: '2014',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferConditionsSourceCompletion(
+        'A language L is NP-complete if L is in NP and L is NP-hard.',
+        'What are the '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'conditions',
+        frontSuffix: 'two conditions for a language L to be NP-complete?',
+        back: 'L is in NP and L is NP-hard',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferColonExplanationSourceCompletion(
+        'The core problem in joint-embedding architectures is representation collapse: the model could learn to map everything to the same constant embedding and achieve zero prediction error trivially.',
+        'What is meant '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'colon-explanation',
+        frontSuffix: 'by representation collapse in joint-embedding architectures?',
+        back: 'the model could learn to map everything to the same constant embedding and achieve zero prediction error trivially',
+      }
+    );
+  });
+
+  it('infers out-of-sample source-pattern completions for pipelines and contrasts', () => {
+    assert.deepEqual(
+      copilotFns.inferPipelineSourceCompletion(
+        "Context encoder sees visible patches, produces context embeddings, and the predictor uses these to guess what the hidden patches' embeddings should be.",
+        'How does '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'pipeline',
+        frontSuffix: 'the context encoder work?',
+        back: 'sees visible patches; produces context embeddings; guesses hidden patch embeddings',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferContrastDifferenceSourceCompletion(
+        'Greedy search keeps only the single best next choice at each step, while beam search keeps the top several partial choices at each step.',
+        'What is the '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'contrast-difference',
+        frontSuffix: 'difference between greedy search and beam search?',
+        back: 'Greedy keeps one best choice; beam search keeps several choices',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferPrecedesSourceCompletion(
+        'A preposition usually comes before a noun or pronoun.',
+        'What does a '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'precedes',
+        frontSuffix: 'preposition usually precede?',
+        back: 'a noun or pronoun',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferReverseDefinitionSourceCompletion(
+        'Anaphoric means referring to or replacing a word that was used earlier in a text.',
+        'referring to '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'reverse-definition',
+        frontSuffix: 'or replacing a word that was used earlier in a text.',
+        back: 'Anaphoric',
+      }
+    );
+
+    assert.deepEqual(
+      copilotFns.inferTeachesPurposeSourceCompletion(
+        'Pre-training teaches BERT general language understanding: grammar, word meaning, and context, not any specific downstream task.',
+        'What is '
+      ),
+      {
+        kind: 'source-pattern',
+        split: 'teaches-purpose',
+        frontSuffix: 'the purpose of pre-training BERT?',
+        back: 'to teach BERT general language understanding',
+      }
+    );
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(
+        'Pre-training teaches BERT general language understanding: grammar, word meaning, and context, not any specific downstream task.',
+        'What is '
+      ),
+      'to teach BERT general language understanding'
+    );
+
+    assert.equal(
+      copilotFns.getFrontCompletionFitIssue('What does a does a preposition usually come before in a sentence?'),
+      'Front repeats an auxiliary verb after an article'
+    );
+    assert.equal(
+      copilotFns.getFrontCompletionFitIssue('What is the is the main difference between greedy search and beam search?'),
+      'Front repeats an auxiliary verb after an article'
+    );
+  });
+
+  it('splits exact source stems with iff facts', () => {
+    assert.deepEqual(
+      copilotFns.inferSourceStemCompletion(
+        'In a metric space, compact iff complete plus totally bounded.',
+        'In a '
+      ),
+      {
+        kind: 'source-stem',
+        split: 'iff',
+        frontSuffix: 'metric space, compact if and only if...',
+        back: 'complete plus totally bounded',
+      }
     );
   });
 
@@ -388,6 +1114,36 @@ describe('panel.js Copilot guardrails', () => {
         split: 'passive-complement',
         frontSuffix: 'algorithms can be applied to...',
         back: 'unsupervised learning tasks',
+      }
+    );
+  });
+
+  it('splits active source stems before method complements', () => {
+    assert.deepEqual(
+      copilotFns.inferSourceStemCompletion(
+        'the brain stores memory by altering the strength of connections between neurons that are simultaneously active',
+        'The brain'
+      ),
+      {
+        kind: 'source-stem',
+        split: 'active-method-complement',
+        frontSuffix: 'stores memory by...',
+        back: 'altering the strength of connections between neurons that are simultaneously active',
+      }
+    );
+  });
+
+  it('splits exact source stems before copular complements', () => {
+    assert.deepEqual(
+      copilotFns.inferSourceStemCompletion(
+        'Spaced repetition is an evidence-based learning technique that is usually performed with flashcards.',
+        'Spaced'
+      ),
+      {
+        kind: 'source-stem',
+        split: 'copular-complement',
+        frontSuffix: 'repetition is...',
+        back: 'an evidence-based learning technique that is usually performed with flashcards',
       }
     );
   });

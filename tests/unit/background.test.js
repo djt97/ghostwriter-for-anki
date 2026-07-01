@@ -35,11 +35,11 @@ const normalizeEditorSurface = new Function(`
 
 // getOpenAIProviderConfig (depends on normalizeProvider)
 const getOpenAIProviderConfig = new Function(`
-  const OPENAI_DEFAULT_MODEL = "gpt-4.1-mini";
+  const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
   const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
   const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
   const ULTIMATE_HOST_RE = /^https:\\/\\/(?:api|smart|chat)\\.ultimateai\\.org$/i;
-  const ULTIMATE_DEFAULT_MODEL = "gemini-flash-lite";
+  const ULTIMATE_DEFAULT_MODEL = "auto";
   ${extractFunction(bgSource, 'normalizeProvider')}
   ${extractFunction(bgSource, 'inferProviderFromOptions')}
   ${extractFunction(bgSource, 'normalizeUltimateBaseUrl')}
@@ -176,7 +176,7 @@ describe('background.js pure functions', () => {
       const config = getOpenAIProviderConfig({});
       assert.equal(config.provider, 'openai');
       assert.equal(config.baseUrl, 'https://api.openai.com/v1');
-      assert.equal(config.model, 'gpt-4.1-mini');
+      assert.equal(config.model, 'gpt-4o-mini');
     });
 
     it('returns OpenAI config when provider is openai', () => {
@@ -210,7 +210,7 @@ describe('background.js pure functions', () => {
       assert.equal(config.provider, 'ultimate');
       assert.equal(config.apiKey, 'ultimate-key');
       assert.equal(config.baseUrl, 'https://api.ultimateai.org/v1');
-      assert.equal(config.model, 'gemini-flash-lite');
+      assert.equal(config.model, 'auto');
     });
 
     it('returns OpenRouter config when provider is openrouter', () => {
@@ -345,11 +345,11 @@ describe('background.js pure functions', () => {
   describe('buildUpdateNotice', () => {
     it('mentions preserved credentials and the direct Add to Anki flow when keys exist', () => {
       const notice = buildUpdateNotice({
-        previousVersion: '0.3.2',
-        currentVersion: '0.3.3',
+        previousVersion: '0.3.3',
+        currentVersion: '0.4.0',
         preservedCredentials: { openaiKey: true },
       });
-      assert.match(notice.title, /0\.3\.3/);
+      assert.match(notice.title, /0\.4\.0/);
       assert.match(notice.message, /API keys/);
       assert.match(notice.message, /direct Add to Anki/);
       assert.equal(notice.dismissed, false);
@@ -416,10 +416,15 @@ describe('background.js pure functions', () => {
       assert.ok(!/preferredSurface:\s*"side_panel"/.test(commandBlock[0]));
     });
 
-    it('toggles a marked-open side panel by closing it first', () => {
-      assert.ok(bgSource.includes('function closeSidePanelCommandFromUserGesture'));
-      assert.match(bgSource, /isSidePanelMarkedOpen\(\{ tabId, windowId \}\)[\s\S]*?closeSidePanelCommandFromUserGesture\(\{ tabId, windowId \}\)/);
-      assert.match(bgSource, /chrome\.sidePanel\.close\(closeOptions\)/);
+    it('always opens/focuses the side panel on the command instead of toggling from stale state', () => {
+      // Chrome exposes no reliable onClosed event, so the command must not try to close a
+      // "marked open" panel — that caused a press-twice-to-reopen bug. It always opens/focuses.
+      const start = bgSource.indexOf('function openSidePanelCommandFromUserGesture');
+      const open = bgSource.indexOf('chrome.sidePanel.open(openOptions)', start);
+      const beforeOpen = bgSource.slice(start, open);
+      assert.doesNotMatch(beforeOpen, /closeSidePanelCommandFromUserGesture/);
+      // The phantom onOpened/onClosed listeners (not real Chrome events) must be gone.
+      assert.doesNotMatch(bgSource, /chrome\.sidePanel\?\.onClosed\?\.addListener/);
     });
 
     it('opens the side panel from the command without awaited work first', () => {
