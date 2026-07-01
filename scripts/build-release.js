@@ -8,6 +8,7 @@ const DIST_DIR = path.join(ROOT, 'dist');
 
 const REQUIRED_RELEASE_FILES = [
   'manifest.json',
+  'LICENSE',
   'background.js',
   'content.js',
   'panel.html',

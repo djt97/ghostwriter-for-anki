@@ -4,6 +4,8 @@
 
 Ghostwriter for Anki helps you turn web highlights into Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional AI suggestions, then send the card straight to Anki.
 
+Built and maintained by [DJ Thornton](https://djt97.github.io). It grew out of a simple conviction: LLMs are unreliable at *writing* flashcards, so the AI here assists your writing instead of doing it for you.
+
 ## Documentation
 
 A complete documentation set now lives under [`docs/`](./docs/README.md):
@@ -46,3 +48,9 @@ Release zips are published on the [Releases](https://github.com/djt97/ghostwrite
 ## Third-party notices
 
 Release-facing notices for bundled dependencies are provided in [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).
+
+## License
+
+Ghostwriter for Anki is free software licensed under the **GNU General Public License v3.0** — see [`LICENSE`](./LICENSE). You're free to use, study, share, and modify it; any redistributed or derivative version must also remain open source under the GPL.
+
+Copyright © 2026 Daniel Thornton.
