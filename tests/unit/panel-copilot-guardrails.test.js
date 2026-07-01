@@ -162,6 +162,7 @@ const copilotFns = new Function(`
   ${extractFunction(panelSource, 'formatLatexMathSpansForBack')}
   ${extractFunction(panelSource, 'getSourceLatexReplacementForMathSuggestion')}
   ${extractFunction(panelSource, 'preserveSourceLatexForBackSuggestion')}
+  ${extractFunction(panelSource, 'backRestatesFront')}
   ${extractFunction(panelSource, 'getBackAnswerFitIssue')}
   ${extractFunction(panelSource, 'normalizeBackSuggestionForFront')}
   ${extractFunction(panelSource, 'stripAnswerCueLead')}
@@ -1499,6 +1500,23 @@ describe('panel.js Copilot guardrails', () => {
       'advantage'
     );
     assert.ok(panelSource.includes('function isAdvantageFront'));
+  });
+
+  it('flags a Back that restates the Front instead of answering it', () => {
+    assert.equal(
+      copilotFns.getBackAnswerFitIssue(
+        'Why can the Dead Sea keep swimmers afloat?',
+        'Its density keeps swimmers afloat'
+      ),
+      'Back answer restates the Front instead of answering it'
+    );
+    // Atomic answers and definitions must NOT be flagged.
+    assert.equal(copilotFns.getBackAnswerFitIssue('Why can the Dead Sea keep swimmers afloat?', 'its density'), '');
+    assert.equal(copilotFns.getBackAnswerFitIssue('Why can the Dead Sea keep swimmers afloat?', 'due to high salt content'), '');
+    assert.equal(
+      copilotFns.getBackAnswerFitIssue('What is spaced repetition?', 'a learning technique that reviews material at increasing intervals'),
+      ''
+    );
   });
 
   it('preserves exact source LaTeX when a Back suggestion uses Unicode math', () => {

@@ -336,6 +336,7 @@ function loadEngine() {
     ${extractFunction(panelSource, "isWhoFrontWithoutDateTarget")}
     ${extractFunction(panelSource, "stripUnaskedDateFromWhoAnswer")}
     ${extractFunction(panelSource, "normalizeStandaloneBackAnswer")}
+    ${extractFunction(panelSource, "backRestatesFront")}
     ${extractFunction(panelSource, "getBackAnswerFitIssue")}
     ${extractFunction(panelSource, "normalizeBackSuggestionForFront")}
     ${extractFunction(panelSource, "stripAnswerCueLead")}

@@ -4258,9 +4258,25 @@ function preserveSourceLatexForBackSuggestion(backText, { sourceText = "", exist
   return replacement || String(backText || "").trim();
 }
 
+// A Back "restates the Front" when it echoes the Front's key words and adds almost nothing
+// new (e.g. Front "Why can the Dead Sea keep swimmers afloat?" -> Back "Its density keeps
+// swimmers afloat"). Atomic answers introduce new content; restatements don't.
+function backRestatesFront(frontText, backText) {
+  const stop = new Set(["its", "it", "their", "his", "her", "the", "this", "that", "these", "those", "such"]);
+  const front = new Set(getAnswerTerms(frontText));
+  const back = getAnswerTerms(backText).filter((t) => !stop.has(t));
+  if (back.length < 3) return false;
+  const overlap = back.filter((t) => front.has(t)).length;
+  const novel = back.length - overlap;
+  return overlap >= 2 && novel <= 1;
+}
+
 function getBackAnswerFitIssue(frontText, backText) {
   const answer = String(backText || "").trim();
   if (!answer) return "";
+  if (backRestatesFront(frontText, answer)) {
+    return "Back answer restates the Front instead of answering it";
+  }
   if (/\b(?:than|of|to|with|by|because|that|which|who|where|when|how|not|don'?t|doesn'?t|can'?t|won'?t)\s*$/i.test(answer)) {
     return "Back answer ends with a dangling word";
   }
@@ -5175,10 +5191,55 @@ function isClozeCopilotActive(frontText) {
   return false;
 }
 
+// Narrow a multi-sentence Source to the single sentence the user's prefix (and the
+// opposite field) is gesturing at, so the model grounds on the intended fact instead of
+// the first/most-salient one. General lexical targeting — no per-topic rules. Returns the
+// whole source unchanged for short/single-sentence sources or when there is no lexical
+// signal, so single-fact highlights are unaffected.
+function selectRelevantSource(sourceText, prefix, other) {
+  const src = String(sourceText || "").trim();
+  if (!src) return src;
+  const sentences = (src.match(/[^.!?]+[.!?]*/g) || [src]).map((s) => s.trim()).filter(Boolean);
+  if (sentences.length <= 1) return src;
+  const STOP = new Set(
+    "the a an of to in on at by for and or nor but is are was were be been being am it its this that these those with as from into onto over under which who whom whose what where when why how do does did can could would should will shall may might must not no than then so such very more most also only".split(/\s+/)
+  );
+  const stems = (t) =>
+    (String(t || "").toLowerCase().match(/[a-z0-9]+/g) || [])
+      .filter((w) => w.length >= 3 && !STOP.has(w))
+      .map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w));
+  const prefixStems = stems(prefix);
+  const last = prefixStems.length ? prefixStems[prefixStems.length - 1] : null;
+  const weights = new Map();
+  for (const s of [...prefixStems, ...stems(other)]) weights.set(s, Math.max(weights.get(s) || 0, 1));
+  if (last) weights.set(last, 3); // the most recently typed word is the strongest intent signal
+  if (!weights.size) return src;
+  let bestIdx = -1;
+  let bestScore = 0;
+  sentences.forEach((sentence, i) => {
+    const terms = new Set(stems(sentence));
+    let score = 0;
+    weights.forEach((w, term) => {
+      if (terms.has(term)) score += w;
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  });
+  if (bestScore <= 0 || bestIdx < 0) return src; // no signal -> don't narrow (avoid mis-targeting)
+  return sentences[bestIdx];
+}
+
 function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   const page = ctx.page || {};
   const pageSourceText = getContextSourceText(page);
   const sourceStem = fieldId === "front" ? getSourceStemMatch(pageSourceText, existing) : null;
+  const focusedSource = selectRelevantSource(pageSourceText, existing, ctx.other);
+  const focusedPage =
+    focusedSource && focusedSource !== pageSourceText
+      ? { ...page, sourceText: focusedSource, selection: focusedSource }
+      : page;
   if (copilot._userPromptBuilder) {
     return copilot._userPromptBuilder({
       fieldId,
@@ -5189,7 +5250,7 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
       sourceStem,
       prefixEndsWithSpace: /\s$/.test(String(existing || "")),
       notes: (ctx.notes || ""),
-      page,
+      page: focusedPage,
       sourceMode: normalizeSourceMode(ctx.sourceMode),
       cloze: !!ctx.cloze,
       caps: { frontWordCap: copilot.frontWordCap, backWordCap: copilot.backWordCap },

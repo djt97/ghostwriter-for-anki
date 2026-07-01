@@ -18,7 +18,7 @@ describe('prompts.js', () => {
       assert.ok(PROMPTS.frontSystem.includes("Cue, don't disclose"));
       assert.ok(PROMPTS.frontSystem.includes('Use only facts grounded in the Source'));
       assert.ok(!PROMPTS.frontSystem.includes('Protected Back answer'));
-      assert.ok(PROMPTS.frontSystem.length < 1100);
+      assert.ok(PROMPTS.frontSystem.length < 1400);
     });
 
     it('keeps Back autocomplete minimal and answer-only', () => {
@@ -26,7 +26,7 @@ describe('prompts.js', () => {
       assert.ok(PROMPTS.backSystem.includes('Return exactly one atomic answer'));
       assert.ok(PROMPTS.backSystem.includes('Do not restate the Front'));
       assert.ok(PROMPTS.backSystem.includes('Do not append unasked dates'));
-      assert.ok(PROMPTS.backSystem.length < 950);
+      assert.ok(PROMPTS.backSystem.length < 1200);
     });
 
     it('keeps Back-to-Front generation plain and answer-aware', () => {

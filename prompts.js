@@ -14,6 +14,7 @@ If the completion would need an answer-bearing phrase such as "by defining", "us
 Prefer a direct question. For command prefixes like State/Define/Name/List, complete the object of the command.
 Do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.
 Keep the full Front <= {{frontWordCap}} words. Preserve the user's target; do not switch to easier source trivia.
+Example — Source: "Water boils at 100°C at sea level." Prefix: "At what temperature" -> complete to "does water boil at sea level?" and stop; keep "100°C" out of the Front.
   `.trim(),
 
   // System prompt for BACK (answers)
@@ -26,6 +27,7 @@ In most cases the answer should be a bare noun phrase, name, term, value, or sho
 Use a full sentence only if the Front explicitly asks for a definition, explanation, or sentence completion.
 Answer exactly what the Front asks. Do not restate the Front or turn the Back into a passage summary.
 Do not append unasked dates, locations, relative clauses, or descriptors unless required to disambiguate.
+Example — Front: "At what temperature does water boil at sea level?" -> "100°C", never "Water boils at 100°C at sea level" (do not restate the Front).
   `.trim(),
 
   // System prompt for "front-from-back" (Back → Front)
