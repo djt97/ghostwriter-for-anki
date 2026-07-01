@@ -1191,14 +1191,13 @@
       padding: 8px 10px;
     }
 
-    body.is-overlay-surface .editor-status {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--muted);
-    }
-
+    /* Overlay: collapse card-details to a single slim line (deck · note type). */
+    body.is-overlay-surface .editor-status { display: none; }
+    body.is-overlay-surface .editor-status-wrap { gap: 0; }
     body.is-overlay-surface .editor-meta {
-      font-size: 11px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
     }
 
     body.is-overlay-surface .metadata-drawer {
@@ -1223,12 +1222,13 @@
 
     body.is-overlay-surface .source-summary-preview {
       display: -webkit-box;
-      -webkit-line-clamp: 2;
+      -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
       white-space: normal;
       overflow: hidden;
       color: var(--text);
-      line-height: 1.25;
+      font-size: 12.5px;
+      line-height: 1.35;
     }
 
     body.is-overlay-surface .source-summary-action {
