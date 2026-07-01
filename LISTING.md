@@ -6,27 +6,26 @@ Ghostwriter for Anki — Write Better Cards Faster
 
 ## Short Description (132 char max)
 
-Turn web highlights into Anki cards quickly with focused AI suggestions while you write.
+Write Anki cards from what you read online. Highlight, draft with AI suggestions that autocomplete as you type, send to Anki.
 
 ## Full Description
 
-Ghostwriter helps you write your own Anki cards from the things you read online.
+Ghostwriter helps you write your own Anki cards from the things you read online — without leaving your reading flow.
 
-Highlight a passage and open Ghostwriter. The editor appears immediately with the source filled in, so you can write the card you actually want. Request an AI suggestion when useful, accept what helps, ignore the rest.
+Highlight a passage and open Ghostwriter. The editor appears right away with the source already filled in, so you can write the card you actually want. As you type, optional AI suggestions autocomplete the front and back — accept what helps with Tab, ignore the rest. The finished card goes straight to your desktop Anki.
 
-This is not auto-generation. You stay in control of the card.
+This is not auto-generation. Ghostwriter won't turn a web page into a pile of cards for you. You decide what's worth remembering and how to phrase it — the AI just helps you write it faster. Good cards come from good judgement, and that stays yours.
 
 **How it works**
-- Highlight text on any page — Ghostwriter opens the editor directly
-- Write with optional AI suggestions
-- Edit the front and back in one focused view
-- Send the finished card straight to Anki
+- Highlight text on any page — Ghostwriter opens the editor with the source attached
+- Write the front and back in one focused view, with AI suggestions as you type
+- Send the finished card straight to Anki via the AnkiConnect add-on
 
-**No setup required to start writing.** A small number of first-run AI suggestions are included. Add your own API key later for continued AI use, or keep writing manually.
+**Start writing right away.** A small number of AI suggestions are included to begin with — add your own provider key later for continued AI use, or keep writing manually. Manual writing works fully offline; the only time anything leaves your machine is when you choose to use a cloud AI provider, which receives the text you ask it to help with.
 
-**Works with Anki** via the AnkiConnect add-on. Desktop Anki must be running to send cards.
+**Requirements:** desktop Anki running with the AnkiConnect add-on (ID 2055492159).
 
-Best for students, language learners, and serious Anki users who already know that good cards come from good judgment.
+Best for students, language learners, and serious Anki users who already know that good cards come from good judgement.
 
 ---
 
