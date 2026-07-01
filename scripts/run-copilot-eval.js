@@ -686,6 +686,24 @@ function buildBackPrompt({ fixture, testCase, front, prompts, helpers }) {
   };
 }
 
+function buildClozePrompt({ fixture, testCase, prompts, helpers }) {
+  const page = makePage(fixture, testCase);
+  const frontPrefix = getEvalPrefix(testCase);
+  page.selection = helpers.selectRelevantSource(testCase.sourceText, frontPrefix, "");
+  return {
+    system: prompts.clozeSystem || prompts.frontSystem,
+    prompt: prompts.buildUserPrompt({
+      fieldId: "front",
+      existing: frontPrefix,
+      other: "",
+      cloze: true,
+      notes: "",
+      page,
+      caps: { frontWordCap: FRONT_WORD_CAP, backWordCap: BACK_WORD_CAP },
+    }),
+  };
+}
+
 async function chatCompletion(config, { system, prompt, maxTokens }) {
   if (config.provider === "gemini") {
     return geminiCompletion(config, { system, prompt, maxTokens });
@@ -880,6 +898,15 @@ function judgeCase(testCase, generated, helpers) {
     };
   }
 
+  // Cloze cards are judged on the cloze output: it must carry at least one {{c1::...}} deletion.
+  if (carding.verdict === "cloze") {
+    const clozeText = generated.cloze || generated.rawCloze || "";
+    if (generated.modelOutputIssue?.kind) flags.push(`model-output:${generated.modelOutputIssue.kind}`);
+    else if (!clozeText) flags.push("missing-cloze");
+    else if (!/\{\{c\d+::[^}]+\}\}/.test(clozeText)) flags.push("cloze-no-deletion");
+    return { flags, status: flags.length ? "needs-review" : "review", clozeText };
+  }
+
   if (generated.modelOutputIssue?.kind) {
     flags.push(`model-output:${generated.modelOutputIssue.kind}`);
   }
@@ -988,6 +1015,35 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
   if (includePrompts) {
     row.frontPrompt = frontPrompt.prompt;
     row.frontSystem = frontPrompt.system;
+  }
+
+  // Cloze cards take the cloze path (clozeSystem + cloze:true), not the Q&A/stem path.
+  if (carding.verdict === "cloze") {
+    if (live) {
+      const clozePrompt = buildClozePrompt({ fixture, testCase, prompts, helpers });
+      if (includePrompts) {
+        row.clozePrompt = clozePrompt.prompt;
+        row.clozeSystem = clozePrompt.system;
+      }
+      try {
+        const clozeCompletion = await chatCompletion(config, {
+          system: clozePrompt.system,
+          prompt: clozePrompt.prompt,
+          maxTokens: 90,
+        });
+        row.rawCloze = clozeCompletion.text;
+        row.clozeActualModel = clozeCompletion.model;
+        // The model may return the full sentence (incl. the prefix) or just the suffix.
+        const rawClozeTrim = String(row.rawCloze || "").trim();
+        row.cloze = rawClozeTrim.toLowerCase().startsWith(frontPrefix.trim().toLowerCase())
+          ? rawClozeTrim
+          : joinCompletion(frontPrefix, rawClozeTrim).trim();
+      } catch (err) {
+        row.modelOutputIssue = buildProviderCallIssue(config, "cloze", err);
+      }
+    }
+    row.judgment = judgeCase(testCase, row, helpers);
+    return row;
   }
 
   if (sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back) {
@@ -1183,8 +1239,10 @@ function renderMarkdown({ fixture, config, live, rows }) {
       `Rationale: ${row.cardingRationale || "(none)"}`,
       `Prefix: ${row.frontPrefix}`,
       `Highlight: ${row.sourceText}`,
-      `Generated Front: ${row.front || "(none)"}`,
-      `Generated Back: ${row.back || "(none)"}`,
+      row.cardingVerdict === "cloze"
+        ? `Generated Cloze: ${row.cloze || "(none)"}`
+        : `Generated Front: ${row.front || "(none)"}`,
+      row.cardingVerdict === "cloze" ? "" : `Generated Back: ${row.back || "(none)"}`,
       "",
       "Preferred cards:",
       ...renderCardList(row.preferredCards),
@@ -1330,7 +1388,7 @@ async function main() {
     // Hard failures: the model produced an actually-bad card (leak, drift, non-fit,
     // restated Back, matched a known-bad card, missing field). Soft "fixture:*" review
     // flags do not gate.
-    const HARD = ["front-leak", "protected-leak", "front-fit", "front-drift", "back-fit", "matches-known-bad-card", "missing-front", "missing-back", "model-output"];
+    const HARD = ["front-leak", "protected-leak", "front-fit", "front-drift", "back-fit", "matches-known-bad-card", "missing-front", "missing-back", "model-output", "missing-cloze", "cloze-no-deletion"];
     const hardFails = rows.filter((row) => (row.judgment?.flags || []).some((f) => HARD.some((h) => String(f).startsWith(h))));
     if (hardFails.length) {
       console.error(`\nGATE FAILED: ${hardFails.length} case(s) produced a bad card:`);

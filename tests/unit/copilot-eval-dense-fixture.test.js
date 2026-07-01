@@ -32,4 +32,10 @@ describe('dense-and-cloze eval fixture', () => {
     assert.ok(evalSource.includes('page.selection = helpers.selectRelevantSource'), 'targeting applied to prompts');
     assert.ok(evalSource.includes('GATE FAILED') && evalSource.includes('args.gate'), 'gate present');
   });
+
+  it('has a dedicated cloze-generation judge in the runner', () => {
+    assert.ok(evalSource.includes('function buildClozePrompt'), 'cloze prompt builder present');
+    assert.ok(evalSource.includes('cloze-no-deletion') && evalSource.includes('missing-cloze'), 'judges the cloze output');
+    assert.ok(evalSource.includes('carding.verdict === "cloze"'), 'routes cloze cases to the cloze path');
+  });
 });
