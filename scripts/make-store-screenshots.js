@@ -28,7 +28,7 @@ const PAGES = {
  <h1>Spaced repetition</h1>
  <div class=sub>Open reference article &middot; Learning and memory</div>
  <div class=infobox><b>Spaced repetition</b><br>A learning technique<br><span style=color:#54595d>Related: spacing effect, active recall, flashcards</span></div>
- <p id=lead>Spaced repetition is an evidence-based learning technique in which newly introduced and more difficult material is reviewed more frequently, while older and easier material is reviewed less often. By scheduling each review just before the point of forgetting, it exploits the psychological spacing effect to move knowledge into long-term memory with far less total study time.</p>
+ <p id=lead><span id=pick>The spacing effect is the finding that information is remembered better when study is spread out over time than when the same amount is crammed into a single session.</span> Spaced-repetition software schedules each review just before you would forget, using this effect to move knowledge into long-term memory with far less total study time.</p>
  <p>The technique is most often applied with flashcards. Modern scheduling algorithms estimate, for every card, the moment at which recall probability has dropped to a target threshold, and surface the card then &mdash; no sooner, no later.</p>
 </div></body></html>`,
 
@@ -41,7 +41,7 @@ const PAGES = {
 </style></head><body><div class=wrap>
  <h1>The forgetting curve</h1>
  <div class=sub>Open reference article &middot; Memory</div>
- <p id=lead>The forgetting curve, first described by Hermann Ebbinghaus, shows how quickly we lose newly learned information when we make no effort to retain it. Memory of new material drops steeply within the first day and then levels off, which is why reviews are most valuable soon after learning.</p>
+ <p id=lead>The forgetting curve, first described by Hermann Ebbinghaus, describes how newly learned information is lost over time without review. <span id=pick>Forgetting is rapid at first and then slows down, so memory of new material drops steeply within the first day and levels off thereafter.</span></p>
  <p>Each act of successful recall flattens the curve: the information is re-learned a little more durably, and the next review can safely be scheduled further away.</p>
 </div></body></html>`,
 
@@ -74,14 +74,14 @@ const PAGES = {
 };
 
 const SHOTS = [
-  { path: '/spaced-repetition', sel: '#lead',
-    front: 'Reviewing a card just before you would forget it exploits which effect?',
-    back: 'The spacing effect.',
+  { path: '/spaced-repetition', sel: '#pick',
+    front: 'Study spread over time beats the same amount crammed at once. This is the ___ effect?',
+    back: 'spacing',
     caption: 'Highlight anything you read and make a flashcard in seconds',
     out: '01-highlight-to-card.png' },
-  { path: '/forgetting-curve', sel: '#lead',
-    front: 'What does the forgetting curve describe?',
-    ghost: 'How quickly we lose newly learned information when we don’t review it.',
+  { path: '/forgetting-curve', sel: '#pick',
+    front: 'On the forgetting curve, what happens to the rate of forgetting as time since learning increases?',
+    ghost: 'It slows down.',
     caption: 'You nudge the AI — it drafts in your style',
     out: '02-copilot-autocomplete.png' },
   { path: '/road-not-taken', sel: '#finalStanza',

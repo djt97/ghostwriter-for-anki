@@ -22,14 +22,14 @@ const CARD = `
       <span style="margin-left:auto;color:#94a3b8;font-weight:500;font-size:12px">v0.4.0</span>
     </div>
     <div style="margin:14px 16px 0;background:#f1f5f9;border-radius:10px;padding:10px 12px;color:#334155;font-size:12.5px;line-height:1.4">
-      <b style="color:#64748b;letter-spacing:.04em;font-size:11px">SOURCE</b> &nbsp;Spaced repetition is an evidence-based learning technique in which newly introduced material…</div>
+      <b style="color:#64748b;letter-spacing:.04em;font-size:11px">SOURCE</b> &nbsp;The spacing effect: information is remembered better when study is spread over time than crammed into one session…</div>
     <div style="margin:12px 16px 0">
       <div style="color:#64748b;font-size:12px;font-weight:600">Question (Front)</div>
-      <div style="margin-top:5px;padding:9px 11px;border:1px solid #e2e8f0;border-radius:9px;font-family:ui-monospace,Menlo,monospace;color:#0f172a">Reviewing a card just before you’d forget it exploits which effect?</div>
+      <div style="margin-top:5px;padding:9px 11px;border:1px solid #e2e8f0;border-radius:9px;font-family:ui-monospace,Menlo,monospace;color:#0f172a">Study spread over time beats the same amount crammed at once. This is the ___ effect?</div>
     </div>
     <div style="margin:11px 16px 0">
       <div style="color:#64748b;font-size:12px;font-weight:600">Answer (Back)</div>
-      <div style="margin-top:5px;padding:9px 11px;border:1px solid #2563eb;border-radius:9px;font-family:ui-monospace,Menlo,monospace;color:#0f172a">The spacing effect.</div>
+      <div style="margin-top:5px;padding:9px 11px;border:1px solid #2563eb;border-radius:9px;font-family:ui-monospace,Menlo,monospace;color:#0f172a">spacing</div>
     </div>
     <div style="margin:14px 16px 16px;background:#2563eb;color:#fff;text-align:center;font-weight:600;border-radius:10px;padding:11px">Add to Anki</div>
   </div>`;
