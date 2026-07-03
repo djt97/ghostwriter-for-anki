@@ -19,3 +19,19 @@ tests/evals/reports/
 audit/
 explainer-video/
 CLAUDE.md
+
+# Internal working docs and media — keep local, never publish
+.codex/
+audit/
+GHOSTWRITER_V2_PLAN.md
+docs/TESTING-audit-test-suite.md
+docs/chatgpt-prompts/
+docs/launch-video-script.md
+docs/superpowers/
+docs/v2-test-checklist.md
+docs/listing-and-website-copy-draft.md
+docs/store-screenshots/.tmp-*
+*.mp4
+*.mov
+*.wav
+/*.png
