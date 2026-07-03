@@ -45,6 +45,22 @@ const PAGES = {
  <p>Each act of successful recall flattens the curve: the information is re-learned a little more durably, and the next review can safely be scheduled further away.</p>
 </div></body></html>`,
 
+  '/deep-learning': `<!doctype html><html lang=en><head><meta charset=utf-8><title>Deep learning</title>
+<style>${BASE} body{${ARTICLE}}
+ .wrap{max-width:720px;margin:0 auto;padding:44px 32px}
+ h1{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:34px;border-bottom:1px solid #a2a9b1;padding-bottom:8px;margin:0 0 4px}
+ .sub{color:#54595d;font-size:13px;margin-bottom:22px}
+ h2{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:24px;border-bottom:1px solid #eaecf0;padding-bottom:4px;margin:26px 0 12px}
+ p{line-height:1.75;font-size:16px;margin:0 0 16px}
+</style></head><body><div class=wrap>
+ <h1>Deep learning</h1>
+ <div class=sub>Open reference article &middot; Machine learning</div>
+ <p>The first working deep learning algorithm was a method to train arbitrarily deep neural networks, published in the 1960s as a form of polynomial regression and later generalised to handle more complex, nonlinear, and hierarchical relationships between inputs and outputs.</p>
+ <h2>Backpropagation</h2>
+ <p id=lead><span id=pick>Backpropagation is an efficient application of the chain rule</span> derived by Gottfried Wilhelm Leibniz in 1673 to networks of differentiable nodes. The modern form was first published in Seppo Linnainmaa's master thesis in 1970, and applied to neural networks in 1982.</p>
+ <p>In the 1980s, backpropagation did not work well for networks with long credit-assignment paths; overcoming that problem shaped much of the following decade of research.</p>
+</div></body></html>`,
+
   '/road-not-taken': `<!doctype html><html lang=en><head><meta charset=utf-8><title>The Road Not Taken</title>
 <style>${BASE} body{font-family:Georgia,"Times New Roman",serif;color:#2b2724;background:#fbfaf7}
  .wrap{max-width:640px;margin:0 auto;padding:52px 32px;text-align:center}
@@ -59,17 +75,20 @@ const PAGES = {
  <div class=stanza id=finalStanza>I shall be telling this with a sigh<br>Somewhere ages and ages hence:<br>Two roads diverged in a wood, and I&mdash;<br>I took the one less traveled by,<br>And that has made all the difference.</div>
 </div></body></html>`,
 
-  '/testing-effect': `<!doctype html><html lang=en><head><meta charset=utf-8><title>The testing effect</title>
-<style>${BASE} body{font-family:Georgia,"Times New Roman",serif;color:#222;background:#fff}
- .wrap{max-width:680px;margin:0 auto;padding:48px 34px}
- h1{font-size:28px;font-weight:600;margin:0 0 6px;line-height:1.3}
- .authors{color:#666;font-size:14px;font-style:italic;margin-bottom:26px}
- .abs{border-left:3px solid #2563eb;padding:2px 0 2px 18px;line-height:1.8;font-size:16.5px}
- .abs b{font-variant:small-caps;letter-spacing:.03em}
+  '/to-my-father': `<!doctype html><html lang=en><head><meta charset=utf-8><title>To My Father</title>
+<style>${BASE} body{font-family:Georgia,"Times New Roman",serif;color:#e8e4dc;background:#0c0c0d}
+ .wrap{max-width:560px;margin:0 auto;padding:46px 28px;text-align:center}
+ h1{font-size:27px;font-weight:400;margin:0 0 4px;font-variant:small-caps;letter-spacing:.04em}
+ .ded{font-variant:small-caps;letter-spacing:.06em;color:#b8b2a6;font-size:14px;margin-bottom:26px}
+ .num{font-size:19px;margin:22px 0 12px;color:#cfc9bd}
+ .sonnet{line-height:1.85;font-size:16.5px;margin:0;color:#ddd8ce;text-align:center}
 </style></head><body><div class=wrap>
- <h1>Retrieval practice and the testing effect: a brief review</h1>
- <div class=authors>Review &middot; cognitive psychology of memory</div>
- <div class=abs><b>Abstract.</b> <span id=lead>The testing effect is the finding that long-term retention is improved when part of the study period is devoted to retrieving information from memory rather than restudying it. Effortful but successful retrieval strengthens later recall &mdash; precisely the mechanism a well-designed flashcard is meant to exercise.</span></div>
+ <h1>To My Father</h1>
+ <div class=ded>With My Second Volume of Verse</div>
+ <div class=num>I</div>
+ <div class=sonnet id=sonnet1>Take of the first fruits, Father, of thy care,<br>Wrapped in the fresh leaves of my gratitude<br>Late waked for early gifts ill understood;<br>Claiming in all my harvests rightful share,<br>Whether with song that mounts the joyful air<br>I praise my God; or, in yet deeper mood,<br>Sit dumb because I know a speechless good,<br>Needing no voice, but all the soul for prayer.<br>Thou hast been faithful to my highest need;<br>And I, thy debtor, ever, evermore,<br>Shall never feel the grateful burden sore.<br>Yet most I thank thee, not for any deed,<br>But for the sense thy living self did breed<br>That fatherhood is at the great world's core.</div>
+ <div class=num>II</div>
+ <div class=sonnet>All childhood, reverence clothed thee, undefined,<br>As for some being of another race;<br>Ah! not with it departing&mdash;grown apace<br>As years have brought me manhood's loftier mind</div>
 </div></body></html>`,
 };
 
@@ -84,16 +103,6 @@ const SHOTS = [
     ghost: 'It slows down.',
     caption: 'You nudge the AI — it drafts in your style',
     out: '02-copilot-autocomplete.png' },
-  { path: '/road-not-taken', sel: '#finalStanza',
-    front: "In 'The Road Not Taken', what has 'made all the difference'?",
-    back: "Taking the road 'less traveled by'.",
-    caption: 'You write the card — you stay in control',
-    out: '03-you-write-it.png' },
-  { path: '/testing-effect', sel: '#lead',
-    front: 'The testing effect says retrieving from memory is more effective than what?',
-    back: 'Re-reading (restudying) it.',
-    caption: 'Send the finished card straight to Anki via AnkiConnect',
-    out: '04-send-to-anki.png' },
 ];
 
 async function main() {
@@ -122,6 +131,7 @@ async function main() {
     }
   });
   await context.route('https://ghostwriter-proxy.djthornton97.workers.dev/**', (route) => route.abort());
+  await context.route('https://api.openai.com/**', (route) => route.abort());
   await context.route('http://localhost:31337/**', async (route) => {
     const p = new URL(route.request().url()).pathname;
     await route.fulfill({ status: 200, contentType: 'text/html', body: PAGES[p] || PAGES['/spaced-repetition'] });
@@ -158,19 +168,48 @@ async function main() {
     await cp.close();
   }
 
-  const page = await context.newPage();
-  for (const shot of SHOTS) {
-    await page.goto('http://localhost:31337' + shot.path, { waitUntil: 'domcontentloaded' });
+  // Side-by-side composite: reading page on the left, side panel on the right.
+  async function composeDuo(leftBuf, rightBuf, leftW, rightW, caption, out) {
+    const cp = await context.newPage();
+    await cp.setContent('<!doctype html><meta charset=utf-8><title>compose</title>', { waitUntil: 'load' });
+    const dataUrl = await cp.evaluate(async (o) => {
+      const load = async (b64) => { const i = new Image(); i.src = 'data:image/png;base64,' + b64; await i.decode(); return i; };
+      const left = await load(o.left);
+      const right = await load(o.right);
+      const c = document.createElement('canvas');
+      c.width = o.W; c.height = o.band + o.appH;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, o.W, o.band);
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = "600 23px -apple-system, 'Helvetica Neue', Arial, sans-serif";
+      ctx.fillText(o.caption, 30, o.band / 2 + 1);
+      ctx.fillStyle = '#93c5fd';
+      ctx.font = "600 15px -apple-system, 'Helvetica Neue', Arial, sans-serif";
+      const brand = 'Ghostwriter for Anki';
+      ctx.fillText(brand, o.W - 30 - ctx.measureText(brand).width, o.band / 2 + 1);
+      ctx.drawImage(left, 0, o.band, o.leftW, o.appH);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(o.leftW, o.band, o.W - o.leftW - o.rightW, o.appH);
+      ctx.drawImage(right, o.W - o.rightW, o.band, o.rightW, o.appH);
+      return c.toDataURL('image/png');
+    }, { left: leftBuf.toString('base64'), right: rightBuf.toString('base64'), leftW, rightW, caption, W, band: BAND, appH: APP_H });
+    await fs.promises.writeFile(path.join(OUT_DIR, out), Buffer.from(dataUrl.split(',')[1], 'base64'));
+    await cp.close();
+  }
+
+  async function openOverlayOn(page, shotPath, sel) {
+    await page.goto('http://localhost:31337' + shotPath, { waitUntil: 'domcontentloaded' });
     await worker.evaluate(async () => {
       const [tab] = await chrome.tabs.query({ url: 'http://localhost:31337/*' });
       if (tab?.id) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
     });
     await page.waitForTimeout(350);
-    await page.evaluate((sel) => {
-      const el = document.querySelector(sel);
+    await page.evaluate((s) => {
+      const el = document.querySelector(s);
       const range = document.createRange(); range.selectNodeContents(el);
-      const s = window.getSelection(); s.removeAllRanges(); s.addRange(range);
-    }, shot.sel);
+      const sl = window.getSelection(); sl.removeAllRanges(); sl.addRange(range);
+    }, sel);
     await worker.evaluate(async () => {
       const [tab] = await chrome.tabs.query({ url: 'http://localhost:31337/*' });
       await chrome.tabs.sendMessage(tab.id, { type: 'quickflash:showOverlay', options: { skipCapturePopover: true } });
@@ -179,7 +218,12 @@ async function main() {
     const panel = page.frameLocator('#quickflash-panel-iframe');
     await panel.locator('html[data-qf-panel="ready"]').waitFor({ timeout: 30000 });
     await panel.locator('#front').waitFor({ state: 'visible', timeout: 30000 });
+    return panel;
+  }
 
+  const page = await context.newPage();
+  for (const shot of SHOTS) {
+    const panel = await openOverlayOn(page, shot.path, shot.sel);
     const frame = page.frames().find((f) => f.url().includes('panel.html'));
     await panel.locator('#front').fill(shot.front);
     if (shot.ghost) {
@@ -191,8 +235,6 @@ async function main() {
           if (!g) return;
           g.removeAttribute('hidden');
           g.textContent = ghost;
-          g.style.textIndent = '0';
-          g.style.textAlign = 'left';
         }, shot.ghost);
       }
     } else {
@@ -203,6 +245,59 @@ async function main() {
     await compose(buf, shot.caption, shot.out);
     console.log('shot:', shot.out);
   }
+
+  // 03 — the deterministic split takeover on an exact source match. The auto-copilot must be on
+  // for the stem path to fire from typing; the split itself is deterministic (no model call),
+  // and the AI endpoints are aborted above as a belt anyway.
+  await worker.evaluate(async () => {
+    const { quickflash_options } = await chrome.storage.sync.get('quickflash_options');
+    await chrome.storage.sync.set({ quickflash_options: { ...(quickflash_options || {}), manualCopilotOnly: false, provider: 'openai', apiKey: 'sk-screenshots-unused' } });
+  });
+  {
+    const panel = await openOverlayOn(page, '/deep-learning', '#pick');
+    await panel.locator('#front').fill('Backpropagation');
+    await panel.locator('#stemSplitTakeover:not([hidden])').waitFor({ timeout: 15000 });
+    await panel.locator('.sst-sentence .stem-split-word.movable', { hasText: 'efficient' }).first().click();
+    await page.waitForTimeout(400);
+    const buf = await page.screenshot();
+    await compose(buf, 'Typing straight from the source? Click where the answer starts', '03-exact-source-split.png');
+    console.log('shot: 03-exact-source-split.png');
+  }
+  await worker.evaluate(async () => {
+    const { quickflash_options } = await chrome.storage.sync.get('quickflash_options');
+    await chrome.storage.sync.set({ quickflash_options: { ...(quickflash_options || {}), manualCopilotOnly: true } });
+  });
+
+  // 04 — the side panel beside a poem page (dark), composited side by side. panel.html in a
+  // narrow window renders with the side-panel surface, so no browser chrome is needed.
+  const PANEL_W = 386;
+  const PAGE_W = W - PANEL_W - 2; // 2px divider
+  const poem = await context.newPage();
+  await poem.setViewportSize({ width: PAGE_W, height: APP_H });
+  await poem.goto('http://localhost:31337/to-my-father', { waitUntil: 'domcontentloaded' });
+  await poem.waitForTimeout(300);
+  const poemBuf = await poem.screenshot();
+  await poem.close();
+
+  const sp = await context.newPage();
+  await sp.setViewportSize({ width: PANEL_W, height: APP_H });
+  await sp.emulateMedia({ colorScheme: 'dark' });
+  await sp.goto(await extUrl('panel.html'), { waitUntil: 'domcontentloaded' });
+  await sp.waitForSelector('#front', { timeout: 30000 });
+  await sp.waitForTimeout(900);
+  await sp.fill('#front', "In 'To My Father', what does MacDonald say is at the great world's core?");
+  await sp.fill('#back', 'Fatherhood');
+  await sp.evaluate(() => {
+    const s = document.querySelector('#source');
+    if (s) { s.value = "That fatherhood is at the great world's core."; s.dispatchEvent(new Event('input', { bubbles: true })); }
+    const ctxEl = document.querySelector('#context');
+    if (ctxEl) { ctxEl.value = 'To My Father — George MacDonald'; ctxEl.dispatchEvent(new Event('input', { bubbles: true })); }
+  });
+  await sp.waitForTimeout(400);
+  const spBuf = await sp.screenshot();
+  await sp.close();
+  await composeDuo(poemBuf, spBuf, PAGE_W, PANEL_W, 'Draft in the side panel — then send straight to Anki', '04-side-panel.png');
+  console.log('shot: 04-side-panel.png');
 
   const opt = await context.newPage();
   await opt.setViewportSize({ width: W, height: APP_H });
