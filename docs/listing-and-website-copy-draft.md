@@ -10,33 +10,37 @@ Guardrails applied (from the competitive scan): no "first/only" claims, privacy 
 ## 1. Chrome Web Store listing
 
 ### Title
-Ghostwriter for Anki — Write Better Cards Faster
+Ghostwriter for Anki — Write Better Flashcards Faster
 
 ### Short description (≤132 chars)
-> Write Anki cards from what you read online. Highlight, draft with AI suggestions that autocomplete as you type, send to Anki.
+> Write Anki cards from your web browser. Highlight text, draft cards with an AI copilot, and send to Anki.
 
 (128 chars.)
 
 ### Full description
 
-> Ghostwriter helps you write your **own** Anki cards from the things you read online — without leaving your reading flow.
->
-> Highlight a passage and open Ghostwriter. The editor appears right away with the source already filled in, so you can write the card you actually want. As you type, optional AI suggestions autocomplete the front and back — accept what helps with Tab, ignore the rest. The finished card goes straight to your desktop Anki.
->
-> **This is not auto-generation.** Ghostwriter won't turn a web page into a pile of cards for you. You decide what's worth remembering and how to phrase it — the AI just helps you write it faster. Good cards come from good judgement, and that stays yours.
->
-> **How it works**
-> - Highlight text on any page — Ghostwriter opens the editor with the source attached
-> - Write the front and back in one focused view, with AI suggestions as you type
-> - Send the finished card straight to Anki via the AnkiConnect add-on
->
-> **Start writing right away.** A small number of AI suggestions are included to begin with — add your own provider key later for continued AI use, or keep writing manually. Manual writing works fully offline; the only time anything leaves your machine is when you choose to use a cloud AI provider, which receives the text you ask it to help with.
->
-> **Requirements:** desktop Anki running with the AnkiConnect add-on (ID 2055492159).
->
-> Best for students, language learners, and serious Anki users who already know that good cards come from good judgement.
+Ghostwriter helps you quickly write Anki cards from the things you read online.
+
+Highlight a passage and open Ghostwriter with ⌥⇧F. Start typing the first few words of the front of your card, and then call the AI copilot with ⌘⇧X to complete it based on the source material. The finished card goes straight to Anki with ⌘⇧A.
+
+This is deliberately not an app for automatically generating flashcards. Ghostwriter will not turn a web page into a pile of cards for you — and for good reason: LLMs are reliably bad at writing flashcards. You should decide what's worth remembering and how to phrase it, the AI is there to help you write it faster!
+
+A small number of free AI suggestions are included to begin with — after that you can add your own API key, use a local model, or keep writing manually. Manual writing works fully offline. The only time anything leaves your machine is when you choose to use a (non-local) LLM. The LLM receives the text you are asking it to help with.
+
+Requirements: desktop Anki running with the AnkiConnect add-on (ID 2055492159).
+
+Best for students, language learners, and serious Anki users who already know that good cards come from good judgement.
 
 *(Kept deliberately jargon-free per the existing listing guidance — no "copilot/triage/outbox/LLM/knowledge-graph." Say more on the website and in the video.)*
+
+### What's new in v2 (changelog snippet — paste wherever you announce the update)
+
+> Ghostwriter v2 is a focused rewrite around one idea: you write the card, the AI assists.
+> - Highlight → the editor opens with your source attached; AI ghost-text completes the front and back as you type.
+> - When your text exactly matches the source, a split editor opens: click a word to choose where the question ends and the answer begins.
+> - When a passage holds several facts, a picker lets you choose which one the card should test.
+> - Bring your own key (OpenAI, Claude, Gemini, OpenRouter, UltimateAI) or a local OpenAI-compatible model; manual writing works fully offline.
+> - The v1 knowledge graph (embeddings dashboard) is no longer part of the extension. Nothing of yours was deleted, and you can keep using it: the last version with the graph is preserved on the [`legacy-knowledge-graph`](https://github.com/djt97/ghostwriter-for-anki/tree/legacy-knowledge-graph) branch — see the [setup guide](https://github.com/djt97/ghostwriter-for-anki/blob/main/docs/legacy-knowledge-graph.md).
 
 ---
 
@@ -56,6 +60,9 @@ Drop-in replacements for the body. Front matter unchanged.
 > - **Bring your own provider** — OpenAI, Anthropic Claude, Google Gemini, OpenRouter, or UltimateAI — or start on a small free tier. Keys are stored locally, never synced.
 
 **Remove entirely:** "Smart generation… generate cards from it," "Knowledge graph — explore your collection visually," and the "Bulk generation via FlashcardGPT/Gemini Gem" line — all either removed in v2 or at odds with the "assist, don't auto-generate" message. (If you still ship the review queue, keep a light "Review before you send" bullet; drop the "review *AI-generated* cards" framing.)
+
+Where the knowledge-graph bullet is removed, consider one soft pointer so v1 users aren't stranded:
+> *Used the v1 knowledge graph? It lives on — see [how to keep using it](https://github.com/djt97/ghostwriter-for-anki/blob/main/docs/legacy-knowledge-graph.md).*
 
 ### Slider captions (`images.slider`)
 The current slides advertise removed/off-message features. Suggested set once new screenshots exist:
