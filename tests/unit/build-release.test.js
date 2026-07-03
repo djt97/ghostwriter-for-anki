@@ -23,10 +23,17 @@ const normalizePath = new Function('path', `
   return normalizePath;
 `)({ sep: '/' });
 
-const isExcluded = new Function(`
+const isExcluded = new Function('path', `
+  ${(buildScriptSource.match(/const EXCLUDED_EXTENSIONS = new Set\(\[[\s\S]*?\]\);/) || [''])[0]}
   ${extractFunction(buildScriptSource, 'isExcluded')}
   return isExcluded;
-`)();
+`)({
+  extname: (p) => {
+    const dot = p.lastIndexOf('.');
+    const slash = p.lastIndexOf('/');
+    return dot > slash ? p.slice(dot) : '';
+  },
+});
 
 function extractConstArray(name) {
   const match = buildScriptSource.match(new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`));
@@ -74,6 +81,19 @@ describe('build-release.js pure functions', () => {
 
     it('handles empty excludes', () => {
       assert.ok(!isExcluded('anything', []));
+    });
+
+    it('drops video/audio working files no matter where they sit', () => {
+      // A 382MB store zip shipped demo takes before this guard existed.
+      assert.ok(isExcluded('Ghostwriter_v2_Demo.mp4', []));
+      assert.ok(isExcluded('v2_demo_audio.wav', []));
+      assert.ok(isExcluded('sub/dir/clip.mov', []));
+      assert.ok(isExcluded('UPPER.MP4', []));
+    });
+
+    it('drops stray root-level images but keeps extension icons', () => {
+      assert.ok(isExcluded('ChatGPT Image Jul 1, 2026, 02_10_22 PM.png', []));
+      assert.ok(!isExcluded('icons/icon128.png', []));
     });
   });
 

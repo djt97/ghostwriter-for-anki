@@ -80,8 +80,16 @@ function normalizePath(value) {
   return value.split(path.sep).join('/');
 }
 
+// The extension bundle never contains video/audio; stray recordings dropped in the repo root
+// (demo takes, narration WAVs) must not balloon the store zip.
+const EXCLUDED_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.wav', '.m4a', '.aiff', '.aif']);
+
 function isExcluded(relPath, excludes) {
-  return excludes.some((entry) => relPath === entry || relPath.startsWith(`${entry}/`));
+  if (excludes.some((entry) => relPath === entry || relPath.startsWith(`${entry}/`))) return true;
+  if (EXCLUDED_EXTENSIONS.has(path.extname(relPath).toLowerCase())) return true;
+  // Root-level images are working assets, not extension resources (icons live in icons/).
+  if (!relPath.includes('/') && /\.(png|jpe?g|gif)$/i.test(relPath)) return true;
+  return false;
 }
 
 async function copyDir(src, dest, excludes) {
