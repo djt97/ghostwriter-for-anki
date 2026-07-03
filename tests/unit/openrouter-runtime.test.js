@@ -12,9 +12,6 @@ const panelSource = fs.readFileSync(
 const manifest = JSON.parse(fs.readFileSync(
   path.resolve(__dirname, '../../manifest.json'), 'utf8'
 ));
-const listingSource = fs.readFileSync(
-  path.resolve(__dirname, '../../LISTING.md'), 'utf8'
-);
 const privacySource = fs.readFileSync(
   path.resolve(__dirname, '../../PRIVACY_POLICY.md'), 'utf8'
 );
@@ -50,8 +47,9 @@ describe('OpenRouter runtime wiring', () => {
     assert.ok(manifest.content_security_policy.extension_pages.includes('https://openrouter.ai'));
   });
 
-  it('discloses OpenRouter in store listing and privacy policy endpoint lists', () => {
-    assert.match(listingSource, /https:\/\/openrouter\.ai[\s\S]*OpenRouter API requests/);
+  it('discloses OpenRouter in the privacy policy endpoint lists', () => {
+    // The store listing itself lives in the Chrome Web Store console now (LISTING.md was
+    // retired); the privacy policy remains the binding in-repo disclosure document.
     assert.match(privacySource, /OpenAI, OpenRouter, UltimateAI, Google Gemini, Anthropic Claude/);
     assert.match(privacySource, /https:\/\/openrouter\.ai[\s\S]*OpenRouter API requests/);
   });

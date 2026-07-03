@@ -59,7 +59,11 @@ jobs:
       - name: Install Playwright browsers (Chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Build release extension
+      # The e2e suite drives the overlay through the __qf_ci window-message hooks, which the
+      # store build hardens away — keep them for this CI-only build (never shipped).
+      - name: Build release extension (test hooks kept)
+        env:
+          GHOSTWRITER_BUILD_TEST_HOOKS: '1'
         run: npm run build:release
 
       # Run UI tests in a virtual display with Playwright browser debug logs

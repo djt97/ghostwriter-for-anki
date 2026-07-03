@@ -112,6 +112,11 @@ async function copyDir(src, dest, excludes) {
   }));
 }
 
+// CI sets this to run the e2e suite against the built artifact: the suite drives the overlay
+// through the __qf_ci window-message hooks, which the store build must not answer. Everything
+// else about the build (copying, excludes, MathJax) stays identical.
+const KEEP_TEST_HOOKS = process.env.GHOSTWRITER_BUILD_TEST_HOOKS === '1';
+
 async function hardenReleaseBuild(buildRoot) {
   // Disable the __qf_ci test hooks in the shipped build so a visited page cannot set
   // ?__qf_ci on itself and drive the content-script test message handlers.
@@ -120,6 +125,10 @@ async function hardenReleaseBuild(buildRoot) {
   const marker = 'const QF_TEST_MODE = /\\b__qf_ci\\b/i.test(location.search + location.hash);';
   if (!src.includes(marker)) {
     throw new Error('build-release: QF_TEST_MODE marker not found in content.js; update scripts/build-release.js so release test hooks stay disabled.');
+  }
+  if (KEEP_TEST_HOOKS) {
+    console.log('build-release: GHOSTWRITER_BUILD_TEST_HOOKS=1 — test hooks kept (CI build, do not ship)');
+    return;
   }
   const patched = src.replace(marker, 'const QF_TEST_MODE = false; // test hooks disabled in release build');
   await fs.writeFile(contentPath, patched);

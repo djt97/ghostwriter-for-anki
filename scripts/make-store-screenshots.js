@@ -101,7 +101,7 @@ const SHOTS = [
   { path: '/forgetting-curve', sel: '#pick',
     front: 'On the forgetting curve, what happens to the rate of forgetting as time since learning increases?',
     ghost: 'It slows down.',
-    caption: 'You nudge the AI — it drafts in your style',
+    caption: 'You nudge the AI — it completes the card you\u2019ve started writing',
     out: '02-copilot-autocomplete.png' },
 ];
 
@@ -296,7 +296,7 @@ async function main() {
   await sp.waitForTimeout(400);
   const spBuf = await sp.screenshot();
   await sp.close();
-  await composeDuo(poemBuf, spBuf, PAGE_W, PANEL_W, 'Draft in the side panel — then send straight to Anki', '04-side-panel.png');
+  await composeDuo(poemBuf, spBuf, PAGE_W, PANEL_W, 'Draft cards in the overlay, or use the side panel — then send straight to Anki', '04-side-panel.png');
   console.log('shot: 04-side-panel.png');
 
   const opt = await context.newPage();
@@ -304,7 +304,7 @@ async function main() {
   await opt.emulateMedia({ colorScheme: 'light' });
   await opt.goto(await extUrl('options.html'), { waitUntil: 'domcontentloaded' });
   await opt.waitForTimeout(900);
-  await compose(await opt.screenshot(), 'Bring your own AI — or start on the free tier', '05-your-ai-your-keys.png');
+  await compose(await opt.screenshot(), 'Bring your own AI — the first few suggestions are free!', '05-your-ai-your-keys.png');
   console.log('shot: 05-your-ai-your-keys.png');
   await opt.close();
 
