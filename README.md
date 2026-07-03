@@ -43,7 +43,6 @@ Release zips are published on the [Releases](https://github.com/djt97/ghostwrite
 
 - [Privacy Policy](https://github.com/djt97/ghostwriter-for-anki/blob/main/PRIVACY_POLICY.md)
 - [Privacy Notes](./privacy.md)
-- [Store Listing Draft](./LISTING.md)
 
 ## Third-party notices
 
@@ -52,5 +51,7 @@ Release-facing notices for bundled dependencies are provided in [`THIRD_PARTY_NO
 ## License
 
 Ghostwriter for Anki is free software licensed under the **GNU General Public License v3.0** — see [`LICENSE`](./LICENSE). You're free to use, study, share, and modify it; any redistributed or derivative version must also remain open source under the GPL.
+
+(`APACHE-2.0.txt` is not this project's license — it is the license text for the bundled MathJax, as detailed in [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).)
 
 Copyright © 2026 Daniel Thornton.

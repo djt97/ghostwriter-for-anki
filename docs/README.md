@@ -21,4 +21,3 @@ This directory contains the primary documentation set for the Ghostwriter browse
 ## Related policies
 
 - [Privacy Policy (root)](../PRIVACY_POLICY.md)
-- [Chrome Web Store Listing Draft (root)](../LISTING.md)
