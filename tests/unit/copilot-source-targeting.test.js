@@ -8,7 +8,19 @@ const panelSource = fs.readFileSync(path.resolve(__dirname, '../../panel.js'), '
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
   if (start === -1) throw new Error(`Could not find function: ${name}`);
-  const bodyStart = source.indexOf('{', source.indexOf('(', start));
+  // Skip the parameter list (which may contain destructured defaults like `{ before = 0 }`)
+  // by balancing parens first, then find the body's opening brace.
+  const paramsOpen = source.indexOf('(', start);
+  let parenDepth = 0;
+  let afterParams = paramsOpen;
+  for (let i = paramsOpen; i < source.length; i += 1) {
+    if (source[i] === '(') parenDepth += 1;
+    if (source[i] === ')') {
+      parenDepth -= 1;
+      if (parenDepth === 0) { afterParams = i + 1; break; }
+    }
+  }
+  const bodyStart = source.indexOf('{', afterParams);
   let depth = 0;
   for (let i = bodyStart; i < source.length; i += 1) {
     if (source[i] === '{') depth += 1;
@@ -53,5 +65,16 @@ describe('copilot source targeting (selectRelevantSource)', () => {
   it('does not narrow when there is no lexical overlap (avoids mis-targeting)', () => {
     const src = 'Alpha beta gamma. Delta epsilon zeta.';
     assert.equal(selectRelevantSource(src, 'Something completely unrelated', ''), src);
+  });
+
+  it('widens to a window for the Back so an answer one clause away is included', () => {
+    // The Front matches the "mission" sentence, but the answer (Script X) is in the next sentence.
+    const kaleida =
+      "Kaleida's mission was to create a multimedia programming language. It finally produced one, called Script X. But it took three years.";
+    const front = 'What multimedia programming language did Kaleida create?';
+    const single = selectRelevantSource(kaleida, '', front);
+    assert.ok(!/Script X/.test(single), 'single-sentence targeting misses the adjacent answer');
+    const windowed = selectRelevantSource(kaleida, '', front, { before: 1, after: 1 });
+    assert.match(windowed, /Script X/, 'the Back window includes the adjacent answer sentence');
   });
 });

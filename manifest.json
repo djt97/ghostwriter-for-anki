@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Ghostwriter for Anki",
-  "description": "Write better Anki cards faster. Highlight text, draft with AI suggestions, and send directly to Anki.",
+  "name": "Ghostwriter for Anki — Flashcards, faster",
+  "description": "Highlight text, draft flashcards with an AI copilot, and send directly to Anki.",
   "version": "0.4.0",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' blob: data: http://127.0.0.1:* http://localhost:* https://api.ultimateai.org https://chat.ultimateai.org https://smart.ultimateai.org https://api.openai.com https://openrouter.ai https://generativelanguage.googleapis.com https://api.anthropic.com https://ghostwriter-proxy.djthornton97.workers.dev",

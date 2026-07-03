@@ -156,6 +156,7 @@
       select {
         font-size: 16px;
       }
+      .qf-ghost-wrap { font-size: 16px; } /* front/back inherit via font: inherit */
     }
 
     .context-input-row {
@@ -189,15 +190,28 @@
       box-shadow: 0 0 0 var(--focus-outline) color-mix(in srgb, #fbbf24 35%, transparent);
     }
 
-    .qf-ghost-wrap { position: relative; }
+    /* The ghost overlay only aligns if the textarea and the overlay share EXACT font metrics.
+       Textareas otherwise fall back to the browser's default (monospace, ~13.3px) while the
+       overlay inherits the body font — pin both to one explicit stack on the wrap. */
+    .qf-ghost-wrap {
+      position: relative;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .qf-ghost-wrap textarea { font: inherit; line-height: inherit; }
     .qf-ghost {
       position: absolute; inset: 0; pointer-events: none;
       padding: 10px 12px;
-      white-space: pre-wrap; overflow-wrap: anywhere;
+      border: 1px solid transparent; /* the textarea's border offsets its text by 1px */
+      white-space: pre-wrap; overflow-wrap: break-word;
       color: var(--muted); opacity: .75; font: inherit; line-height: inherit;
     }
     .qf-ghost .mirror { visibility: hidden; }
     .qf-ghost[hidden] { display: none; }
+    /* A live ghost suggestion occupies the same spot as the placeholder — hide the placeholder
+       while a suggestion is showing so the two don't overlap. */
+    .qf-ghost-wrap:has(.qf-ghost:not([hidden])) textarea::placeholder { color: transparent; }
     .copilot-suggestion[hidden] { display: none; }
     .shortcut-coach {
       margin-top: 6px;
@@ -268,6 +282,14 @@
       color: var(--muted);
     }
     .copilot-working[hidden] { display: none; }
+    /* Visible fallback for "no usable card" — #copilotStatus lives in a drawer that's collapsed
+       on the overlay surface, so failures there would otherwise be silent. */
+    .copilot-nocard {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .copilot-nocard[hidden] { display: none; }
     .copilot-header {
       display: flex;
       align-items: center;
@@ -293,6 +315,34 @@
     }
     .copilot-suggestion.loading .copilot-text { color: var(--muted); }
     .copilot-suggestion.error .copilot-text { color: #b91c1c; }
+    .stem-split-word {
+      display: inline-block;
+      padding: 2px 7px;
+      margin: 2px 4px 2px 0;
+      border-radius: 6px;
+    }
+    .stem-split-word.typed { color: var(--muted); }
+    .stem-split-word.movable { cursor: pointer; }
+    .stem-split-word.movable:hover { background: color-mix(in oklab, var(--accent) 10%, var(--surface)); }
+    .stem-split-word.blank {
+      background: color-mix(in oklab, var(--accent) 16%, var(--surface));
+      color: var(--accent);
+    }
+    .stem-split-word.blank:hover { background: color-mix(in oklab, var(--accent) 26%, var(--surface)); }
+    .sst-explain { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 0 0 4px; }
+    .sst-sentence { font-size: 16px; line-height: 2.2; margin: 16px 0 4px; }
+    .sst-hint { color: var(--muted); font-size: 12px; margin: 10px 0 18px; }
+    .sst-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .sst-nudge {
+      font-size: 13px;
+      padding: 7px 12px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+    }
+    .sst-nudge:hover { background: var(--surface-2); }
     .copilot-actions {
       display: flex;
       flex-wrap: wrap;
@@ -302,6 +352,29 @@
       font-size: 11px;
       padding: 4px 6px;
     }
+
+    /* Fact picker takes over the whole panel so the source is readable and nothing else competes. */
+    .copilot-fact-overlay { background: var(--bg); align-items: stretch; justify-content: stretch; z-index: 10000; }
+    .copilot-fact-modal { width: 100%; max-width: 640px; margin: 0 auto; max-height: 100%; overflow-y: auto; display: flex; flex-direction: column; padding: 18px 20px; gap: 0; background: var(--bg); border-radius: 0; box-shadow: none; }
+    #copilotFactPickerBody { display: flex; flex-direction: column; min-height: 0; }
+    .cfp-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .cfp-message { font-size: 15px; font-weight: 600; color: var(--text); margin: 0; }
+    .cfp-back { font-size: 12px; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+    .cfp-back:hover { background: var(--surface-2); }
+    .cfp-source { color: var(--text); background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; line-height: 1.55; font-size: 14px; overflow: auto; flex: 0 1 auto; max-height: 45vh; }
+    .cfp-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cfp-chip { font-size: 14px; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
+    .cfp-chip:hover { background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); border-color: color-mix(in oklab, var(--border) 50%, var(--accent)); }
+    .cfp-chip:disabled { opacity: 0.55; cursor: default; }
+    .cfp-chip-active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .cfp-proposal-card { border: 0.5px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; background: var(--surface-2); }
+    .cfp-line { font-size: 15px; margin: 6px 0; line-height: 1.45; }
+    .cfp-label { display: inline-block; min-width: 44px; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 8px; vertical-align: 1px; }
+    .cfp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cfp-accept, .cfp-reject, .cfp-cancel { font-size: 13px; padding: 7px 14px; border-radius: var(--radius); cursor: pointer; border: 1px solid var(--border); }
+    .cfp-accept { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .cfp-reject { background: var(--surface-2); color: var(--text); }
+    .cfp-cancel { background: transparent; color: var(--muted); }
 
     .btns { display:flex; gap: 8px; flex-wrap: wrap; }
     .btns .subtle-btn {
@@ -531,6 +604,20 @@
       align-items: center;
       gap: 6px;
     }
+    .long-source-notice {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 6px;
+      padding: 6px 10px;
+      border: 1px solid #e8d9a8;
+      border-radius: 8px;
+      background: #fdf6e0;
+      color: #7a5d1a;
+    }
+    .long-source-notice[hidden] { display: none; }
+    .long-source-notice button { font-size: 12px; flex-shrink: 0; }
     .editor-nav-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
     .editor-nav-buttons[hidden] { display: none; }
     .editor-nav-buttons button { padding: 6px 8px; font-size: 12px; }
@@ -571,20 +658,31 @@
       justify-content: space-between;
       gap: 8px;
     }
-    .front-detection {
-      font-size: 11px;
-      color: var(--muted);
-      border-radius: 999px;
-      padding: 2px 6px;
+    .card-type-row { display: inline-flex; align-items: center; gap: 6px; }
+    .card-type-pill {
+      display: inline-flex;
       border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
       background: var(--surface-2);
+    }
+    .card-type-pill .seg {
+      font-size: 11px;
+      line-height: 1;
+      padding: 3px 10px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
       white-space: nowrap;
     }
-    .front-detection[data-detected="cloze"] {
-      color: #1f4a85;
-      border-color: color-mix(in oklab, var(--border) 60%, #3b82f6);
-      background: color-mix(in oklab, var(--surface-2) 85%, #dbeafe);
-    }
+    .card-type-pill .seg[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+    .card-type-pill[data-mismatch="true"] { border-color: color-mix(in oklab, var(--border) 45%, #d97706); }
+    .card-type-hint { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .card-type-hint[hidden] { display: none; }
+    .advanced-note-type > summary { font-size: 12px; color: var(--muted); cursor: pointer; list-style: none; }
+    .advanced-note-type > summary::-webkit-details-marker { display: none; }
+    .advanced-note-type[open] > summary { margin-bottom: 6px; }
 
     /* Wrap long source/previews (AI draft, excerpts) */
     textarea.ai-source, .source-note, .note-preview div {
@@ -1052,6 +1150,7 @@
       .editor-meta { font-size: 14px; }
       .small { font-size: 12px; }
       textarea, input[type="text"], select { font-size: 16px; }
+      .qf-ghost-wrap { font-size: 16px; }
       .quick-options { grid-template-columns: 1fr; }
       .quick-options-shell { width: 100%; display: block; }
       #front,
@@ -1283,10 +1382,6 @@
       font-size: 12px;
     }
 
-    body.is-overlay-surface .front-detection[data-detected="basic"] {
-      display: none;
-    }
-
     body.is-overlay-surface #front {
       min-height: 112px;
       height: min(24vh, 150px);
@@ -1441,6 +1536,10 @@
     /* Hide the legacy Copilot suggestion card; only show ghost overlays */
     .copilot-suggestion { display: none !important; }
     .copilot-working    { display: none !important; }
+    /* ...except a blocked draft offered via "Use anyway" — it has no other surface, so it must
+       stay visible everywhere (overlay, side panel, tab). The movable-blank split editor lives
+       in its own takeover modal (#stemSplitTakeover) instead. */
+    .copilot-suggestion.rejected-draft-mode:not([hidden]) { display: grid !important; }
   </style>
 </head>
 <body>
@@ -1491,8 +1590,10 @@
                   <select id="deck"></select>
                 </div>
                 <div>
-                  <div class="label">Note type</div>
-                  <select id="model"></select>
+                  <details class="advanced-note-type">
+                    <summary>Advanced: note type</summary>
+                    <select id="model"></select>
+                  </details>
                   <div id="ghostwriterModelInfo" class="small ghostwriter-warning ghostwriter-info" role="status" aria-live="polite" hidden>
                     <div>Ghostwriter uses its own custom note type with additional fields like Source and Context. We strongly recommend using these note types.</div>
                     <div class="ghostwriter-info-actions">
@@ -1579,6 +1680,10 @@
             </div>
           </div>
         </details>
+        <div id="longSourceNotice" class="small long-source-notice" role="status" aria-live="polite" hidden>
+          <span>Long selection — AI suggestions work best on a sentence or two. Try selecting a smaller passage.</span>
+          <button type="button" id="dismissLongSourceNotice">Dismiss</button>
+        </div>
 
         <div id="lpcgPanel" class="card lpcg-panel" hidden>
           <div>
@@ -1665,13 +1770,19 @@
           <div>
             <div class="label front-label-row">
               <span>Question (Front)</span>
-              <span id="frontDetection" class="front-detection" data-detected="basic" role="status" aria-live="polite">Detected: Basic</span>
+              <span class="card-type-row">
+                <span class="card-type-hint" id="cardTypeHint" role="status" aria-live="polite" hidden>Cloze detected</span>
+                <span class="card-type-pill" id="cardTypePill" data-mismatch="false" role="group" aria-label="Card type">
+                  <button type="button" class="seg" data-type="basic" id="cardTypeBasic" aria-pressed="true" title="Basic card (Option+W to toggle)">Basic</button>
+                  <button type="button" class="seg" data-type="cloze" id="cardTypeCloze" aria-pressed="false" title="Cloze card (Option+W to toggle)">Cloze</button>
+                </span>
+              </span>
             </div>
             <div class="qf-ghost-wrap">
               <textarea id="front" placeholder="Type your question…"></textarea>
-              <div class="qf-ghost" data-field="front" aria-hidden="true">
-                <span class="mirror"></span><span class="ghost"></span>
-              </div>
+              <!-- .qf-ghost is white-space: pre-wrap — any markup whitespace before .mirror renders
+                   as a literal indent, so the spans must hug the div tags on one line. -->
+              <div class="qf-ghost" data-field="front" aria-hidden="true"><span class="mirror"></span><span class="ghost"></span></div>
               <div class="markdown-section inline-preview" data-preview-block="front" hidden>
                 <iframe id="previewFront" class="markdown-render preview-frame" title="Front preview" tabindex="-1"></iframe>
                 <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
@@ -1717,9 +1828,7 @@
             <div class="label">Answer (Back)</div>
             <div class="qf-ghost-wrap">
               <textarea id="back" placeholder="Type the answer…"></textarea>
-              <div class="qf-ghost" data-field="back" aria-hidden="true">
-                <span class="mirror"></span><span class="ghost"></span>
-              </div>
+              <div class="qf-ghost" data-field="back" aria-hidden="true"><span class="mirror"></span><span class="ghost"></span></div>
               <div class="markdown-section inline-preview" data-preview-block="back" hidden>
                 <iframe id="previewBack" class="markdown-render preview-frame" title="Back preview"></iframe>
                 <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
@@ -1814,6 +1923,18 @@
 
     <div class="small" id="status"></div>
   </main>
+
+  <div id="copilotFactPicker" class="modal-overlay copilot-fact-overlay" hidden>
+    <div class="modal copilot-fact-modal" role="dialog" aria-modal="true" aria-labelledby="copilotFactPickerTitle">
+      <div id="copilotFactPickerBody"></div>
+    </div>
+  </div>
+
+  <div id="stemSplitTakeover" class="modal-overlay copilot-fact-overlay" hidden>
+    <div class="modal copilot-fact-modal" role="dialog" aria-modal="true" aria-labelledby="stemSplitTakeoverTitle">
+      <div id="stemSplitTakeoverBody"></div>
+    </div>
+  </div>
 
   <div id="triageFooter" class="triage-footer" hidden>
     <button type="button" id="triageFooterPrev">[←] Prev</button>

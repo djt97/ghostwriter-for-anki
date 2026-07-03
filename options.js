@@ -89,6 +89,11 @@ const PROVIDER_DEFAULTS = {
     model: CLAUDE_DEFAULT_MODEL,
     keyPlaceholder: "Anthropic API key",
   },
+  local: {
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "llama3.2",
+    keyPlaceholder: "API key (optional for local servers)",
+  },
 };
 const PROVIDER_HOST_PERMISSION_ORIGINS = Object.freeze({
   ultimate: [
@@ -100,6 +105,9 @@ const PROVIDER_HOST_PERMISSION_ORIGINS = Object.freeze({
   openrouter: ["https://openrouter.ai/*"],
   gemini: ["https://generativelanguage.googleapis.com/*"],
   claude: ["https://api.anthropic.com/*"],
+  // Already granted as required host permissions in the manifest (shared with AnkiConnect), so
+  // requesting them is a no-op — listed here so local doesn't fall back to UltimateAI's origins.
+  local: ["http://127.0.0.1/*", "http://localhost/*"],
 });
 const KNOWN_MODELS = {
   gemini: [
@@ -146,6 +154,11 @@ const KNOWN_MODELS = {
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (alias)" },
     { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (use for harder cards)" },
   ],
+  local: [
+    { id: "llama3.2", label: "Llama 3.2 3B (fast default)" },
+    { id: "qwen3:4b", label: "Qwen3 4B (better quality)" },
+    { id: "gemma3:4b", label: "Gemma 3 4B (RAM-efficient)" },
+  ],
 };
 const PROVIDER_MODEL_HELP = Object.freeze({
   gemini:
@@ -158,10 +171,12 @@ const PROVIDER_MODEL_HELP = Object.freeze({
     "Recommended: Claude Haiku 4.5 for short, low-latency completions. Use Sonnet only when Haiku is missing facts or context.",
   ultimate:
     "Recommended: Auto Version. Direct Gemini routes can return upstream gateway errors through UltimateAI; choose a specific documented model only after a live test.",
+  local:
+    "Runs on your machine — no API cost. Point the base URL at your local server (Ollama: http://127.0.0.1:11434/v1, LM Studio: http://localhost:1234/v1). The server must allow browser-extension requests: for Ollama set OLLAMA_ORIGINS=chrome-extension://* and restart it; for LM Studio/Jan turn on “Enable CORS.” The API key is optional. Pull a small model first (e.g. `ollama pull llama3.2`).",
 });
 const OPTIONS_KEY = "quickflash_options";
 const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
-const PROVIDER_KEY_FIELDS = Object.freeze(["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey"]);
+const PROVIDER_KEY_FIELDS = Object.freeze(["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey", "localKey"]);
 const FREE_TIER_KEY = "ghostwriter_free_tier";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
@@ -309,6 +324,7 @@ function normalizeProvider(value) {
   if (value === "openai") return "openai";
   if (value === "openrouter") return "openrouter";
   if (value === "claude") return "claude";
+  if (value === "local") return "local";
   return "ultimate";
 }
 
@@ -320,6 +336,7 @@ function inferProviderFromOptions(opts) {
   if (opts?.geminiKey) return "gemini";
   if (opts?.claudeKey) return "claude";
   if (/openrouter\.ai/i.test(String(opts?.openrouterBaseUrl || ""))) return "openrouter";
+  if (opts?.localBaseUrl) return "local";
   return "openai";
 }
 
@@ -374,6 +391,10 @@ function getProviderConfigFromOpts(opts, providerOverride) {
     cfg.baseUrl = opts.claudeBaseUrl || PROVIDER_DEFAULTS.claude.baseUrl;
     cfg.apiKey = opts.claudeKey || "";
     cfg.model = opts.claudeModel || PROVIDER_DEFAULTS.claude.model;
+  } else if (provider === "local") {
+    cfg.baseUrl = opts.localBaseUrl || PROVIDER_DEFAULTS.local.baseUrl;
+    cfg.apiKey = opts.localKey || "";
+    cfg.model = opts.localModel || PROVIDER_DEFAULTS.local.model;
   } else {
     // UltimateAI (open-source / hosted)
     cfg.baseUrl = normalizeUltimateBaseUrl(opts.ultimateBaseUrl);
@@ -477,6 +498,10 @@ function writeProviderConfigToData(data, base, provider, ui) {
     data.claudeBaseUrl = baseUrl || base.claudeBaseUrl || PROVIDER_DEFAULTS.claude.baseUrl;
     data.claudeKey = apiKey;
     data.claudeModel = model || base.claudeModel || PROVIDER_DEFAULTS.claude.model;
+  } else if (p === "local") {
+    data.localBaseUrl = baseUrl || base.localBaseUrl || PROVIDER_DEFAULTS.local.baseUrl;
+    data.localKey = apiKey;
+    data.localModel = model || base.localModel || PROVIDER_DEFAULTS.local.model;
   } else {
     // ultimate
     data.ultimateBaseUrl = normalizeUltimateBaseUrl(baseUrl || base.ultimateBaseUrl);
@@ -925,6 +950,7 @@ async function save() {
     openrouter: "openrouterKey",
     gemini: "geminiKey",
     claude: "claudeKey",
+    local: "localKey",
   }[provider] || "ultimateKey";
   const providerStreamFront = document.querySelector("#providerStreamFront")?.value === "true";
   const hasProviderCredential = !!providerApiKey || !!base[providerKeyField];

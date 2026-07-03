@@ -40,6 +40,8 @@ const getOpenAIProviderConfig = new Function(`
   const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
   const ULTIMATE_HOST_RE = /^https:\\/\\/(?:api|smart|chat)\\.ultimateai\\.org$/i;
   const ULTIMATE_DEFAULT_MODEL = "auto";
+  const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1";
+  const LOCAL_DEFAULT_MODEL = "llama3.2";
   ${extractFunction(bgSource, 'normalizeProvider')}
   ${extractFunction(bgSource, 'inferProviderFromOptions')}
   ${extractFunction(bgSource, 'normalizeUltimateBaseUrl')}
@@ -127,6 +129,10 @@ describe('background.js pure functions', () => {
       assert.equal(normalizeProvider('claude'), 'claude');
     });
 
+    it('preserves the local provider', () => {
+      assert.equal(normalizeProvider('local'), 'local');
+    });
+
     it('returns "ultimate" for unknown providers', () => {
       assert.equal(normalizeProvider('mistral'), 'ultimate');
       assert.equal(normalizeProvider(''), 'ultimate');
@@ -150,6 +156,11 @@ describe('background.js pure functions', () => {
 
     it('infers UltimateAI from a legacy UltimateAI base URL', () => {
       assert.equal(inferProviderFromOptions({ ultimateBaseUrl: 'https://smart.ultimateai.org/v1' }), 'ultimate');
+    });
+
+    it('infers local from a stored local base URL', () => {
+      assert.equal(inferProviderFromOptions({ localBaseUrl: 'http://127.0.0.1:11434/v1' }), 'local');
+      assert.equal(inferProviderFromOptions({ llmProvider: 'local' }), 'local');
     });
 
     it('defaults to OpenAI when no key or provider is stored', () => {
@@ -281,6 +292,26 @@ describe('background.js pure functions', () => {
 	      const opts = { llmProvider: 'ultimate', ultimateBaseUrl: 'https://custom.ai/v1' };
       const config = getOpenAIProviderConfig(opts);
       assert.equal(config.baseUrl, 'https://custom.ai/v1');
+    });
+
+    it('returns a keyless localhost config for the local provider', () => {
+      const config = getOpenAIProviderConfig({ llmProvider: 'local' });
+      assert.equal(config.provider, 'local');
+      assert.equal(config.apiKey, '');
+      assert.equal(config.baseUrl, 'http://127.0.0.1:11434/v1');
+      assert.equal(config.model, 'llama3.2');
+    });
+
+    it('honors a custom local base URL, key, and model', () => {
+      const config = getOpenAIProviderConfig({
+        llmProvider: 'local',
+        localBaseUrl: 'http://localhost:1234/v1///',
+        localKey: 'lm-studio',
+        localModel: 'qwen3:4b',
+      });
+      assert.equal(config.baseUrl, 'http://localhost:1234/v1');
+      assert.equal(config.apiKey, 'lm-studio');
+      assert.equal(config.model, 'qwen3:4b');
     });
   });
 
@@ -416,18 +447,21 @@ describe('background.js pure functions', () => {
       assert.ok(!/preferredSurface:\s*"side_panel"/.test(commandBlock[0]));
     });
 
-    it('always opens/focuses the side panel on the command instead of toggling from stale state', () => {
-      // Chrome exposes no reliable onClosed event, so the command must not try to close a
-      // "marked open" panel — that caused a press-twice-to-reopen bug. It always opens/focuses.
-      const start = bgSource.indexOf('function openSidePanelCommandFromUserGesture');
-      const open = bgSource.indexOf('chrome.sidePanel.open(openOptions)', start);
-      const beforeOpen = bgSource.slice(start, open);
-      assert.doesNotMatch(beforeOpen, /closeSidePanelCommandFromUserGesture/);
-      // The phantom onOpened/onClosed listeners (not real Chrome events) must be gone.
-      assert.doesNotMatch(bgSource, /chrome\.sidePanel\?\.onClosed\?\.addListener/);
+    it('toggles the side panel from the command using synchronously-checked open state', () => {
+      // The shortcut closes an already-open panel and opens a closed one. The decision must be
+      // synchronous (chrome.sidePanel.open needs the live user gesture), so it reads the in-memory
+      // open state — kept honest by the panel's own open/close reports, not a phantom event.
+      const commandBlock = bgSource.match(/chrome\.commands\.onCommand\.addListener[\s\S]*?\n\}\);/);
+      assert.ok(commandBlock, 'Could not find command listener');
+      assert.match(commandBlock[0], /isSidePanelMarkedOpen\(\{ windowId \}\)[\s\S]*?closeSidePanelCommandFromUserGesture/);
+      assert.match(commandBlock[0], /openSidePanelCommandFromUserGesture\(tab\)/);
+      // The panel document drives open-state honesty; background consumes its lifecycle reports.
+      assert.ok(bgSource.includes('quickflash:sidePanelOpened'));
+      assert.ok(bgSource.includes('quickflash:sidePanelClosed'));
     });
 
-    it('opens the side panel from the command without awaited work first', () => {
+    it('opens the side panel helper without awaited work before sidePanel.open', () => {
+      // The open helper itself must not await before chrome.sidePanel.open, preserving the gesture.
       const start = bgSource.indexOf('function openSidePanelCommandFromUserGesture');
       const open = bgSource.indexOf('chrome.sidePanel.open(openOptions)', start);
       assert.ok(start >= 0, 'Could not find direct side-panel command helper');
@@ -441,6 +475,43 @@ describe('background.js pure functions', () => {
       const open = bgSource.indexOf('chrome.sidePanel.open(openOptions)', start);
       const beforeOpen = bgSource.slice(start, open);
       assert.match(beforeOpen, /clearLastDraftContext\(\)/);
+    });
+  });
+
+  describe('side-panel open-state machine', () => {
+    // Exercise the real mark/is-open helpers (not just source strings) to pin the toggle logic.
+    const sidePanelState = new Function(`
+      const sidePanelOpenState = { tabs: new Set(), windows: new Set() };
+      ${extractFunction(bgSource, 'isGhostwriterSidePanelPath')}
+      ${extractFunction(bgSource, 'markSidePanelOpen')}
+      ${extractFunction(bgSource, 'markSidePanelClosed')}
+      ${extractFunction(bgSource, 'isSidePanelMarkedOpen')}
+      return { markSidePanelOpen, markSidePanelClosed, isSidePanelMarkedOpen };
+    `)();
+
+    it('marks a window open and toggles it closed by windowId', () => {
+      const { markSidePanelOpen, markSidePanelClosed, isSidePanelMarkedOpen } = sidePanelState;
+      assert.equal(isSidePanelMarkedOpen({ windowId: 7 }), false);
+      markSidePanelOpen({ windowId: 7 });
+      assert.equal(isSidePanelMarkedOpen({ windowId: 7 }), true);
+      markSidePanelClosed({ windowId: 7 });
+      assert.equal(isSidePanelMarkedOpen({ windowId: 7 }), false);
+    });
+
+    it('keeps windows independent so a shortcut toggles only its own window', () => {
+      const { markSidePanelOpen, isSidePanelMarkedOpen } = sidePanelState;
+      markSidePanelOpen({ windowId: 100 });
+      markSidePanelOpen({ windowId: 200 });
+      assert.equal(isSidePanelMarkedOpen({ windowId: 100 }), true);
+      assert.equal(isSidePanelMarkedOpen({ windowId: 999 }), false);
+    });
+
+    it('marks both tab and window on a command open, and the panel report clears the window', () => {
+      const { markSidePanelOpen, markSidePanelClosed, isSidePanelMarkedOpen } = sidePanelState;
+      markSidePanelOpen({ tabId: 5, windowId: 42 }); // command path passes both
+      assert.equal(isSidePanelMarkedOpen({ windowId: 42 }), true);
+      markSidePanelClosed({ windowId: 42 }); // panel pagehide reports only windowId
+      assert.equal(isSidePanelMarkedOpen({ windowId: 42 }), false);
     });
   });
 });

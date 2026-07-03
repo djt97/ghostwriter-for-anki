@@ -35,4 +35,19 @@ describe('Ghostwriter Cloze note type', () => {
     assert.match(panelSource, /findModelsByName/);
     assert.match(panelSource, /found\.type !== 1/);
   });
+
+  it('never routes a cloze card to a mistyped (standard) note type', () => {
+    // isClozeTypeModel gates routing on Anki model type 1, so a mistyped "Cloze [Ghostwriter]"
+    // falls through to built-in "Cloze" (a real cloze type) instead of producing a broken card.
+    assert.match(panelSource, /async function isClozeTypeModel/);
+    assert.match(panelSource, /return m\.type === 1;/);
+    // resolveGhostwriterClozeModel only returns the Ghostwriter model when it's a real cloze type.
+    assert.match(panelSource, /if \(cloze && \(await isClozeTypeModel\(cloze\)\)\) return cloze;/);
+    // cardToAnkiNote honors a selected cloze model only when it's a real cloze type.
+    assert.match(panelSource, /isClozeModelName\(modelName\) && \(await isClozeTypeModel\(modelName\)\)/);
+  });
+
+  it('only nudges to switch note types on a real mismatch (cloze typed, non-cloze model)', () => {
+    assert.match(panelSource, /!detectClozeSyntax\(front\.value\) \|\| isClozeModelName\(document\.getElementById\('model'\)\?\.value \|\| ''\)/);
+  });
 });

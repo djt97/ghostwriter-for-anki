@@ -11,6 +11,8 @@ const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
 const ULTIMATE_DEFAULT_MODEL = "auto";
+const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1";
+const LOCAL_DEFAULT_MODEL = "llama3.2";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
@@ -63,6 +65,7 @@ function normalizeProvider(value) {
   if (value === "openai") return "openai";
   if (value === "openrouter") return "openrouter";
   if (value === "claude") return "claude";
+  if (value === "local") return "local";
   return "ultimate";
 }
 
@@ -76,6 +79,7 @@ function inferProviderFromOptions(opts) {
   if (/ultimateai/i.test(String(opts?.ultimateBaseUrl || ""))) return "ultimate";
   if (/api\.openai\.com/i.test(String(opts?.openaiBaseUrl || ""))) return "openai";
   if (/openrouter\.ai/i.test(String(opts?.openrouterBaseUrl || ""))) return "openrouter";
+  if (opts?.localBaseUrl) return "local";
   return "openai";
 }
 
@@ -108,6 +112,14 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
       baseUrl: (opts.openrouterBaseUrl || OPENROUTER_BASE_URL).replace(/\/+$/g, ""),
       apiKey: opts.openrouterKey || "",
       model: opts.openrouterModel || "openrouter/auto",
+    };
+  }
+  if (provider === "local") {
+    return {
+      provider: "local",
+      baseUrl: (opts.localBaseUrl || LOCAL_DEFAULT_BASE_URL).replace(/\/+$/g, ""),
+      apiKey: opts.localKey || "",
+      model: opts.localModel || LOCAL_DEFAULT_MODEL,
     };
   }
 
@@ -309,20 +321,14 @@ function isGhostwriterSidePanelPath(path) {
 
 function markSidePanelOpen({ tabId, windowId, path } = {}) {
   if (!isGhostwriterSidePanelPath(path)) return;
-  if (typeof tabId === "number") {
-    sidePanelOpenState.tabs.add(tabId);
-  } else if (typeof windowId === "number") {
-    sidePanelOpenState.windows.add(windowId);
-  }
+  if (typeof tabId === "number") sidePanelOpenState.tabs.add(tabId);
+  if (typeof windowId === "number") sidePanelOpenState.windows.add(windowId);
 }
 
 function markSidePanelClosed({ tabId, windowId, path } = {}) {
   if (!isGhostwriterSidePanelPath(path)) return;
-  if (typeof tabId === "number") {
-    sidePanelOpenState.tabs.delete(tabId);
-  } else if (typeof windowId === "number") {
-    sidePanelOpenState.windows.delete(windowId);
-  }
+  if (typeof tabId === "number") sidePanelOpenState.tabs.delete(tabId);
+  if (typeof windowId === "number") sidePanelOpenState.windows.delete(windowId);
 }
 
 function isSidePanelMarkedOpen({ tabId, windowId } = {}) {
@@ -384,9 +390,9 @@ function openSidePanelCommandFromUserGesture(tab) {
     return;
   }
 
-  // Chrome does not report user-initiated side-panel closes (no onClosed event),
-  // so the shortcut always opens/focuses the panel instead of toggling from stale
-  // in-memory state. Chrome focuses an already-open panel, so re-pressing is a no-op.
+  // Open-state is tracked from the panel document's own open/close reports (see panel.js) plus
+  // chrome.sidePanel.onOpened/onClosed when available, so the command handler can toggle. This
+  // helper only ever opens/focuses; the toggle decision lives in the onCommand listener.
   clearLastDraftContext();
 
   if (typeof tabId === "number" && chrome.sidePanel.setOptions) {
@@ -437,8 +443,13 @@ function openSidePanelCommandFromUserGesture(tab) {
     });
 }
 
-// Note: chrome.sidePanel exposes no onOpened/onClosed events, so open/closed
-// state cannot be tracked from user-initiated closes. The shortcut opens/focuses.
+// Best-effort backup for open-state honesty: chrome.sidePanel.onOpened / onClosed fire on newer
+// Chrome; where they're undefined the ?. no-ops and the panel's own open/close reports (panel.js)
+// carry the state instead. Defensive: clears whatever key the event provides (tabId and/or windowId).
+try {
+  chrome.sidePanel?.onOpened?.addListener((info) => markSidePanelOpen(info || {}));
+  chrome.sidePanel?.onClosed?.addListener((info) => markSidePanelClosed(info || {}));
+} catch {}
 
 async function getSidePanelEnabled(tabId) {
   if (!supportsSidePanel() || !chrome.sidePanel.getOptions) return null;
@@ -706,7 +717,7 @@ const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v2";
 const OPTIONS_SCHEMA_VERSION = 2;
 const DEFAULT_QUEUE_SHORTCUT = "Meta+Shift+A";
 const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
-const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey"];
+const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey", "localKey"];
 const PROVIDER_CONFIG_FIELDS = [
   ...PROVIDER_KEY_FIELDS,
   "openaiBaseUrl",
@@ -1055,6 +1066,13 @@ chrome.commands.onCommand.addListener((command, tab) => {
     return;
   }
   if (command === "open-ghostwriter-side-panel" || command === "open-ghostwriter") {
+    // Toggle: close an already-open Ghostwriter side panel in this window, otherwise open it.
+    // The decision must be synchronous — chrome.sidePanel.open() requires the live user gesture,
+    // so we can't await state first. Keyed on windowId, kept honest by the panel's own reports.
+    if (typeof windowId === "number" && isSidePanelMarkedOpen({ windowId })) {
+      closeSidePanelCommandFromUserGesture({ tabId, windowId });
+      return;
+    }
     openSidePanelCommandFromUserGesture(tab);
     return;
   }
@@ -1078,6 +1096,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });
       }
+      return;
+    }
+
+    if (message.type === "quickflash:sidePanelOpened") {
+      // The panel document reports itself open (it reliably knows it's the side-panel surface via
+      // chrome.tabs.getCurrent). Keyed by windowId so the shortcut toggle stays consistent.
+      const windowId = typeof message.windowId === "number" ? message.windowId : sender?.tab?.windowId;
+      markSidePanelOpen({ windowId });
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "quickflash:sidePanelClosed") {
+      // Fires from the panel's pagehide, covering user closes (X button, Esc) uniformly.
+      const windowId = typeof message.windowId === "number" ? message.windowId : sender?.tab?.windowId;
+      markSidePanelClosed({ windowId });
+      sendResponse({ ok: true });
       return;
     }
 
@@ -1305,7 +1340,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let effectiveApiKey = apiKey;
         let usingFreeTier = false;
 
-        if (!apiKey) {
+        if (!apiKey && provider !== "local") {
           if (provider === "openrouter") {
             throw new Error("OpenRouter API key missing. Add your OpenRouter key in Settings to use this provider.");
           }

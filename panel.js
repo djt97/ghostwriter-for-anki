@@ -585,7 +585,7 @@ function bindStickyContextUI() {
 
 // ------- Options -------
 const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
-const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey"];
+const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey", "localKey"];
 
 function sanitizeOptionsForSync(options = {}) {
   const clean = { ...(options || {}) };
@@ -686,6 +686,7 @@ function normalizeProvider(value) {
   if (value === "openai") return "openai";
   if (value === "openrouter") return "openrouter";
   if (value === "claude") return "claude";
+  if (value === "local") return "local";
   return "ultimate";
 }
 
@@ -703,6 +704,7 @@ function inferProviderFromOptions(opts) {
   if (opts?.geminiKey) return "gemini";
   if (opts?.claudeKey) return "claude";
   if (/openrouter\.ai/i.test(String(opts?.openrouterBaseUrl || ""))) return "openrouter";
+  if (opts?.localBaseUrl) return "local";
   return "openai";
 }
 
@@ -712,6 +714,8 @@ const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
 const ULTIMATE_DEFAULT_MODEL = "auto";
+const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1";
+const LOCAL_DEFAULT_MODEL = "llama3.2";
 const CLAUDE_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 const FREE_TIER_LIMIT = 20;
 const FREE_TIER_DAILY_LIMIT = 10;
@@ -788,6 +792,14 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
       model: opts.openrouterModel || "openrouter/auto",
     };
   }
+  if (provider === "local") {
+    return {
+      provider: "local",
+      baseUrl: (opts.localBaseUrl || LOCAL_DEFAULT_BASE_URL).replace(/\/+$/g, ""),
+      apiKey: opts.localKey || "",
+      model: opts.localModel || LOCAL_DEFAULT_MODEL,
+    };
+  }
 
   return {
     provider: "ultimate",
@@ -799,7 +811,8 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
 
 async function getOpenAIProviderConfigWithFreeTier(opts, overrideProvider) {
   const config = getOpenAIProviderConfig(opts, overrideProvider);
-  if (!config.apiKey && config.provider !== "openrouter") {
+  // Local servers legitimately need no key — never divert them to the hosted free-tier proxy.
+  if (!config.apiKey && config.provider !== "openrouter" && config.provider !== "local") {
     const ft = await getFreeTierState();
     if (ft.remaining > 0 && ft.installId) {
       return { ...config, provider: "free-tier", baseUrl: FREE_TIER_PROXY_URL, apiKey: `ft-${ft.installId}`, _freeTier: true };
@@ -836,6 +849,7 @@ function getProviderDisplayName(provider) {
   if (provider === "openai") return "OpenAI";
   if (provider === "openrouter") return "OpenRouter";
   if (provider === "claude") return "Anthropic Claude";
+  if (provider === "local") return "Local model";
   if (provider === "free-tier") return "Ghostwriter free suggestions";
   return "UltimateAI";
 }
@@ -868,6 +882,7 @@ function hasProviderApiKey(opts = {}, provider) {
   if (provider === "openai") return !!opts.openaiKey;
   if (provider === "openrouter") return !!opts.openrouterKey;
   if (provider === "claude") return !!opts.claudeKey;
+  if (provider === "local") return true; // local servers need no key — never gate the copilot off
   return !!opts.ultimateKey;
 }
 
@@ -944,7 +959,7 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
   const providerConfig = await getOpenAIProviderConfigWithFreeTier(optsAll);
   const { provider: providerName, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const model   = mdl || defaultModel;
-  if (!apiKey) {
+  if (!apiKey && providerName !== "local") {
     if (providerName === "openrouter") {
       throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
     }
@@ -978,7 +993,8 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     const r = await fetch(endpoint, {
       method: "POST",
       headers: buildOpenAICompatibleHeaders(providerName, apiKey),
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: opts.signal, // honor caller aborts (e.g. fact extraction when the user moves on)
     });
     if (!r.ok) {
       if (r.status === 429) copilotBackoffFrom(r);
@@ -1056,7 +1072,7 @@ async function ultimateCompletion(prompt, options = {}) {
   const providerConfig = await getOpenAIProviderConfigWithFreeTier(opts);
   const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const mdl     = model || defaultModel;
-  if (!apiKey) {
+  if (!apiKey && provider !== "local") {
     if (provider === "openrouter") {
       throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
     }
@@ -1451,7 +1467,7 @@ async function ultimateCompletionStream(
   const providerConfig = await getOpenAIProviderConfigWithFreeTier(opts);
   const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const mdl = model || defaultModel;
-  if (!apiKey) {
+  if (!apiKey && provider !== "local") {
     if (provider === "openrouter") {
       throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
     }
@@ -1795,6 +1811,9 @@ function resetRejectedCopilotDraft(state) {
     state.acceptBtn.textContent = "Accept";
     state.acceptBtn.title = "";
   }
+  state.suggestionEl?.classList?.remove?.("rejected-draft-mode");
+  const metaEl = state.suggestionEl?.querySelector?.(".copilot-meta");
+  if (metaEl) metaEl.textContent = "AI suggestion";
 }
 
 function rememberRejectedCopilotDraft(state, { suggestion = "", preview = "", reason = "" } = {}) {
@@ -1812,7 +1831,12 @@ function showRejectedCopilotDraft(state) {
     state.suggestionEl.hidden = false;
     state.suggestionEl.classList.remove("loading");
     state.suggestionEl.classList.add("error");
+    // Like stem-split-mode, this class is a visibility exception to the global legacy-card hide:
+    // without it the "Use anyway" affordance renders into a display:none element.
+    state.suggestionEl.classList.add("rejected-draft-mode");
   }
+  const metaEl = state.suggestionEl?.querySelector?.(".copilot-meta");
+  if (metaEl) metaEl.textContent = "Blocked draft";
   if (state.textEl) state.textEl.textContent = preview;
   if (state.hintEl) {
     const reason = state.rejectedReason ? `${state.rejectedReason}. ` : "";
@@ -1837,6 +1861,7 @@ function showRejectedCopilotDraft(state) {
  */
 function clearSuggestionUI(state, { removeClasses = false, mirrorValue = null } = {}) {
   resetRejectedCopilotDraft(state);
+  clearStemSplitUI(state);
   if (state.suggestionEl) {
     if (removeClasses) state.suggestionEl.classList.remove("loading", "error");
     state.suggestionEl.hidden = true;
@@ -1879,6 +1904,8 @@ function resetCopilotLocks() {
   copilot.locks = { frontAccepted: false, backAccepted: false, allSuspended: false };
   copilot._lastAt = 0;
   copilot.pauseUntil = 0;
+  hideCopilotFactPicker(); // a fresh copilot context — drop any stale fact picker/proposal
+
   for (const st of copilot.fields.values()) {
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
     if (st.controller) { abortCopilotController(st.controller); st.controller = null; }
@@ -3856,6 +3883,253 @@ function stripExistingPrefixFromCompletion(completionText, existingText) {
   return cut > 0 ? text.slice(cut).replace(/^\s+/, "") : text;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Movable blank — on deterministic source-stem cards the front lead and the back concatenate
+// into one fluent sentence, so where the parser split it is just a default: the user can slide
+// the boundary to any word ("Backpropagation is... / an efficient application of the chain rule"
+// vs "...application of... / the chain rule"). Only stem cards qualify; question-shaped pattern
+// completions don't reconstruct into a sentence, and their frontSuffix doesn't end in "...".
+// ---------------------------------------------------------------------------------------------
+
+function normalizeStemToken(word) {
+  return String(word || "").toLowerCase().replace(/[^a-z0-9]+/gi, "");
+}
+
+function buildStemSplitPlan(existingText, completion) {
+  if (completion?.kind !== "source-stem") return null;
+  const suffix = String(completion.frontSuffix || "");
+  if (!suffix.endsWith("...")) return null;
+  const typedTokens = String(existingText || "").trim().split(/\s+/).filter(Boolean);
+  const leadTokens = suffix.slice(0, -3).trim().split(/\s+/).filter(Boolean);
+  const backTokens = String(completion.back || "").trim().split(/\s+/).filter(Boolean);
+  if (!backTokens.length) return null;
+  let tokens = leadTokens.concat(backTokens);
+  let splitIndex = leadTokens.length;
+  // Deep prefixes make some parser branches return the WHOLE sentence as the lead, repeating
+  // what the user already typed (typed "Backpropagation is an" → lead "Backpropagation is").
+  // Slide the window past the typed words so the card never duplicates them.
+  const echoes = typedTokens.length
+    && tokens.length > typedTokens.length
+    && typedTokens.every((w, i) => normalizeStemToken(tokens[i]) === normalizeStemToken(w));
+  if (echoes) {
+    tokens = tokens.slice(typedTokens.length);
+    splitIndex = Math.max(0, splitIndex - typedTokens.length);
+  }
+  if (tokens.length < 2) return null; // a single movable word leaves nothing to slide
+  return { typedTokens, tokens, splitIndex };
+}
+
+// True when the completion's lead does nothing but repeat the typed words — rendering it would
+// duplicate the user's text. (buildStemSplitPlan dedupes when there's room to slide; this guard
+// catches the remainder, where no plan is possible.)
+function stemCompletionEchoesTyped(existingText, completion) {
+  const suffix = String(completion?.frontSuffix || "");
+  if (!suffix.endsWith("...")) return false;
+  const typed = String(existingText || "").trim().split(/\s+/).filter(Boolean).map(normalizeStemToken);
+  const lead = suffix.slice(0, -3).trim().split(/\s+/).filter(Boolean).map(normalizeStemToken);
+  if (!lead.length || !typed.length) return false;
+  return lead.length <= typed.length && lead.every((w, i) => w === typed[i]);
+}
+
+function buildStemSplitOutputs(plan, splitIndex) {
+  const tokens = plan?.tokens || [];
+  if (!tokens.length) return null;
+  const idx = Math.max(0, Math.min(Number(splitIndex) || 0, tokens.length - 1));
+  const lead = tokens.slice(0, idx).join(" ").replace(/[\s,;:.\-–—]+$/g, "").trim();
+  const back = cleanSourceStemAnswer(tokens.slice(idx).join(" ")).replace(/[.!?]+$/g, "").trim();
+  if (!back) return null;
+  return { splitIndex: idx, frontSuffix: lead ? `${lead}...` : "...", back };
+}
+
+function clearStemSplitUI(state) {
+  if (!state) return;
+  state._stemSplit = null;
+  state._stemSplitExisting = "";
+  hideStemSplitTakeover();
+}
+
+// "No usable card" feedback the user can actually see. setCopilotStatus() writes into a drawer
+// that's collapsed on the overlay surface, so on the main editing surface a copilot dead-end
+// looked like silence. This line sits directly under the Front field and self-dismisses.
+function showFrontNoCardNotice(state, message) {
+  const el = state?.noCardEl;
+  if (!el || !message) return;
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(state._noCardTimer);
+  state._noCardTimer = setTimeout(() => { el.hidden = true; }, 8000);
+}
+
+function hideFrontNoCardNotice(state) {
+  if (!state?.noCardEl) return;
+  clearTimeout(state._noCardTimer);
+  state._noCardTimer = null;
+  state.noCardEl.hidden = true;
+}
+
+function getStemSplitTakeoverBody() { return document.getElementById("stemSplitTakeoverBody"); }
+
+function hideStemSplitTakeover() {
+  const overlay = document.getElementById("stemSplitTakeover");
+  const body = getStemSplitTakeoverBody();
+  if (overlay) overlay.hidden = true;
+  if (body) body.innerHTML = "";
+}
+
+function stemSplitTokensKey(plan) {
+  if (!plan) return "";
+  // Key over the FULL sentence (typed + movable), normalized: as the user types through the
+  // sentence, words migrate from movable to typed, but an Esc dismissal must keep holding.
+  return plan.typedTokens.concat(plan.tokens).map(normalizeStemToken).filter(Boolean).join(" ");
+}
+
+// The split editor takes over the panel like the fact picker does: the front/back boxes give way
+// to the full sentence until the user commits or backs out. Focus stays in the (covered) Front
+// textarea the whole time, so Tab, ⌥←→, and plain typing keep working while it's up.
+function renderStemSplitTakeover(state) {
+  const overlay = document.getElementById("stemSplitTakeover");
+  const body = getStemSplitTakeoverBody();
+  const plan = state._stemSplit;
+  if (!overlay || !body || !plan) return;
+  body.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "cfp-head";
+  const title = document.createElement("div");
+  title.className = "cfp-message";
+  title.id = "stemSplitTakeoverTitle";
+  title.textContent = "Exact match to source text detected";
+  head.appendChild(title);
+  const backBtn = document.createElement("button");
+  backBtn.type = "button";
+  backBtn.className = "cfp-back";
+  backBtn.textContent = "Back to editor";
+  backBtn.addEventListener("click", () => dismissStemSplitTakeover(state));
+  head.appendChild(backBtn);
+  body.appendChild(head);
+
+  const explain = document.createElement("div");
+  explain.className = "sst-explain";
+  explain.textContent = "Your text continues the source word-for-word, so Ghostwriter split the sentence into a card. The highlighted words become the answer.";
+  body.appendChild(explain);
+
+  const sentence = document.createElement("div");
+  sentence.className = "sst-sentence";
+  for (const word of plan.typedTokens) {
+    const span = document.createElement("span");
+    span.className = "stem-split-word typed";
+    span.textContent = word;
+    sentence.appendChild(span);
+  }
+  plan.tokens.forEach((word, i) => {
+    const span = document.createElement("span");
+    span.className = `stem-split-word movable${i >= plan.splitIndex ? " blank" : ""}`;
+    span.textContent = word;
+    span.title = "Start the answer here";
+    span.addEventListener("click", () => setStemSplitIndex(state, i));
+    sentence.appendChild(span);
+  });
+  body.appendChild(sentence);
+
+  const hint = document.createElement("div");
+  hint.className = "sst-hint";
+  hint.textContent = "Click a word to start the answer · ⌥ ← → nudge · Enter or Tab accepts · Esc backs out";
+  body.appendChild(hint);
+
+  const actions = document.createElement("div");
+  actions.className = "sst-actions";
+  const left = document.createElement("button");
+  left.type = "button";
+  left.className = "sst-nudge";
+  left.textContent = "◀";
+  left.title = "Grow the answer by one word (⌥←)";
+  left.addEventListener("click", () => moveStemSplit(state, -1));
+  actions.appendChild(left);
+  const right = document.createElement("button");
+  right.type = "button";
+  right.className = "sst-nudge";
+  right.textContent = "▶";
+  right.title = "Shrink the answer by one word (⌥→)";
+  right.addEventListener("click", () => moveStemSplit(state, 1));
+  actions.appendChild(right);
+  const accept = document.createElement("button");
+  accept.type = "button";
+  accept.className = "cfp-accept";
+  accept.textContent = "Use this card";
+  accept.addEventListener("click", () => acceptStemSplitCard(state));
+  actions.appendChild(accept);
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "cfp-cancel";
+  cancel.textContent = "Back to editor";
+  cancel.addEventListener("click", () => dismissStemSplitTakeover(state));
+  actions.appendChild(cancel);
+  body.appendChild(actions);
+
+  overlay.hidden = false;
+}
+
+// Backing out remembers the sentence so the takeover doesn't re-pop while the user keeps typing
+// through it — the deterministic completion falls back to plain ghost text for that sentence.
+function dismissStemSplitTakeover(state) {
+  if (state) state._stemTakeoverDismissedKey = stemSplitTokensKey(state._stemSplit);
+  hideStemSplitTakeover();
+  rejectCopilotSuggestion(state);
+  rejectCopilotSuggestion(copilot.fields.get("back"));
+  state?.textarea?.focus?.();
+}
+
+function acceptStemSplitCard(state) {
+  const backState = copilot.fields.get("back");
+  if (applyCopilotSuggestion(state) && backState?.suggestion) {
+    applyCopilotSuggestion(backState); // no-op if autoFillBack already consumed it
+  }
+  state?.textarea?.focus?.();
+}
+
+function renderStemCompletion(state, frontSuffix, back, { userDriven = false } = {}) {
+  state.suggestion = frontSuffix;
+  hideFrontNoCardNotice(state);
+  if (state.suggestionEl) {
+    state.suggestionEl.hidden = false;
+    state.suggestionEl.classList.remove("loading", "error");
+  }
+  if (state.textEl) state.textEl.textContent = frontSuffix;
+  if (state.hintEl) state.hintEl.textContent = "Press Tab or click Accept";
+  if (state.ghostEl && state.mirrorEl && state.ghostTextEl) {
+    state.mirrorEl.textContent = state.textarea?.value || "";
+    state.ghostTextEl.textContent = frontSuffix;
+    state.ghostEl.hidden = !frontSuffix;
+  }
+  const existing = state._stemSplitExisting || "";
+  const frontForBack = `${existing}${frontSuffix ? (/\s$/.test(existing) ? "" : " ") + frontSuffix : ""}`.trim().slice(0, 500);
+  setBackDraftSuggestionFromSourceStem(back, frontForBack, { force: userDriven });
+  const suppressed = !!state._stemTakeoverDismissedKey
+    && state._stemTakeoverDismissedKey === stemSplitTokensKey(state._stemSplit);
+  if (state._stemSplit && !suppressed) {
+    renderStemSplitTakeover(state);
+  } else {
+    hideStemSplitTakeover();
+  }
+  updateShortcutCoach(state.fieldId);
+}
+
+function setStemSplitIndex(state, index) {
+  const plan = state?._stemSplit;
+  if (!plan || !state.suggestion) return false;
+  const outputs = buildStemSplitOutputs(plan, index);
+  if (!outputs || outputs.splitIndex === plan.splitIndex) return false;
+  plan.splitIndex = outputs.splitIndex;
+  renderStemCompletion(state, outputs.frontSuffix, outputs.back, { userDriven: true });
+  return true;
+}
+
+function moveStemSplit(state, delta) {
+  const plan = state?._stemSplit;
+  if (!plan) return false;
+  return setStemSplitIndex(state, plan.splitIndex + delta);
+}
+
 function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWords } = {}) {
   if (!raw) return "";
   let text = String(raw)
@@ -4140,6 +4414,13 @@ function inferExplicitDefinitionFromSource(sourceText) {
       .replace(/[;:,.!?]+$/g, "")
       .replace(/\s+/g, " ")
       .trim();
+    // "X is/are (also) an example/instance of Y" classifies X, it doesn't define it — the
+    // predicate is not X's answer. Treating it as a definition wrongly protects those words and
+    // rejects legitimate fronts that reuse them, so skip this shape. (Deliberately narrow to
+    // example/instance: "X is a type/kind/form of Y" is a real definition and keeps its protection.)
+    if (/^(?:also\s+)?an?\s+(?:example|instance)\s+of\b/i.test(answer)) {
+      continue;
+    }
     const aliases = [
       normalizeDefinedTermAlias(rawTerm),
       normalizeDefinedTermAlias(abbreviation),
@@ -4669,7 +4950,9 @@ function getFrontAnswerLeakReason(frontText, { existingText = "", backText = "" 
     },
     {
       reason: "answer-bearing apposition",
-      regex: /\b(?:namely|specifically|i\.e\.|that is)\s+[^?.!]{3,}/i,
+      // "that is" only counts as an appositive reveal when comma-set (", that is, X"); a bare
+      // "that is" is usually a relative clause ("an item that is hard to learn") and must not fire.
+      regex: /(?:\bnamely\b|\bspecifically\b|\bi\.e\.|,\s*that is,?)\s+[^?.!]{3,}/i,
     },
     {
       reason: "answer-bearing definition phrase",
@@ -5196,7 +5479,7 @@ function isClozeCopilotActive(frontText) {
 // the first/most-salient one. General lexical targeting — no per-topic rules. Returns the
 // whole source unchanged for short/single-sentence sources or when there is no lexical
 // signal, so single-fact highlights are unaffected.
-function selectRelevantSource(sourceText, prefix, other) {
+function selectRelevantSource(sourceText, prefix, other, { before = 0, after = 0 } = {}) {
   const src = String(sourceText || "").trim();
   if (!src) return src;
   const sentences = (src.match(/[^.!?]+[.!?]*/g) || [src]).map((s) => s.trim()).filter(Boolean);
@@ -5228,14 +5511,25 @@ function selectRelevantSource(sourceText, prefix, other) {
     }
   });
   if (bestScore <= 0 || bestIdx < 0) return src; // no signal -> don't narrow (avoid mis-targeting)
-  return sentences[bestIdx];
+  if (!before && !after) return sentences[bestIdx];
+  // Widen to a small window (used for the Back) so an answer that sits one clause away — e.g.
+  // "...produced one, called Script X" following "...create a multimedia programming language" — is
+  // available. The Front stays single-sentence to keep the cue focused and leak-free.
+  const start = Math.max(0, bestIdx - before);
+  const end = Math.min(sentences.length, bestIdx + after + 1);
+  return sentences.slice(start, end).join(" ");
 }
 
 function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   const page = ctx.page || {};
   const pageSourceText = getContextSourceText(page);
   const sourceStem = fieldId === "front" ? getSourceStemMatch(pageSourceText, existing) : null;
-  const focusedSource = selectRelevantSource(pageSourceText, existing, ctx.other);
+  const focusedSource = selectRelevantSource(
+    pageSourceText,
+    existing,
+    ctx.other,
+    fieldId === "back" ? { before: 1, after: 1 } : undefined
+  );
   const focusedPage =
     focusedSource && focusedSource !== pageSourceText
       ? { ...page, sourceText: focusedSource, selection: focusedSource }
@@ -5335,17 +5629,21 @@ function maybeRequestBackDraft(frontForBack) {
   requestBackDraftFromFront(frontForBack);
 }
 
-function setBackDraftSuggestionFromSourceStem(backText, frontText) {
+function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = false } = {}) {
   const backState = copilot.fields.get("back");
   if (!backState?.textarea) return;
   if ((backState.textarea.value || "").trim()) return;
 
   const sourceText = getCopilotSourceTextForLimit(copilot?.pageCtx || null);
-  const suggestion = preserveSourceLatexForBackSuggestion(
+  let suggestion = preserveSourceLatexForBackSuggestion(
     normalizeBackSuggestionForFront(backText, frontText),
     { sourceText }
   );
-  if (!suggestion || getBackAnswerFitIssue(frontText, suggestion)) return;
+  // force = the user slid the blank there deliberately; the fit guard must not veto their pick,
+  // and the front/back previews must never desync.
+  if (!suggestion && force) suggestion = String(backText || "").trim();
+  if (!suggestion) return;
+  if (!force && getBackAnswerFitIssue(frontText, suggestion)) return;
 
   abortCopilotController(backState.controller);
   backState.controller = null;
@@ -5584,6 +5882,7 @@ function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
   if (!suggestion) return false;
   const area = state.textarea;
   if (!area) return false;
+  hideCopilotFactPicker(); // committing a suggestion supersedes any open fact picker
   const before = area.value.slice(0, area.selectionStart ?? area.value.length);
   const after = area.value.slice(area.selectionEnd ?? area.value.length);
   if (state.fieldId === "front") {
@@ -5608,6 +5907,7 @@ function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   state.suggestion = "";
   resetRejectedCopilotDraft(state);
+  clearStemSplitUI(state);
   if (state.suggestionEl) {
     state.suggestionEl.hidden = true;
     state.suggestionEl.classList.remove("loading", "error");
@@ -5640,6 +5940,311 @@ function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
   return true;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Fact picker — when a Front completion fails over a genuinely multi-fact source, the copilot
+// can't tell which fact you mean. Rather than dead-end, it extracts the candidate answers and lets
+// you pick one; the picked answer is put on the Back and the copilot writes a Front for it, shown
+// as an Accept/Reject proposal (never silently overwriting what you typed).
+// ---------------------------------------------------------------------------------------------
+
+// Cheap deterministic pre-gate so we don't run an extraction call on a trivially small/single-fact
+// source. The LLM extraction below is the real detector; this only avoids a pointless call.
+function sourceLikelyMultiFact(sourceText) {
+  const src = String(sourceText || "").replace(/\s+/g, " ").trim();
+  if (!src) return false;
+  const words = src.split(" ").filter(Boolean);
+  if (words.length < 12) return false;
+  const sentences = (src.match(/[^.!?]+[.!?]+/g) || []).length;
+  const numbers = (src.match(/\$?\d[\d,.]*/g) || []).length;
+  return sentences >= 2 || numbers >= 2 || words.length >= 25;
+}
+
+const _copilotFactCache = new Map(); // sourceText -> string[] (one extraction per unique source)
+
+async function extractCandidateFacts(sourceText, { signal } = {}) {
+  const src = String(sourceText || "").trim();
+  if (!src) return [];
+  const system =
+    "List the candidate ANSWERS a flashcard could test from the Source. Each item is the single value, name, " +
+    "date, number, or term ITSELF — the bare answer, as short as possible — NOT a clause or a description of it. " +
+    "Extract \"1991\", not \"founded in 1991\"; \"$40 million\", not \"$40 million in funding\"; \"1995\", not " +
+    "\"closed in 1995\"; \"Apple and IBM\", not \"funded by Apple and IBM\". Output only JSON: {\"facts\":[\"...\"]}. " +
+    "At most 8, deduplicated, each the bare answer (usually 1-4 words), grounded in the Source's wording. If the " +
+    "Source has only one fact, return just that one.";
+  try {
+    const parsed = await ultimateChatJSON(
+      `Source:\n${src.slice(0, 1400)}\n\nOutput:`,
+      { system, temperature: 0, maxTokens: 300, signal }
+    );
+    const raw = Array.isArray(parsed?.facts) ? parsed.facts : (Array.isArray(parsed) ? parsed : []);
+    const seen = new Set();
+    const facts = [];
+    for (const f of raw) {
+      const clean = String(f || "").replace(/\s+/g, " ").trim().replace(/^[-•*\d.)\s]+/, "");
+      const key = clean.toLowerCase();
+      if (clean && clean.length <= 80 && !seen.has(key)) { seen.add(key); facts.push(clean); }
+      if (facts.length >= 8) break;
+    }
+    return facts;
+  } catch {
+    return [];
+  }
+}
+
+async function getCandidateFacts(sourceText, opts) {
+  const key = String(sourceText || "").trim();
+  if (!key) return [];
+  const cached = _copilotFactCache.get(key); // a resolved array, or an in-flight promise (shared)
+  if (cached) return cached;
+  const pending = extractCandidateFacts(key, opts)
+    .then((facts) => {
+      if (facts && facts.length) {
+        _copilotFactCache.set(key, facts); // persist only successful, non-empty extractions
+        if (_copilotFactCache.size > 20) _copilotFactCache.delete(_copilotFactCache.keys().next().value);
+      } else {
+        _copilotFactCache.delete(key); // never persist an empty/failed result — a retry may succeed
+      }
+      return facts || [];
+    })
+    .catch(() => { _copilotFactCache.delete(key); return []; });
+  _copilotFactCache.set(key, pending); // dedupe concurrent callers onto one extraction
+  return pending;
+}
+
+// Given a picked answer, ask the model for a complete card grounded in the source. Honors the user's
+// started Front when compatible. Returns {type:'basic',front,back} or {type:'cloze',text}, or null.
+async function generateCardFromFact(fact, { prefix = "", sourceText = "", cloze = false, signal } = {}) {
+  const answer = String(fact || "").trim();
+  const src = String(sourceText || "").trim();
+  if (!answer) return null;
+  if (cloze) {
+    const system =
+      "Write one Anki cloze card that tests the given Answer, grounded in the Source. Output only JSON: " +
+      "{\"text\":\"...\"}. The text is a single source-grounded sentence containing the Answer wrapped as one " +
+      "deletion {{c1::answer}}, keeping the rest of the sentence as context. Use the Source's wording. " +
+      "Never wrap the whole sentence; exactly one deletion.";
+    const parsed = await ultimateChatJSON(
+      `Answer to test: ${answer}\nSource:\n${src.slice(0, 1200)}\n\nOutput:`,
+      { system, temperature: 0.1, maxTokens: 180, signal }
+    );
+    const text = String(parsed?.text || "").trim();
+    return /\{\{c\d+::[^}]+\}\}/.test(text) ? { type: "cloze", text } : null;
+  }
+  const system =
+    "Write one atomic Anki card whose Back is exactly the given Answer, grounded in the Source. Output only " +
+    "JSON: {\"front\":\"...\",\"back\":\"...\"}. The Front is a clear, univocal question whose single answer is " +
+    "the Answer, with the Answer NOT appearing in the Front. If the user's started Front is compatible with this " +
+    "Answer, honor its wording; otherwise write the clearest question. Keep the Back to the Answer itself.";
+  const parsed = await ultimateChatJSON(
+    `Answer for the Back: ${answer}\n${prefix ? `User's started Front: ${prefix}\n` : ""}Source:\n${src.slice(0, 1200)}\n\nOutput:`,
+    { system, temperature: 0.1, maxTokens: 180, signal }
+  );
+  const front = String(parsed?.front || "").trim();
+  const back = String(parsed?.back || answer).trim();
+  return front ? { type: "basic", front, back } : null;
+}
+
+let _copilotFactPickerGen = 0; // bumped on every hide so in-flight generations can detect dismissal
+
+function getFactPickerBody() { return document.getElementById("copilotFactPickerBody"); }
+
+function hideCopilotFactPicker() {
+  _copilotFactPickerGen += 1;
+  const overlay = document.getElementById("copilotFactPicker");
+  const body = getFactPickerBody();
+  if (overlay) overlay.hidden = true;
+  if (body) body.innerHTML = "";
+}
+
+function cfpHeader(titleText, { showBack = true } = {}) {
+  const head = document.createElement("div");
+  head.className = "cfp-head";
+  const title = document.createElement("div");
+  title.className = "cfp-message";
+  title.id = "copilotFactPickerTitle";
+  title.textContent = titleText;
+  head.appendChild(title);
+  if (showBack) {
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "cfp-back";
+    back.textContent = "Back to editor";
+    back.addEventListener("click", () => hideCopilotFactPicker());
+    head.appendChild(back);
+  }
+  return head;
+}
+
+// Offer the picker for a Front failure over a multi-fact source. Returns true if it took over the UI
+// (picker shown, or a stale request), false if the caller should fall back to the nudge/hard error.
+async function maybeOfferCopilotFactPicker(state, controller, { sourceText, prefix, cloze }) {
+  const src = String(sourceText || "").trim();
+  if (!sourceLikelyMultiFact(src)) return false;
+  const cached = _copilotFactCache.get(src);
+  let facts;
+  if (Array.isArray(cached)) {
+    facts = cached; // resolved, non-empty extraction — no async, no staleness window
+  } else {
+    setCopilotStatus("Finding the facts in your source…", false);
+    try { facts = await getCandidateFacts(src, { signal: controller?.signal }); } catch { facts = []; }
+    if (!isCurrentCopilotRequest(state, controller)) { setCopilotStatus("", false); return true; }
+    setCopilotStatus("", false);
+  }
+  if (!facts || facts.length < 2) return false;
+  showCopilotFactPicker(state, { facts, sourceText: src, prefix, cloze });
+  return true;
+}
+
+function showCopilotFactPicker(state, ctx) {
+  const overlay = document.getElementById("copilotFactPicker");
+  const body = getFactPickerBody();
+  if (!overlay || !body) return;
+  const { facts, sourceText, cloze } = ctx;
+  overlay.setAttribute("aria-label", "Pick a fact");
+  body.innerHTML = "";
+  body.appendChild(cfpHeader(`Pick the answer for your ${cloze ? "cloze" : "card"}`));
+  if (sourceText) {
+    const srcEl = document.createElement("div");
+    srcEl.className = "cfp-source";
+    srcEl.textContent = String(sourceText).replace(/\s+/g, " ").trim();
+    body.appendChild(srcEl);
+  }
+  const chipRow = document.createElement("div");
+  chipRow.className = "cfp-chips";
+  facts.forEach((fact) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "cfp-chip";
+    chip.textContent = fact;
+    chip.addEventListener("click", () => onCopilotFactPicked(state, fact, ctx));
+    chipRow.appendChild(chip);
+  });
+  body.appendChild(chipRow);
+  overlay.hidden = false;
+  setCopilotStatus("", false);
+}
+
+async function onCopilotFactPicked(state, fact, ctx) {
+  const body = getFactPickerBody();
+  if (!body) return;
+  const gen = _copilotFactPickerGen;
+  body.querySelectorAll(".cfp-chip").forEach((c) => {
+    c.disabled = true;
+    if (c.textContent === fact) c.classList.add("cfp-chip-active");
+  });
+  let card = null;
+  try {
+    card = await generateCardFromFact(fact, {
+      prefix: ctx.prefix, sourceText: ctx.sourceText, cloze: ctx.cloze,
+    });
+  } catch {}
+  if (gen !== _copilotFactPickerGen) return; // picker was dismissed/superseded while generating — drop it
+  if (!card) {
+    body.querySelectorAll(".cfp-chip").forEach((c) => { c.disabled = false; c.classList.remove("cfp-chip-active"); });
+    const note = document.createElement("div");
+    note.className = "small";
+    note.style.color = "var(--muted)";
+    note.textContent = "Couldn't build a card for that — try another fact.";
+    body.appendChild(note);
+    return;
+  }
+  showCopilotCardProposal(state, card, ctx);
+}
+
+function showCopilotCardProposal(state, card, ctx) {
+  const overlay = document.getElementById("copilotFactPicker");
+  const body = getFactPickerBody();
+  if (!overlay || !body) return;
+  overlay.setAttribute("aria-label", "Proposed card");
+  body.innerHTML = "";
+  body.appendChild(cfpHeader("Use this card?", { showBack: false }));
+  const preview = document.createElement("div");
+  preview.className = "cfp-proposal-card";
+  const addLine = (label, value) => {
+    const line = document.createElement("div");
+    line.className = "cfp-line";
+    const l = document.createElement("span");
+    l.className = "cfp-label";
+    l.textContent = label;
+    const v = document.createElement("span");
+    v.className = "cfp-val";
+    v.textContent = value;
+    line.appendChild(l);
+    line.appendChild(v);
+    preview.appendChild(line);
+  };
+  if (card.type === "cloze") {
+    addLine("Cloze", card.text);
+  } else {
+    addLine("Front", card.front);
+    addLine("Back", card.back);
+  }
+  body.appendChild(preview);
+  const actions = document.createElement("div");
+  actions.className = "cfp-actions";
+  const accept = document.createElement("button");
+  accept.type = "button";
+  accept.className = "cfp-accept";
+  accept.textContent = "Use this card";
+  accept.addEventListener("click", () => { applyCopilotProposedCard(card); hideCopilotFactPicker(); });
+  const another = document.createElement("button");
+  another.type = "button";
+  another.className = "cfp-reject";
+  another.textContent = "Pick another fact";
+  another.addEventListener("click", () => {
+    if (Array.isArray(ctx.facts) && ctx.facts.length) {
+      showCopilotFactPicker(state, ctx);
+      getFactPickerBody()?.querySelector(".cfp-chip")?.focus();
+    } else {
+      hideCopilotFactPicker();
+    }
+  });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "cfp-cancel";
+  cancel.textContent = "Back to editor";
+  cancel.addEventListener("click", () => hideCopilotFactPicker());
+  actions.appendChild(accept);
+  actions.appendChild(another);
+  actions.appendChild(cancel);
+  body.appendChild(actions);
+  overlay.hidden = false;
+  try { accept.focus(); } catch {}
+}
+
+// Insert a proposed card into the editor without letting the copilot re-fire on the programmatic
+// change (mirrors the accept-suggestion lock handling).
+function applyCopilotProposedCard(card) {
+  if (!card) return;
+  const frontEl = document.getElementById("front");
+  const backEl = document.getElementById("back");
+  copilot.locks.frontAccepted = true;
+  copilot.locks.backAccepted = true;
+  copilot.locks.allSuspended = true;
+  ["front", "back"].forEach((id) => {
+    const s = copilot.fields.get(id);
+    if (!s) return;
+    if (s.controller) { try { abortCopilotController(s.controller); } catch {} s.controller = null; }
+    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
+    s.suggestion = "";
+    try { resetRejectedCopilotDraft(s); } catch {}
+  });
+  copilot._suspendCrossClear = true;
+  try {
+    if (frontEl) {
+      frontEl.value = card.type === "cloze" ? card.text : card.front;
+      frontEl.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    if (backEl) {
+      backEl.value = card.type === "cloze" ? "" : (card.back || "");
+      backEl.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  } finally {
+    copilot._suspendCrossClear = false;
+  }
+  setCopilotStatus("Card inserted — edit or send.", true);
+}
+
 // panel.js — accept/reject/clear helpers for compact panel
 
 function acceptBothSuggestions() {
@@ -5662,6 +6267,7 @@ function rejectCopilotSuggestion(state) {
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   state.suggestion = "";
   resetRejectedCopilotDraft(state);
+  clearStemSplitUI(state);
   state.lastValue  = state.textarea?.value?.trim() || "";
   if (state.suggestionEl) {
     state.suggestionEl.classList.remove("loading", "error");
@@ -5845,27 +6451,46 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   const sourceStemCompletion = state.fieldId === "front"
     ? inferSourceStemCompletion(getContextSourceText(page), existingForCopilot)
     : null;
-  if (sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back) {
-    const suggestion = sourceStemCompletion.frontSuffix;
-    state.suggestion = suggestion;
-    if (state.suggestionEl) {
-      state.suggestionEl.hidden = false;
-      state.suggestionEl.classList.remove("loading", "error");
+  const stemEcho = sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back
+    && !buildStemSplitPlan(existingForCopilot, sourceStemCompletion)
+    && stemCompletionEchoesTyped(existingForCopilot, sourceStemCompletion);
+  if (sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back && !stemEcho) {
+    const newPlan = buildStemSplitPlan(existingForCopilot, sourceStemCompletion);
+    let frontSuffix = sourceStemCompletion.frontSuffix;
+    let back = sourceStemCompletion.back;
+    let keptUserSplit = false;
+    if (newPlan) {
+      // A refocus re-runs the parser; if it lands on the same sentence, honor the split the user
+      // already chose instead of snapping back to the parser default.
+      if (state._stemSplit
+          && state._stemSplitExisting === existingForCopilot
+          && state._stemSplit.tokens.join(" ") === newPlan.tokens.join(" ")
+          && state._stemSplit.splitIndex !== newPlan.splitIndex) {
+        const kept = buildStemSplitOutputs(newPlan, state._stemSplit.splitIndex);
+        if (kept) {
+          newPlan.splitIndex = kept.splitIndex;
+          keptUserSplit = true;
+        }
+      }
+      // The plan is canonical — it dedupes a lead that echoes the typed words — so the rendered
+      // pair must derive from it, not from the raw completion.
+      const outputs = buildStemSplitOutputs(newPlan, newPlan.splitIndex);
+      if (outputs) {
+        frontSuffix = outputs.frontSuffix;
+        back = outputs.back;
+      }
     }
-    if (state.textEl) state.textEl.textContent = suggestion;
-    if (state.hintEl) state.hintEl.textContent = "Press Tab or click Accept";
-    if (state.ghostEl && state.mirrorEl && state.ghostTextEl) {
-      state.mirrorEl.textContent = textarea?.value || "";
-      state.ghostTextEl.textContent = suggestion;
-      state.ghostEl.hidden = !suggestion;
-    }
-    const frontForBack = `${existingForCopilot}${suggestion ? (/\s$/.test(existingForCopilot) ? "" : " ") + suggestion : ""}`.trim().slice(0, 500);
-    setBackDraftSuggestionFromSourceStem(sourceStemCompletion.back, frontForBack);
-    updateShortcutCoach(state.fieldId);
+    state._stemSplit = newPlan;
+    state._stemSplitExisting = existingForCopilot;
+    renderStemCompletion(state, frontSuffix, back, { userDriven: keptUserSplit });
     clearTimeout(abortTimer);
     if (state.workingEl) state.workingEl.hidden = true;
     if (state.controller === controller) state.controller = null;
     return;
+  } else if (state.fieldId === "front") {
+    // Also lands here when the parser's lead only repeats the typed words with nothing left to
+    // slide (stemEcho) — rendering that would duplicate the user's text, so let the LLM try.
+    clearStemSplitUI(state); // stale split state must not survive into an LLM suggestion
   }
   const isFrontFromBack = state.fieldId === "front" && !trimmed && !!other.trim();
   const clozeMode = state.fieldId === "front" && !isFrontFromBack && isClozeCopilotActive(existingForCopilot);
@@ -5961,6 +6586,8 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       : (trimmed + (suggestion ? (" " + suggestion) : "")).trim().slice(0, 500);
     if (!suggestion) {
       state.suggestion = "";
+      // Always surface any reviewable rejected draft, so a leaky-but-usable completion ("better than
+      // no card") stays accessible via "Use anyway" rather than being silently dropped.
       const showedRejected = showRejectedCopilotDraft(state);
       if (!showedRejected) {
         if (state.suggestionEl) state.suggestionEl.hidden = true;
@@ -5969,10 +6596,37 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       if (state.ghostEl) state.ghostEl.hidden = true;
       if (state.ghostTextEl) state.ghostTextEl.textContent = "";
       if (state.mirrorEl) state.mirrorEl.textContent = value;
+      // On a Front failure over a genuinely multi-fact source, offer the fact picker instead of a
+      // dead-end: extract the candidate answers, you pick one, and the copilot writes the card.
       if (state.fieldId === "front") {
+        const offeredPicker = await maybeOfferCopilotFactPicker(state, controller, {
+          sourceText: getContextSourceText(page),
+          prefix: existingForCopilot,
+          cloze: clozeMode,
+        });
+        if (offeredPicker) return;
+      }
+      hideCopilotFactPicker();
+      // A short front prefix with no inferred answer over a dense source is genuinely ambiguous — the
+      // copilot can't tell which fact you mean. Nudge to narrow the cue rather than a hard error.
+      const isPartialFrontStub =
+        state.fieldId === "front" && !protectedAnswer && getTypedWordCount(existingForCopilot) < 6;
+      if (state.fieldId === "front" && !isPartialFrontStub) {
         maybeRequestBackDraft(frontForBack);
       }
+      if (isPartialFrontStub) {
+        // The blocked-draft card is its own visible feedback; only show the notice without it.
+        if (!showedRejected) showFrontNoCardNotice(state, "Several facts here — type a few more words to point at the one you want.");
+        setCopilotStatus(
+          showedRejected
+            ? "Several facts here — type a few more words to point at one, or use the draft below."
+            : "Several facts here — type a few more words to point at the one you want.",
+          false
+        );
+        return;
+      }
       const rejectionReason = state._lastFrontBlockReason || state._lastBackFitIssue || state._lastFrontLiveBlockReason || "";
+      if (!showedRejected) showFrontNoCardNotice(state, "No usable card found for this text — try a shorter cue, or hit Suggest to retry.");
       setCopilotStatus(
         rejectionReason
           ? `AI returned no usable card text (${rejectionReason}). ${showedRejected ? "Review the rejected draft or regenerate." : "Try a shorter cue or regenerate."}`
@@ -5982,6 +6636,8 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       return;
     }
     state.suggestion = suggestion;
+    hideCopilotFactPicker(); // a real suggestion arrived — clear any fact picker
+    hideFrontNoCardNotice(state);
     if (state.suggestionEl) {
       state.suggestionEl.hidden = false;
       state.suggestionEl.classList.remove("loading", "error");
@@ -6123,6 +6779,15 @@ function setupCopilotField(fieldId) {
   workingEl.setAttribute("aria-live", "polite");
   workingEl.hidden = true;
   textarea.insertAdjacentElement("afterend", workingEl);
+  let noCardEl = null;
+  if (fieldId === "front") {
+    noCardEl = document.createElement("div");
+    noCardEl.className = "copilot-nocard small";
+    noCardEl.setAttribute("role", "status");
+    noCardEl.setAttribute("aria-live", "polite");
+    noCardEl.hidden = true;
+    (wrap || textarea).insertAdjacentElement("afterend", noCardEl);
+  }
   const state = {
     fieldId,
     textarea,
@@ -6139,13 +6804,24 @@ function setupCopilotField(fieldId) {
     mirrorEl: mirror,
     ghostTextEl: ghostText,
     workingEl,
+    noCardEl,
+    _stemSplit: null,
+    _stemSplitExisting: "",
   };
   copilot.fields.set(fieldId, state);
+  if (state.ghostEl) {
+    // .qf-ghost renders white-space literally (pre-wrap); markup indentation between its spans
+    // would shift the mirror/ghost off the textarea's text. Scrub any stray text nodes.
+    for (const node of [...state.ghostEl.childNodes]) {
+      if (node.nodeType === Node.TEXT_NODE) node.remove();
+    }
+  }
   if (state.mirrorEl) state.mirrorEl.textContent = textarea.value;
   if (state.ghostEl) state.ghostEl.hidden = true;
 
   textarea.addEventListener("input", () => {
     if (!copilot.enabled) return;
+    hideFrontNoCardNotice(state);
     if (state.suggestion && !copilot._suspendCrossClear) {
       rejectCopilotSuggestion(state);
     }
@@ -6181,10 +6857,30 @@ function setupCopilotField(fieldId) {
   });
   textarea.addEventListener("keydown", (e) => {
     if (!copilot.enabled) return;
+    const takeoverOpen = state._stemSplit && !document.getElementById("stemSplitTakeover")?.hidden;
     if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (applyCopilotSuggestion(state)) {
+      if (takeoverOpen) {
+        // Inside the takeover, Tab commits the full card (front AND back), same as "Use this card".
+        acceptStemSplitCard(state);
+        e.preventDefault();
+      } else if (applyCopilotSuggestion(state)) {
         e.preventDefault();
       }
+    }
+    // Enter also commits while the takeover is up (it would only insert a newline the user
+    // can't see behind the modal).
+    if (takeoverOpen && e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      acceptStemSplitCard(state);
+      e.preventDefault();
+    }
+    // ⌥←/⌥→ slide the movable blank while a stem suggestion is live. Swallow the key even at
+    // the bounds so the caret doesn't word-jump mid-gesture.
+    if (state._stemSplit && state.suggestion
+        && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+        && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+      moveStemSplit(state, e.code === "ArrowLeft" ? -1 : 1);
+      e.preventDefault();
+      e.stopPropagation();
     }
   });
 
@@ -6599,6 +7295,35 @@ function getEditorSurface() {
   return "tab";
 }
 
+// Report side-panel open/close to the background so the keyboard shortcut can toggle the panel.
+// A side-panel document is distinguishable from a standalone tab because chrome.tabs.getCurrent()
+// resolves to undefined for the side panel (a non-tab context) but to the tab for a real tab. The
+// pagehide report covers every close cause (X button, Esc, toggle) uniformly.
+(function reportSidePanelLifecycle() {
+  try {
+    if (/\bpopover\b/i.test(location.hash || "")) return; // overlay iframe — not the side panel
+    if (typeof chrome === "undefined" || !chrome.tabs?.getCurrent || !chrome.sidePanel) return;
+    chrome.tabs.getCurrent((tab) => {
+      if (chrome.runtime?.lastError || tab) return; // has a tab => standalone tab, not the side panel
+      const announce = (windowId) => {
+        if (typeof windowId !== "number") return;
+        const post = (type) => { try { chrome.runtime?.sendMessage?.({ type, windowId }); } catch {} };
+        post("quickflash:sidePanelOpened");
+        window.addEventListener("pagehide", (e) => {
+          if (e.persisted) return; // bfcache suspend, not an actual close — don't mark closed
+          post("quickflash:sidePanelClosed");
+        });
+        window.addEventListener("pageshow", (e) => {
+          if (e.persisted) post("quickflash:sidePanelOpened"); // restored from bfcache — re-announce
+        });
+      };
+      try {
+        chrome.windows?.getCurrent?.((win) => announce(typeof win?.id === "number" ? win.id : undefined));
+      } catch {}
+    });
+  } catch {}
+})();
+
 function compactInlineText(value, max = 180) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (text.length <= max) return text;
@@ -6692,9 +7417,46 @@ function updateCardDetailsSummary() {
   summary.textContent = parts.length ? parts.join(" · ") : "Deck, note type, tags, and helpers";
 }
 
+// Past a paragraph of source, copilot targeting gets noisy and the fact-picker extraction is
+// truncated (see extractCandidateFacts). Rather than trying to make the AI cope, nudge the user
+// toward a smaller selection. Thresholds sit above the dense-but-workable examples we tune
+// against (Kaleida ~33 words, Dead Sea ~73 words).
+const LONG_SOURCE_WORD_LIMIT = 90;
+const LONG_SOURCE_CHAR_LIMIT = 700;
+let _longSourceNoticeDismissedFor = "";
+
+function isLongCopilotSource(sourceText) {
+  const src = String(sourceText || "").replace(/\s+/g, " ").trim();
+  if (!src) return false;
+  if (src.length > LONG_SOURCE_CHAR_LIMIT) return true;
+  return src.split(" ").filter(Boolean).length > LONG_SOURCE_WORD_LIMIT;
+}
+
+function updateLongSourceNotice(sourceText) {
+  const notice = document.getElementById("longSourceNotice");
+  if (!notice) return;
+  if (!isLongCopilotSource(sourceText)) {
+    _longSourceNoticeDismissedFor = "";
+    notice.hidden = true;
+    return;
+  }
+  notice.hidden = _longSourceNoticeDismissedFor === sourceText;
+}
+
+function initLongSourceNotice() {
+  const dismiss = document.getElementById("dismissLongSourceNotice");
+  if (!dismiss) return;
+  dismiss.addEventListener("click", () => {
+    _longSourceNoticeDismissedFor = ($("#source")?.value || getContextSourceText(copilot?.pageCtx) || "").trim();
+    const notice = document.getElementById("longSourceNotice");
+    if (notice) notice.hidden = true;
+  });
+}
+
 function updateOverlaySourceChrome() {
   const sourceText = ($("#source")?.value || getContextSourceText(copilot?.pageCtx) || "").trim();
   const sourceIssue = sourceText ? "" : getClipboardFallbackIssue();
+  updateLongSourceNotice(sourceText);
   const preview = $("#sourcePreviewText");
   if (preview) {
     preview.textContent = sourceText
@@ -8215,6 +8977,7 @@ function clearEditorFields() {
   }
   updateFrontDetection("");
   updateOverlaySourceChrome();
+  hideCopilotFactPicker(); // clearing the editor invalidates any open fact picker/proposal
   clearManualDraftStorage().catch(() => {});
 }
 
@@ -8229,6 +8992,7 @@ function setPrimaryActionButton(label, { showShortcut = false } = {}) {
 }
 
 function renderEditor({ persist = true } = {}) {
+  hideCopilotFactPicker(); // switching the editor to another card invalidates any open picker/proposal
   syncTriageState({ activateIfCards: triageState.active });
   const navButtons = $("#editorNavButtons");
   const prevBtn = $("#triagePrev");
@@ -9287,6 +10051,14 @@ function initInlineMathPreview() {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
     if (isTriageActive()) return;
+    // Esc inside the split takeover backs out to the editor — never closes the whole overlay.
+    const stemTakeover = document.getElementById('stemSplitTakeover');
+    if (stemTakeover && !stemTakeover.hidden) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      dismissStemSplitTakeover(copilot.fields.get('front'));
+      return;
+    }
     if (rejectFocusedCopilotSuggestion(event.target)) {
       event.preventDefault();
       return;
@@ -10291,8 +11063,9 @@ function initClozeNotice() {
   }
 
   function maybeShow() {
-    // Only show after the user has actually typed a cloze deletion.
-    if (!detectClozeSyntax(front.value)) {
+    // Only nudge on a genuine mismatch: a cloze deletion is typed but a non-cloze note type is
+    // selected. If a cloze model is already selected there's nothing to switch, so stay silent.
+    if (!detectClozeSyntax(front.value) || isClozeModelName(document.getElementById('model')?.value || '')) {
       notice.hidden = true;
       return;
     }
@@ -10333,13 +11106,57 @@ function initClozeNotice() {
   maybeShow();
 }
 
-function updateFrontDetection(frontText) {
-  const indicator = $("#frontDetection");
-  if (!indicator) return;
+// Card-type pill: a visible Basic/Cloze toggle sitting over the (advanced) #model selector. The
+// pill sets and reflects the selected Ghostwriter note type. It never force-switches on a typed
+// deletion (respecting "sometimes I want basic"); instead it flags a mismatch — a cloze typed while
+// Basic is active — since the card still routes to a cloze type at send. The #model select stays
+// the source of truth, so all existing routing/persistence is unchanged.
+function findGhostwriterModelOption(modelSel, kind) {
+  if (!modelSel) return null;
+  const opts = Array.from(modelSel.options || []).map((o) => o.value);
+  if (kind === "cloze") {
+    return opts.find((v) => v === GHOSTWRITER_CLOZE_MODEL_NAME) || opts.find((v) => GHOSTWRITER_CLOZE_MODEL_REGEX.test(v)) || null;
+  }
+  return opts.find((v) => v === GHOSTWRITER_MODEL_NAME) || opts.find((v) => GHOSTWRITER_MODEL_REGEX.test(v)) || null;
+}
+
+function setCardTypeFromPill(kind) {
+  const modelSel = $("#model");
+  if (!modelSel) return;
+  const target = findGhostwriterModelOption(modelSel, kind);
+  if (!target) { syncCardTypePill(); return; }
+  if (modelSel.value !== target) {
+    modelSel.value = target;
+    modelSel.dispatchEvent(new Event("change", { bubbles: true })); // persists + refreshes model UI
+  }
+  syncCardTypePill();
+}
+
+function toggleCardTypePill() {
+  const clozeActive = document.getElementById("cardTypeCloze")?.getAttribute("aria-pressed") === "true";
+  setCardTypeFromPill(clozeActive ? "basic" : "cloze");
+}
+
+function syncCardTypePill(frontText) {
+  const pill = document.getElementById("cardTypePill");
+  if (!pill) return;
+  const current = $("#model")?.value || "";
+  const isCloze = isClozeModelName(current);
+  const isLpcg = isLpcg1ModelName(current) || /lpcg/i.test(current);
+  const basicBtn = document.getElementById("cardTypeBasic");
+  const clozeBtn = document.getElementById("cardTypeCloze");
+  if (basicBtn) basicBtn.setAttribute("aria-pressed", String(!isCloze && !isLpcg));
+  if (clozeBtn) clozeBtn.setAttribute("aria-pressed", String(isCloze));
   const text = typeof frontText === "string" ? frontText : ($("#front")?.value || "");
-  const isCloze = CLOZE_PATTERN.test(text);
-  indicator.textContent = `Detected: ${isCloze ? "Cloze" : "Basic"}`;
-  indicator.dataset.detected = isCloze ? "cloze" : "basic";
+  const mismatch = CLOZE_PATTERN.test(text) && !isCloze && !isLpcg;
+  pill.dataset.mismatch = String(mismatch);
+  const hint = document.getElementById("cardTypeHint");
+  if (hint) hint.hidden = !mismatch;
+}
+
+function updateFrontDetection(frontText) {
+  const text = typeof frontText === "string" ? frontText : ($("#front")?.value || "");
+  syncCardTypePill(text);
 }
 
 const lpcgState = {
@@ -10626,13 +11443,64 @@ function initLpcgControls() {
   }
 }
 
+// Resolve the note type for a cloze card when the selected model isn't itself a cloze model.
+// Prefer the Ghostwriter cloze note type (creating it if needed) over Anki's built-in "Cloze",
+// so deletions land on the model the user expects. Falls back to built-in "Cloze" (which always
+// exists and occludes) only if ours can't be resolved — never a missing/empty model.
+// True only if `name` is a real cloze note type (Anki model type 1). An older, mistyped
+// "Cloze [Ghostwriter]" is a STANDARD type (0) that renders {{c1::…}} without occluding and makes a
+// single card — so we must never route a cloze card to it. Unknown/uncheckable (older AnkiConnect
+// without findModelsByName) returns true so we don't block sending.
+async function isClozeTypeModel(name) {
+  if (!name) return false;
+  try {
+    const models = await anki("findModelsByName", { modelNames: [name] });
+    const m = Array.isArray(models) ? models.find((x) => x && x.name === name) : null;
+    if (!m || typeof m.type !== "number") return true;
+    return m.type === 1;
+  } catch {
+    return true;
+  }
+}
+
+async function resolveGhostwriterClozeModel() {
+  const find = (list) => {
+    const arr = Array.isArray(list) ? list : [];
+    return arr.find((n) => n === GHOSTWRITER_CLOZE_MODEL_NAME) || arr.find((n) => GHOSTWRITER_CLOZE_MODEL_REGEX.test(n)) || null;
+  };
+  try {
+    const models = await anki("modelNames");
+    let cloze = find(models);
+    if (!cloze) {
+      const ensured = await ensureGhostwriterModel(Array.isArray(models) ? models : [], { autoCreate: true });
+      cloze = find(ensured);
+    }
+    // Only use the Ghostwriter cloze model if it's a real cloze type. A mistyped (standard) one
+    // silently makes a single non-occluding card, so fall through to built-in "Cloze" (always a
+    // real cloze type); warnIfClozeModelMistyped guides the user to recreate the Ghostwriter model.
+    if (cloze && (await isClozeTypeModel(cloze))) return cloze;
+  } catch (err) {
+    console.warn("Could not resolve Ghostwriter cloze model:", err);
+  }
+  return "Cloze";
+}
+
 async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, title, fillSourceField, { syncMedia = false } = {}) {
   if (!card) throw new Error("Missing card");
   const cardType = (card.type || "basic").toLowerCase();
   const isLpcg1 = isLpcg1ModelName(modelName);
-  const effectiveModel = isLpcg1
-    ? (modelName || "Basic")
-    : (cardType === "cloze" ? (isClozeModelName(modelName) ? modelName : "Cloze") : (modelName || "Basic"));
+  let effectiveModel;
+  if (isLpcg1) {
+    effectiveModel = modelName || "Basic";
+  } else if (cardType === "cloze") {
+    // Honor a selected cloze model only if it's a real cloze type; a mistyped one (or a non-cloze
+    // model with a typed deletion) routes to a working cloze note type instead of a broken card.
+    effectiveModel = (isClozeModelName(modelName) && (await isClozeTypeModel(modelName)))
+      ? modelName
+      : await resolveGhostwriterClozeModel();
+  } else {
+    effectiveModel = modelName || "Basic";
+  }
   const fieldNames = await getModelFields(effectiveModel);
   const fields = Object.fromEntries(fieldNames.map((n) => [n, ""]));
 
@@ -10697,13 +11565,17 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
     if ("Extra" in fields) {
       const parts = [];
       if (extraValue) parts.push(extraValue);
-      if (sourceExcerpt && !("Notes" in fields)) parts.push(sourceExcerpt);
+      // Cloze cards: do not dump the raw source onto the back. The deletion stands on its own;
+      // the source (when enabled) goes to the dedicated Source field below.
       if (backLink) parts.push(backLink);
       fields.Extra = parts.join("\n\n");
     }
     if ("Notes" in fields && sourceExcerpt) fields.Notes = sourceExcerpt;
-    if (fillSourceField && "Source" in fields && hasSourceLink) {
-      fields.Source = convertLatexToAnki(`[${sourceLabel}](${sourceUrl})`);
+    // Keep the source with the note (Source field is not shown on the back), so the excerpt the
+    // user captured isn't lost for cloze cards: prefer the backlink, fall back to the raw excerpt.
+    if (fillSourceField && "Source" in fields) {
+      if (hasSourceLink) fields.Source = convertLatexToAnki(`[${sourceLabel}](${sourceUrl})`);
+      else if (sourceExcerpt) fields.Source = sourceExcerpt;
     }
   } else {
     let frontValue = front;
@@ -12200,7 +13072,37 @@ async function initPanel() {
       updateModelFieldWarning();
       updateCardTypeUI();
       updateCardDetailsSummary();
+      syncCardTypePill();
     });
+    const cardTypePill = document.getElementById("cardTypePill");
+    if (cardTypePill) {
+      cardTypePill.addEventListener("click", (e) => {
+        const btn = e.target.closest(".seg");
+        if (!btn) return;
+        setCardTypeFromPill(btn.dataset.type === "cloze" ? "cloze" : "basic");
+      });
+    }
+    document.addEventListener("keydown", (e) => {
+      // Option/Alt+W toggles Basic <-> Cloze (layout-independent via e.code).
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyW") {
+        e.preventDefault();
+        toggleCardTypePill();
+      }
+    });
+    // Esc while the fact-picker takeover is open returns to the editor (before the panel's own Esc).
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const overlay = document.getElementById("copilotFactPicker");
+      if (overlay && !overlay.hidden) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideCopilotFactPicker();
+      }
+    }, true);
+    // Clicking inside the split takeover must not steal focus from the Front textarea — focus is
+    // what keeps Tab / ⌥←→ / typing-through working while the takeover covers the editor.
+    document.getElementById("stemSplitTakeover")?.addEventListener("mousedown", (e) => e.preventDefault());
+    syncCardTypePill();
     const modelFieldWarning = $("#modelFieldWarning");
     const modelFieldWarningActions = $("#modelFieldWarningActions");
     const dismissModelFieldWarning = $("#dismissModelFieldWarning");
@@ -12255,6 +13157,7 @@ async function initPanel() {
     bindMarkdownPreviewInputs();
     initInlineMathPreview();
     initClozeNotice();
+    initLongSourceNotice();
     bindClipboardImagePaste();
     initDebugPanel();
 

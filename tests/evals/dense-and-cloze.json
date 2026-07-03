@@ -62,6 +62,136 @@
         ],
         "badButPlausibleCards": []
       }
+    },
+    {
+      "id": "kaleida-basic",
+      "section": "wozniak minimum-information - dense enumeration (Kaleida)",
+      "tags": ["dense-source", "minimum-information", "atomic", "source-grounding"],
+      "sourceText": "Kaleida, funded to the tune of $40 million by Apple Computer and IBM in 1991. Hyped as a red-hot startup, Kaleida's mission was to create a multimedia programming language. It finally produced one, called Script X. But it took three years. Meanwhile, companies such as Macromedia and Asymetrix had snapped up all the business. Kaleida closed in 1995.",
+      "frontPrefix": "How much was Kaleida funded ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A dense enumeration packing seven distinct facts (amount, backers, founding year, product name, time-to-ship, competitors, closing year). Each plausible prefix gestures at exactly one fact. The copilot must ground on the gestured fact and produce an atomic, non-leaking card rather than grabbing the first/nearest fact or stuffing several facts into one card.",
+        "plausibleUserPrefixes": [
+          "How much was Kaleida funded ",
+          "Which two companies funded ",
+          "In what year was Kaleida ",
+          "What multimedia programming language ",
+          "How long did Kaleida take ",
+          "Which competitors snapped up ",
+          "When did Kaleida "
+        ],
+        "preferredCards": [
+          { "type": "basic", "front": "How much was Kaleida funded for?", "back": "$40 million" }
+        ],
+        "prefixCards": [
+          { "prefix": "How much was Kaleida funded ", "preferredCards": [ { "type": "basic", "front": "How much was Kaleida funded for?", "back": "$40 million" } ] },
+          { "prefix": "Which two companies funded ", "preferredCards": [ { "type": "basic", "front": "Which two companies funded Kaleida?", "back": "Apple Computer and IBM" } ] },
+          { "prefix": "In what year was Kaleida ", "preferredCards": [ { "type": "basic", "front": "In what year was Kaleida funded?", "back": "1991" } ] },
+          { "prefix": "What multimedia programming language ", "preferredCards": [ { "type": "basic", "front": "What multimedia programming language did Kaleida produce?", "back": "Script X" } ] },
+          { "prefix": "How long did Kaleida take ", "preferredCards": [ { "type": "basic", "front": "How long did Kaleida take to produce Script X?", "back": "Three years" } ] },
+          { "prefix": "Which competitors snapped up ", "preferredCards": [ { "type": "basic", "front": "Which competitors snapped up the business first?", "back": "Macromedia and Asymetrix" } ] },
+          { "prefix": "When did Kaleida ", "preferredCards": [ { "type": "basic", "front": "When did Kaleida close?", "back": "1995" } ] }
+        ],
+        "badButPlausibleCards": [
+          { "type": "basic", "front": "Which two companies funded Kaleida?", "back": "Apple Computer and IBM", "whyBad": "Grabbed the wrong fact: the prefix 'How much was Kaleida funded' gestures at the $40 million amount, not the backers." },
+          { "type": "basic", "front": "How much was Kaleida funded for in 1991 by Apple and IBM?", "back": "$40 million", "whyBad": "Non-atomic Front: bundles the amount, the year, and the two backers into a single question so it tests three facts at once." },
+          { "type": "basic", "front": "What can you say about Kaleida's funding?", "back": "$40 million", "whyBad": "Vague filler Front: 'What can you say about' is not a univocal question with one correct answer." },
+          { "type": "basic", "front": "How much was Kaleida funded for?", "back": "Kaleida was funded to the tune of $40 million.", "whyBad": "Back restates the Front as a full sentence instead of giving the atomic answer '$40 million'." }
+        ]
+      }
+    },
+    {
+      "id": "kaleida-cloze",
+      "section": "wozniak minimum-information - one-fact cloze over dense enumeration (Kaleida)",
+      "tags": ["cloze", "dense-source", "atomic", "minimum-information"],
+      "sourceText": "Kaleida, funded to the tune of $40 million by Apple Computer and IBM in 1991. Hyped as a red-hot startup, Kaleida's mission was to create a multimedia programming language. It finally produced one, called Script X. But it took three years. Meanwhile, companies such as Macromedia and Asymetrix had snapped up all the business. Kaleida closed in 1995.",
+      "frontPrefix": "Kaleida was funded",
+      "carding": {
+        "verdict": "cloze",
+        "rationale": "Same dense enumeration handled as cloze. Each cloze should delete exactly ONE fact, not blank out several spans in one card. plausibleUserPrefixes select which single fact is under test; the preferred card for each clozes only that fact.",
+        "plausibleUserPrefixes": [
+          "Kaleida was funded",
+          "Kaleida was funded by",
+          "Kaleida was funded in",
+          "Kaleida produced a multimedia language",
+          "Kaleida took",
+          "Kaleida lost the business to",
+          "Kaleida closed"
+        ],
+        "preferredCards": [
+          { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}}." }
+        ],
+        "prefixCards": [
+          { "prefix": "Kaleida was funded", "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}}." } ] },
+          { "prefix": "Kaleida was funded by", "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded by {{c1::Apple Computer and IBM}}." } ] },
+          { "prefix": "Kaleida was funded in", "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded in {{c1::1991}}." } ] },
+          { "prefix": "Kaleida produced a multimedia language", "preferredCards": [ { "type": "cloze", "text": "Kaleida produced a multimedia programming language called {{c1::Script X}}." } ] },
+          { "prefix": "Kaleida took", "preferredCards": [ { "type": "cloze", "text": "Kaleida took {{c1::three years}} to produce Script X." } ] },
+          { "prefix": "Kaleida lost the business to", "preferredCards": [ { "type": "cloze", "text": "Kaleida lost the business to {{c1::Macromedia and Asymetrix}}." } ] },
+          { "prefix": "Kaleida closed", "preferredCards": [ { "type": "cloze", "text": "Kaleida closed in {{c1::1995}}." } ] }
+        ],
+        "badButPlausibleCards": [
+          { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}} by {{c2::Apple Computer and IBM}} in {{c3::1991}}.", "whyBad": "Multi-fact non-atomic cloze: three deletions in one card means one review tests amount, backers, and year simultaneously." },
+          { "type": "cloze", "text": "Kaleida was funded by {{c1::Apple Computer and IBM}}.", "whyBad": "Grabbed the wrong fact: the prefix 'Kaleida was funded' gestures at the $40 million amount, not the backers." }
+        ]
+      }
+    },
+    {
+      "id": "backprop-statement-stem",
+      "section": "statement prefix completes as a stem, not a grafted question",
+      "tags": ["statement-prefix", "stem", "source-grounding"],
+      "sourceText": "In deep learning, backpropagation is an efficient application of the chain rule to compute gradients in neural networks.",
+      "frontPrefix": "One efficient ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "The typed prefix starts a STATEMENT, not a question. The copilot must finish it as a fill-in-the-blank stem ending in '...' with the answer (backpropagation) left out — not graft a mid-sentence 'what' into the clause and not restart with a fresh question.",
+        "plausibleUserPrefixes": ["One efficient ", "What is one "],
+        "preferredCards": [
+          { "type": "basic", "front": "One efficient application of the chain rule in deep learning is...", "back": "Backpropagation" }
+        ],
+        "prefixCards": [
+          { "prefix": "One efficient ", "preferredCards": [ { "type": "basic", "front": "One efficient application of the chain rule in deep learning is...", "back": "Backpropagation" } ] },
+          { "prefix": "What is one ", "preferredCards": [ { "type": "basic", "front": "What is one efficient application of the chain rule in deep learning?", "back": "Backpropagation" } ] }
+        ],
+        "badButPlausibleCards": [
+          { "type": "basic", "front": "One efficient application of what in deep learning?", "back": "Backpropagation", "whyBad": "Mid-sentence 'what' grafted into the typed clause: the Front is a sentence fragment, not a well-formed retrieval cue (live-reported failure)." },
+          { "type": "basic", "front": "One efficient What is an efficient application of the chain rule?", "back": "Backpropagation", "whyBad": "Restarted question bolted onto the typed statement prefix instead of continuing it." }
+        ]
+      }
+    },
+    {
+      "id": "osi-layers-basic",
+      "section": "wozniak minimum-information - dense definitional list (OSI model layers)",
+      "tags": ["dense-source", "minimum-information", "atomic", "enumeration", "source-grounding"],
+      "sourceText": "The OSI model defines seven layers. Layer 1, the physical layer, transmits raw bits over a medium. Layer 2, the data link layer, handles node-to-node framing and MAC addressing. Layer 3, the network layer, routes packets between hosts using IP addresses. Layer 4, the transport layer, provides end-to-end delivery via TCP or UDP. Layer 7, the application layer, exposes network services to end-user programs.",
+      "frontPrefix": "Which OSI layer routes ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "A dense definitional list: five layers, each pairing a number, a name, and a function. Every plausible prefix targets one layer's number/name/role. The copilot must ground on the gestured layer and produce a single atomic Q&A, not conflate adjacent layers or list several layers in one card.",
+        "plausibleUserPrefixes": [
+          "Which OSI layer routes ",
+          "Which OSI layer transmits ",
+          "What does the OSI data link layer ",
+          "Which OSI layer provides end-to-end ",
+          "What is OSI Layer 7 "
+        ],
+        "preferredCards": [
+          { "type": "basic", "front": "Which OSI layer routes packets between hosts?", "back": "The network layer (Layer 3)" }
+        ],
+        "prefixCards": [
+          { "prefix": "Which OSI layer routes ", "preferredCards": [ { "type": "basic", "front": "Which OSI layer routes packets between hosts?", "back": "The network layer (Layer 3)" } ] },
+          { "prefix": "Which OSI layer transmits ", "preferredCards": [ { "type": "basic", "front": "Which OSI layer transmits raw bits over a medium?", "back": "The physical layer (Layer 1)" } ] },
+          { "prefix": "What does the OSI data link layer ", "preferredCards": [ { "type": "basic", "front": "What does the OSI data link layer handle?", "back": "Node-to-node framing and MAC addressing" } ] },
+          { "prefix": "Which OSI layer provides end-to-end ", "preferredCards": [ { "type": "basic", "front": "Which OSI layer provides end-to-end delivery?", "back": "The transport layer (Layer 4)" } ] },
+          { "prefix": "What is OSI Layer 7 ", "preferredCards": [ { "type": "basic", "front": "What is OSI Layer 7 called?", "back": "The application layer" } ], "knownMiss": "gpt-4o-mini rephrases this nearly-complete question ('What is the seventh layer of the OSI model?') instead of appending 'called?'. The pipeline correctly discards the restart, so the user sees the no-usable-card notice rather than a bad card. Reproduces 5/5 with and without the 2026-07-03 statement-prefix prompt line; an exact-prefix example in the prompt fixes it but is teach-to-the-test, so we keep the honest miss." }
+        ],
+        "badButPlausibleCards": [
+          { "type": "basic", "front": "Which OSI layer transmits raw bits over a medium?", "back": "The physical layer (Layer 1)", "whyBad": "Grabbed the wrong fact: the prefix 'Which OSI layer routes' gestures at Layer 3, but this answers the Layer 1 sentence instead." },
+          { "type": "basic", "front": "Which OSI layer routes packets and provides end-to-end delivery?", "back": "The network layer routes and the transport layer delivers", "whyBad": "Non-atomic Front: conflates two adjacent layers (Layer 3 and Layer 4) so one card tests two distinct facts." },
+          { "type": "basic", "front": "What is important about the OSI network layer?", "back": "It routes packets between hosts using IP addresses", "whyBad": "Vague filler Front: 'What is important about' has no single correct answer and invites an open-ended dump." }
+        ]
+      }
     }
   ]
 }

@@ -18,7 +18,14 @@ describe('prompts.js', () => {
       assert.ok(PROMPTS.frontSystem.includes("Cue, don't disclose"));
       assert.ok(PROMPTS.frontSystem.includes('Use only facts grounded in the Source'));
       assert.ok(!PROMPTS.frontSystem.includes('Protected Back answer'));
-      assert.ok(PROMPTS.frontSystem.length < 1400);
+      // Pins the cue to one concrete source datum and bans vague umbrella cues (dense-source tuning).
+      assert.ok(PROMPTS.frontSystem.includes('ONE most specific fact'));
+      assert.ok(/umbrella cues/i.test(PROMPTS.frontSystem));
+      // Statement prefixes complete as fill-in-the-blank stems — no mid-sentence "what" grafts
+      // ("One efficient application of what in deep learning?") and no restarted questions.
+      assert.ok(/statement prefix.*stem ending in "\.\.\."/.test(PROMPTS.frontSystem));
+      assert.ok(/never a mid-sentence "what", never a restarted question/.test(PROMPTS.frontSystem));
+      assert.ok(PROMPTS.frontSystem.length < 1750);
     });
 
     it('keeps Back autocomplete minimal and answer-only', () => {
@@ -39,7 +46,9 @@ describe('prompts.js', () => {
     it('provides a cloze system prompt that requires {{c1::...}} deletions', () => {
       assert.equal(typeof PROMPTS.clozeSystem, 'string');
       assert.ok(PROMPTS.clozeSystem.includes('{{c1::answer}}'));
-      assert.ok(/at least one/i.test(PROMPTS.clozeSystem));
+      // Defaults to ONE salient deletion (not "at least one"), but still never zero.
+      assert.ok(/containing ONE cloze deletion/i.test(PROMPTS.clozeSystem));
+      assert.ok(/never return zero deletions/i.test(PROMPTS.clozeSystem));
       assert.ok(PROMPTS.clozeSystem.includes("Cloze card's Text field"));
     });
   });

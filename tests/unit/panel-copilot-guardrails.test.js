@@ -67,6 +67,8 @@ const copilotFns = new Function(`
   function updateLocalMetrics(fn) { if (typeof fn === 'function') fn({}); }
   function bumpMetric() {}
   function updateShortcutCoach() {}
+  function hideCopilotFactPicker() {}
+  function clearStemSplitUI() {}
   ${extractDeclaration(panelSource, 'FRONT_ANSWER_CUE_TERMS')}
   ${extractDeclaration(panelSource, 'FRONT_ANSWER_CONTEXT_TERMS')}
   ${extractDeclaration(panelSource, 'FRONT_ANSWER_GENERIC_TERMS')}
@@ -266,6 +268,7 @@ const copilotFns = new Function(`
     preserveSourceLatexForBackSuggestion,
     extractSourceLatexMathSpans,
     getBackAnswerFitIssue,
+    inferExplicitDefinitionFromSource,
   };
 `)();
 
@@ -1583,6 +1586,68 @@ describe('panel.js Copilot guardrails', () => {
         }
       ),
       ''
+    );
+  });
+
+  it('does not treat an "X is an example of Y" sentence as a protected definition', () => {
+    const source = 'Enumerations are also an example of classic items that are hard to learn';
+    // The predicate is not the answer to "what is X", so nothing is protected...
+    assert.equal(
+      copilotFns.inferProtectedAnswerFromSource(source, 'What is a classic'),
+      ''
+    );
+    // ...and the definition-drift guard (which calls the inferrer directly) must not fire either.
+    assert.equal(
+      copilotFns.getFrontDefinitionDriftIssue(
+        'What is a classic example of an item that is hard to learn?',
+        { sourceText: source, existingText: 'What is a classic' }
+      ),
+      ''
+    );
+    // End to end: the legitimate front is no longer blocked.
+    assert.equal(
+      copilotFns.getFrontSuggestionBlockReason(
+        'example of an item that is hard to learn?',
+        'What is a classic',
+        { page: { sourceText: source } }
+      ),
+      ''
+    );
+  });
+
+  it('nudges to narrow the cue on a thin front prefix instead of a hard "no usable card"', () => {
+    // A short front prefix (no inferred answer, <6 words) over a dense source is ambiguous — the
+    // handler shows a "type a few more words" nudge, and still surfaces any reviewable draft.
+    assert.match(
+      panelSource,
+      /const isPartialFrontStub\s*=\s*[\s\S]{0,120}!protectedAnswer && getTypedWordCount\(existingForCopilot\) < 6;/
+    );
+    assert.ok(panelSource.includes('Several facts here — type a few more words to point at'));
+    // The reviewable rejected draft is surfaced unconditionally (not hidden behind the stub gate).
+    assert.match(panelSource, /const showedRejected = showRejectedCopilotDraft\(state\);/);
+    // No inferred-answer leak: the hard rejection path still runs for mature prefixes.
+    assert.ok(panelSource.includes('AI returned no usable card text'));
+  });
+
+  it('excludes "an example/instance of" but keeps genuine "type/kind of" definitions', () => {
+    // The narrow exclusion must not fire on real definitions, or they lose drift protection.
+    assert.equal(copilotFns.inferExplicitDefinitionFromSource('Enumerations are an example of hard items.'), null);
+    assert.equal(copilotFns.inferExplicitDefinitionFromSource('A widget is an instance of a control.'), null);
+    const typeOf = copilotFns.inferExplicitDefinitionFromSource('A poodle is a type of dog.');
+    assert.ok(typeOf && typeOf.aliases.includes('poodle'), '"type of" stays a protected definition');
+    const formOf = copilotFns.inferExplicitDefinitionFromSource('A sonnet is a form of poem.');
+    assert.ok(formOf && formOf.aliases.includes('sonnet'), '"form of" stays a protected definition');
+  });
+
+  it('treats a bare "that is" as a relative clause, not an answer-bearing apposition', () => {
+    assert.equal(
+      copilotFns.getFrontAnswerLeakReason('What is a classic example of an item that is hard to learn?'),
+      ''
+    );
+    // A comma-set ", that is, ..." is still an appositive reveal and must still be flagged.
+    assert.equal(
+      copilotFns.getFrontAnswerLeakReason('What is the capital, that is, Canberra of Australia?'),
+      'answer-bearing apposition'
     );
   });
 
