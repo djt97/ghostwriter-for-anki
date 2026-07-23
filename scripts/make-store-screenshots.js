@@ -9,9 +9,23 @@ const os = require('os');
 
 const EXT_PATH = path.resolve(__dirname, '..');
 const OUT_DIR = path.resolve(__dirname, '..', 'docs', 'store-screenshots');
+const LEGACY_EXACT_SOURCE_SHOT = path.join(OUT_DIR, '03-exact-source-split.png');
 const BAND = 80;
 const APP_H = 800 - BAND;
 const W = 1280;
+
+const AI_NETWORK_BLOCK_PATTERNS = [
+  'https://api.openai.com/**',
+  'https://ghostwriter-proxy.djthornton97.workers.dev/**',
+  'https://generativelanguage.googleapis.com/**',
+  'https://api.anthropic.com/**',
+  'https://openrouter.ai/**',
+  'https://api.ultimateai.org/**',
+  'https://smart.ultimateai.org/**',
+  'https://chat.ultimateai.org/**',
+  'http://127.0.0.1:11434/**',
+  'http://localhost:11434/**',
+];
 
 const BASE = `*{box-sizing:border-box} body{margin:0} ::selection{background:#bfdbfe}`;
 const ARTICLE = `font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#202122`;
@@ -107,7 +121,11 @@ const SHOTS = [
 
 async function main() {
   await fs.promises.mkdir(OUT_DIR, { recursive: true });
+  // Shot 03 was renamed when its exact-source takeover was replaced by the core
+  // Copilot/backend-transparency story. Avoid leaving both assets in a regenerated set.
+  await fs.promises.rm(LEGACY_EXACT_SOURCE_SHOT, { force: true });
   const userDataDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ghostwriter-shots-'));
+  const unexpectedModelRequests = [];
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
     ignoreDefaultArgs: ['--disable-extensions'],
@@ -120,6 +138,15 @@ async function main() {
     ],
   });
 
+  // Fail closed before any extension page opens. Store artwork must never spend a
+  // provider key, start a local Ollama job, or consume an included hosted request.
+  for (const pattern of AI_NETWORK_BLOCK_PATTERNS) {
+    await context.route(pattern, async (route) => {
+      unexpectedModelRequests.push(route.request().url());
+      await route.abort('blockedbyclient');
+    });
+  }
+
   await context.route('http://127.0.0.1:8765/**', async (route) => {
     let body = {}; try { body = await route.request().postDataJSON(); } catch {}
     const ok = (result) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ result, error: null }) });
@@ -130,8 +157,6 @@ async function main() {
       default: return ok(null);
     }
   });
-  await context.route('https://ghostwriter-proxy.djthornton97.workers.dev/**', (route) => route.abort());
-  await context.route('https://api.openai.com/**', (route) => route.abort());
   await context.route('http://localhost:31337/**', async (route) => {
     const p = new URL(route.request().url()).pathname;
     await route.fulfill({ status: 200, contentType: 'text/html', body: PAGES[p] || PAGES['/spaced-repetition'] });
@@ -233,8 +258,11 @@ async function main() {
           if (ta) { ta.value = ''; ta.setAttribute('placeholder', ''); }
           const g = document.querySelector('.qf-ghost[data-field="back"]');
           if (!g) return;
+          const mirror = g.querySelector('.mirror');
+          const ghostText = g.querySelector('.ghost');
+          if (mirror) mirror.textContent = ta?.value || '';
+          if (ghostText) ghostText.textContent = ghost;
           g.removeAttribute('hidden');
-          g.textContent = ghost;
         }, shot.ghost);
       }
     } else {
@@ -246,27 +274,35 @@ async function main() {
     console.log('shot:', shot.out);
   }
 
-  // 03 — the deterministic split takeover on an exact source match. The auto-copilot must be on
-  // for the stem path to fire from typing; the split itself is deterministic (no model call),
-  // and the AI endpoints are aborted above as a belt anyway.
-  await worker.evaluate(async () => {
-    const { quickflash_options } = await chrome.storage.sync.get('quickflash_options');
-    await chrome.storage.sync.set({ quickflash_options: { ...(quickflash_options || {}), manualCopilotOnly: false, provider: 'openai', apiKey: 'sk-screenshots-unused' } });
-  });
+  // 03 — a deterministic rendering of Copilot's inline completion and its active-model badge.
+  // We set presentation state directly: no model endpoint is contacted to make Store artwork.
   {
     const panel = await openOverlayOn(page, '/deep-learning', '#pick');
-    await panel.locator('#front').fill('Backpropagation');
-    await panel.locator('#stemSplitTakeover:not([hidden])').waitFor({ timeout: 15000 });
-    await panel.locator('.sst-sentence .stem-split-word.movable', { hasText: 'efficient' }).first().click();
+    await panel.locator('#front').fill('What is backpropagation');
+    await panel.locator('#back').fill('the chain rule');
+    const frame = page.frames().find((candidate) => candidate.url().includes('panel.html'));
+    if (!frame) throw new Error('Could not find the Ghostwriter panel frame for screenshot 03.');
+    await frame.evaluate(() => {
+      const front = document.querySelector('#front');
+      const overlay = document.querySelector('.qf-ghost[data-field="front"]');
+      const mirror = overlay?.querySelector('.mirror');
+      const ghost = overlay?.querySelector('.ghost');
+      const backend = document.querySelector('#copilotBackend');
+      const status = document.querySelector('#copilotStatus');
+      if (mirror) mirror.textContent = front?.value || '';
+      if (ghost) ghost.textContent = ' an efficient application of?';
+      if (overlay) overlay.removeAttribute('hidden');
+      if (backend) {
+        backend.textContent = 'Chrome on-device AI';
+        backend.removeAttribute('hidden');
+      }
+      if (status) status.textContent = 'Copilot suggestion ready · Tab to accept';
+    });
     await page.waitForTimeout(400);
     const buf = await page.screenshot();
-    await compose(buf, 'Typing straight from the source? Click where the answer starts', '03-exact-source-split.png');
-    console.log('shot: 03-exact-source-split.png');
+    await compose(buf, 'Copilot completes your draft — and shows which model is active', '03-copilot-model-visible.png');
+    console.log('shot: 03-copilot-model-visible.png');
   }
-  await worker.evaluate(async () => {
-    const { quickflash_options } = await chrome.storage.sync.get('quickflash_options');
-    await chrome.storage.sync.set({ quickflash_options: { ...(quickflash_options || {}), manualCopilotOnly: true } });
-  });
 
   // 04 — the side panel beside a poem page (dark), composited side by side. panel.html in a
   // narrow window renders with the side-panel surface, so no browser chrome is needed.
@@ -304,12 +340,16 @@ async function main() {
   await opt.emulateMedia({ colorScheme: 'light' });
   await opt.goto(await extUrl('options.html'), { waitUntil: 'domcontentloaded' });
   await opt.waitForTimeout(900);
-  await compose(await opt.screenshot(), 'Bring your own AI — the first few suggestions are free!', '05-your-ai-your-keys.png');
+  await compose(await opt.screenshot(), 'Use 100 included model requests — or bring your own provider', '05-your-ai-your-keys.png');
   console.log('shot: 05-your-ai-your-keys.png');
   await opt.close();
 
+  const attemptedModelRequests = [...unexpectedModelRequests];
   await context.close();
   await fs.promises.rm(userDataDir, { recursive: true, force: true });
+  if (attemptedModelRequests.length) {
+    throw new Error(`Screenshot run attempted real model request(s): ${attemptedModelRequests.join(', ')}`);
+  }
   console.log('Done ->', OUT_DIR);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

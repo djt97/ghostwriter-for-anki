@@ -7,6 +7,19 @@ const fs = require('fs');
 const OUT = path.resolve(__dirname, '..', 'docs', 'store-screenshots');
 const ICON = 'data:image/png;base64,' + fs.readFileSync(path.resolve(__dirname, '..', 'icons', 'icon128.png')).toString('base64');
 
+const AI_NETWORK_BLOCK_PATTERNS = [
+  'https://api.openai.com/**',
+  'https://ghostwriter-proxy.djthornton97.workers.dev/**',
+  'https://generativelanguage.googleapis.com/**',
+  'https://api.anthropic.com/**',
+  'https://openrouter.ai/**',
+  'https://api.ultimateai.org/**',
+  'https://smart.ultimateai.org/**',
+  'https://chat.ultimateai.org/**',
+  'http://127.0.0.1:11434/**',
+  'http://localhost:11434/**',
+];
+
 const HEAD = `<meta charset=utf-8><style>
   *{margin:0;box-sizing:border-box}
   :root{--slate:#0f172a;--slate2:#1e293b;--blue:#2563eb;--blue-l:#93c5fd;--muted:#94a3b8;--ink:#0f172a}
@@ -19,7 +32,7 @@ const CARD = `
   <div style="width:420px;background:#fff;border-radius:16px;box-shadow:0 30px 60px -20px #0008;overflow:hidden;font-size:14px">
     <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #eef2f7;color:#0f172a;font-weight:600">
       <img src="${ICON}" style="width:18px;height:18px;border-radius:4px"> Ghostwriter for Anki
-      <span style="margin-left:auto;color:#94a3b8;font-weight:500;font-size:12px">v0.4.0</span>
+      <span style="margin-left:auto;color:#94a3b8;font-weight:500;font-size:12px">v0.4.1</span>
     </div>
     <div style="margin:14px 16px 0;background:#f1f5f9;border-radius:10px;padding:10px 12px;color:#334155;font-size:12.5px;line-height:1.4">
       <b style="color:#64748b;letter-spacing:.04em;font-size:11px">SOURCE</b> &nbsp;The spacing effect: information is remembered better when study is spread over time than crammed into one session…</div>
@@ -59,6 +72,7 @@ const ASSETS = [
   },
   {
     name: 'promo-tile-440x280.png', w: 440, h: 280,
+    releasePath: path.resolve(__dirname, '..', 'icons', 'ghostwriter_small_promo_tile_440x280.png'),
     html: `${HEAD}<div class="bg" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 28px">
       <div class="glow" style="width:220px;height:220px;background:#2563eb;top:-80px;right:-40px"></div>
       <img src="${ICON}" style="width:60px;height:60px;border-radius:15px;margin-bottom:16px">
@@ -82,16 +96,30 @@ const ASSETS = [
 
 async function main() {
   const browser = await chromium.launch({ headless: true });
+  const unexpectedModelRequests = [];
   for (const a of ASSETS) {
     const ctx = await browser.newContext({ viewport: { width: a.w, height: a.h }, deviceScaleFactor: 1 });
+    for (const pattern of AI_NETWORK_BLOCK_PATTERNS) {
+      await ctx.route(pattern, async (route) => {
+        unexpectedModelRequests.push(route.request().url());
+        await route.abort('blockedbyclient');
+      });
+    }
     const page = await ctx.newPage();
     await page.setContent(a.html, { waitUntil: 'load' });
     await page.waitForTimeout(200);
-    await page.screenshot({ path: path.join(OUT, a.name) });
+    const outputPath = path.join(OUT, a.name);
+    await page.screenshot({ path: outputPath });
+    if (a.releasePath) {
+      fs.copyFileSync(outputPath, a.releasePath);
+    }
     await ctx.close();
     console.log('wrote', a.name);
   }
   await browser.close();
+  if (unexpectedModelRequests.length) {
+    throw new Error(`Brand asset run attempted real model request(s): ${unexpectedModelRequests.join(', ')}`);
+  }
   console.log('Done ->', OUT);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

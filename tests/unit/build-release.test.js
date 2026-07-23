@@ -152,6 +152,9 @@ describe('build-release.js pure functions', () => {
         'PRIVACY_POLICY.md',
         'THIRD_PARTY_NOTICES.md',
         'APACHE-2.0.txt',
+        'native-ai.js',
+        'native-ai-options.js',
+        'metadata-fallback.js',
         'libs/markdown-it.min.js',
         'libs/mathjax/mathjax-bundle.js.LICENSE.txt',
       ]) {

@@ -238,11 +238,11 @@
       "section": "Overview",
       "tags": ["mechanism", "how", "maybe"],
       "sourceText": "Fundamentally, deep learning refers to a class of machine learning algorithms in which a hierarchy of layers is used to transform input data into a progressively more abstract and composite representation.",
-      "frontPrefix": "In deep",
+      "frontPrefix": "What happens",
       "carding": {
         "verdict": "maybe",
         "rationale": "The original 'How does deep learning transform input data?' is a little generic, but the idea can be salvaged by targeting the representational progression across layers.",
-        "plausibleUserPrefixes": ["In deep", "What happens"],
+        "plausibleUserPrefixes": ["What happens"],
         "preferredCards": [
           {
             "type": "basic",
@@ -290,6 +290,7 @@
           },
           {
             "prefix": "In deep",
+            "allowGuardedSuppression": true,
             "preferredCards": [
               {
                 "type": "basic",
@@ -345,6 +346,7 @@
       "carding": {
         "verdict": "basic",
         "rationale": "A compact threshold fact, as long as the Front avoids overstating consensus.",
+        "allowGuardedSuppression": true,
         "plausibleUserPrefixes": ["What CAP"],
         "preferredCards": [
           {
@@ -427,18 +429,17 @@
       "frontPrefix": "Who introduced",
       "carding": {
         "verdict": "basic",
-        "rationale": "A specific historical attribution. The source contains two related attributions, so the Front must specify which community it asks about.",
+        "rationale": "A specific historical attribution. The source contains two related attributions, so the Front must specify which community it asks about — and both attributions are about 'the term', so dropping that qualifier leaves the cue ambiguous between the term and the technique.",
+        "requiredFrontPhrases": ["the term"],
+        "requiredFrontPhraseGroups": [["machine learning community", "1986"]],
+        "requiredBackPhrases": ["Rina Dechter"],
+        "forbiddenBackPhrases": ["1986"],
         "plausibleUserPrefixes": ["Who introduced"],
         "preferredCards": [
           {
             "type": "basic",
             "front": "Who introduced the term \"deep learning\" to the machine learning community?",
             "back": "Rina Dechter"
-          },
-          {
-            "type": "basic",
-            "front": "Who introduced the term \"deep learning\" to artificial neural networks?",
-            "back": "Igor Aizenberg and colleagues"
           }
         ],
         "alternateCards": [

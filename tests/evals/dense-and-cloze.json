@@ -16,6 +16,15 @@
         "preferredCards": [
           { "type": "basic", "front": "Why can the Dead Sea keep swimmers afloat?", "back": "Its high density" }
         ],
+        "prefixCards": [
+          {
+            "prefix": "Why can ",
+            "allowGuardedSuppression": true,
+            "preferredCards": [
+              { "type": "basic", "front": "Why can the Dead Sea keep swimmers afloat?", "back": "Its high density" }
+            ]
+          }
+        ],
         "badButPlausibleCards": [
           {
             "type": "basic",
@@ -40,9 +49,11 @@
       "carding": {
         "verdict": "cloze",
         "rationale": "Dense/definitional material the maintainer prefers as a cloze deletion rather than a single Q&A.",
+        "maxClozeDeletions": 1,
+        "requiredClozeDeletionPhrases": ["Hermann Ebbinghaus"],
         "plausibleUserPrefixes": ["The forgetting curve"],
         "preferredCards": [
-          { "type": "cloze", "text": "The forgetting curve, first described by {{c1::Hermann Ebbinghaus}}, hypothesizes the {{c2::decline}} of memory retention over {{c3::time}}." }
+          { "type": "cloze", "text": "The forgetting curve, first described by {{c1::Hermann Ebbinghaus}}, hypothesizes declining memory retention over time." }
         ],
         "badButPlausibleCards": []
       }
@@ -52,13 +63,15 @@
       "section": "cloze on definitional material",
       "tags": ["cloze", "dense-source"],
       "sourceText": "The spacing effect is the finding that information is remembered better when study is spread out over time than when the same amount is crammed into a single session.",
-      "frontPrefix": "The spacing effect",
+      "frontPrefix": "The spacing effect improves memory when study is ",
       "carding": {
         "verdict": "cloze",
-        "rationale": "A definitional sentence that makes a clean cloze deletion.",
-        "plausibleUserPrefixes": ["The spacing effect"],
+        "rationale": "A targeted definitional stem that makes the intended contrast a clean, atomic cloze deletion.",
+        "maxClozeDeletions": 1,
+        "requiredClozeDeletionPhrases": ["spread out over time"],
+        "plausibleUserPrefixes": ["The spacing effect improves memory when study is "],
         "preferredCards": [
-          { "type": "cloze", "text": "The {{c1::spacing effect}} is the finding that information is remembered better when study is {{c2::spread out over time}} than when crammed into a single session." }
+          { "type": "cloze", "text": "The spacing effect improves memory when study is {{c1::spread out over time}}, not crammed." }
         ],
         "badButPlausibleCards": []
       }
@@ -79,26 +92,26 @@
           "What multimedia programming language ",
           "How long did Kaleida take ",
           "Which competitors snapped up ",
-          "When did Kaleida "
+          "When did Kaleida close"
         ],
         "preferredCards": [
           { "type": "basic", "front": "How much was Kaleida funded for?", "back": "$40 million" }
         ],
         "prefixCards": [
-          { "prefix": "How much was Kaleida funded ", "preferredCards": [ { "type": "basic", "front": "How much was Kaleida funded for?", "back": "$40 million" } ] },
-          { "prefix": "Which two companies funded ", "preferredCards": [ { "type": "basic", "front": "Which two companies funded Kaleida?", "back": "Apple Computer and IBM" } ] },
-          { "prefix": "In what year was Kaleida ", "preferredCards": [ { "type": "basic", "front": "In what year was Kaleida funded?", "back": "1991" } ] },
-          { "prefix": "What multimedia programming language ", "preferredCards": [ { "type": "basic", "front": "What multimedia programming language did Kaleida produce?", "back": "Script X" } ] },
-          { "prefix": "How long did Kaleida take ", "preferredCards": [ { "type": "basic", "front": "How long did Kaleida take to produce Script X?", "back": "Three years" } ] },
-          { "prefix": "Which competitors snapped up ", "preferredCards": [ { "type": "basic", "front": "Which competitors snapped up the business first?", "back": "Macromedia and Asymetrix" } ] },
-          { "prefix": "When did Kaleida ", "preferredCards": [ { "type": "basic", "front": "When did Kaleida close?", "back": "1995" } ] }
+          { "prefix": "How much was Kaleida funded ", "requiredBackPhrases": ["40 million"], "preferredCards": [ { "type": "basic", "front": "How much was Kaleida funded for?", "back": "$40 million" } ], "badButPlausibleCards": [
+            { "type": "basic", "front": "Which two companies funded Kaleida?", "back": "Apple Computer and IBM", "whyBad": "Grabbed the wrong fact: the prefix 'How much was Kaleida funded' gestures at the $40 million amount, not the backers." },
+            { "type": "basic", "front": "How much was Kaleida funded for in 1991 by Apple and IBM?", "back": "$40 million", "whyBad": "Non-atomic Front: bundles the amount, the year, and the two backers into a single question so it tests three facts at once." },
+            { "type": "basic", "front": "What can you say about Kaleida's funding?", "back": "$40 million", "whyBad": "Vague filler Front: 'What can you say about' is not a univocal question with one correct answer." },
+            { "type": "basic", "front": "How much was Kaleida funded for?", "back": "Kaleida was funded to the tune of $40 million.", "whyBad": "Back restates the Front as a full sentence instead of giving the atomic answer '$40 million'." }
+          ] },
+          { "prefix": "Which two companies funded ", "requiredBackPhrases": ["Apple Computer", "IBM"], "preferredCards": [ { "type": "basic", "front": "Which two companies funded Kaleida?", "back": "Apple Computer and IBM" } ] },
+          { "prefix": "In what year was Kaleida ", "requiredBackPhrases": ["1991"], "preferredCards": [ { "type": "basic", "front": "In what year was Kaleida funded?", "back": "1991" } ] },
+          { "prefix": "What multimedia programming language ", "requiredBackPhrases": ["Script X"], "preferredCards": [ { "type": "basic", "front": "What multimedia programming language did Kaleida produce?", "back": "Script X" } ] },
+          { "prefix": "How long did Kaleida take ", "requiredBackPhrases": ["three years"], "preferredCards": [ { "type": "basic", "front": "How long did Kaleida take to produce Script X?", "back": "Three years" } ] },
+          { "prefix": "Which competitors snapped up ", "requiredBackPhrases": ["Macromedia", "Asymetrix"], "preferredCards": [ { "type": "basic", "front": "Which competitors snapped up the business first?", "back": "Macromedia and Asymetrix" } ] },
+          { "prefix": "When did Kaleida close", "requiredBackPhrases": ["1995"], "preferredCards": [ { "type": "basic", "front": "When did Kaleida close?", "back": "1995" } ] }
         ],
-        "badButPlausibleCards": [
-          { "type": "basic", "front": "Which two companies funded Kaleida?", "back": "Apple Computer and IBM", "whyBad": "Grabbed the wrong fact: the prefix 'How much was Kaleida funded' gestures at the $40 million amount, not the backers." },
-          { "type": "basic", "front": "How much was Kaleida funded for in 1991 by Apple and IBM?", "back": "$40 million", "whyBad": "Non-atomic Front: bundles the amount, the year, and the two backers into a single question so it tests three facts at once." },
-          { "type": "basic", "front": "What can you say about Kaleida's funding?", "back": "$40 million", "whyBad": "Vague filler Front: 'What can you say about' is not a univocal question with one correct answer." },
-          { "type": "basic", "front": "How much was Kaleida funded for?", "back": "Kaleida was funded to the tune of $40 million.", "whyBad": "Back restates the Front as a full sentence instead of giving the atomic answer '$40 million'." }
-        ]
+        "badButPlausibleCards": []
       }
     },
     {
@@ -106,34 +119,36 @@
       "section": "wozniak minimum-information - one-fact cloze over dense enumeration (Kaleida)",
       "tags": ["cloze", "dense-source", "atomic", "minimum-information"],
       "sourceText": "Kaleida, funded to the tune of $40 million by Apple Computer and IBM in 1991. Hyped as a red-hot startup, Kaleida's mission was to create a multimedia programming language. It finally produced one, called Script X. But it took three years. Meanwhile, companies such as Macromedia and Asymetrix had snapped up all the business. Kaleida closed in 1995.",
-      "frontPrefix": "Kaleida was funded",
+      "frontPrefix": "Kaleida was funded to the tune of ",
       "carding": {
         "verdict": "cloze",
         "rationale": "Same dense enumeration handled as cloze. Each cloze should delete exactly ONE fact, not blank out several spans in one card. plausibleUserPrefixes select which single fact is under test; the preferred card for each clozes only that fact.",
+        "maxClozeDeletions": 1,
         "plausibleUserPrefixes": [
-          "Kaleida was funded",
-          "Kaleida was funded by",
-          "Kaleida was funded in",
-          "Kaleida produced a multimedia language",
-          "Kaleida took",
-          "Kaleida lost the business to",
-          "Kaleida closed"
+          "Kaleida was funded to the tune of ",
+          "Kaleida was funded by ",
+          "Kaleida was funded in ",
+          "Kaleida's multimedia programming language was called ",
+          "Kaleida took ",
+          "Kaleida lost the business to ",
+          "Kaleida closed "
         ],
         "preferredCards": [
           { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}}." }
         ],
         "prefixCards": [
-          { "prefix": "Kaleida was funded", "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}}." } ] },
-          { "prefix": "Kaleida was funded by", "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded by {{c1::Apple Computer and IBM}}." } ] },
-          { "prefix": "Kaleida was funded in", "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded in {{c1::1991}}." } ] },
-          { "prefix": "Kaleida produced a multimedia language", "preferredCards": [ { "type": "cloze", "text": "Kaleida produced a multimedia programming language called {{c1::Script X}}." } ] },
-          { "prefix": "Kaleida took", "preferredCards": [ { "type": "cloze", "text": "Kaleida took {{c1::three years}} to produce Script X." } ] },
-          { "prefix": "Kaleida lost the business to", "preferredCards": [ { "type": "cloze", "text": "Kaleida lost the business to {{c1::Macromedia and Asymetrix}}." } ] },
-          { "prefix": "Kaleida closed", "preferredCards": [ { "type": "cloze", "text": "Kaleida closed in {{c1::1995}}." } ] }
+          { "prefix": "Kaleida was funded to the tune of ", "requiredClozeDeletionPhrases": ["40 million"], "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}}." } ], "badButPlausibleCards": [
+            { "type": "cloze", "text": "Kaleida was funded by {{c1::Apple Computer and IBM}}.", "whyBad": "Grabbed the wrong fact: the amount-specific prefix targets $40 million, not the backers." }
+          ] },
+          { "prefix": "Kaleida was funded by ", "requiredClozeDeletionPhrases": ["Apple Computer", "IBM"], "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded by {{c1::Apple Computer and IBM}}." } ] },
+          { "prefix": "Kaleida was funded in ", "requiredClozeDeletionPhrases": ["1991"], "preferredCards": [ { "type": "cloze", "text": "Kaleida was funded in {{c1::1991}}." } ] },
+          { "prefix": "Kaleida's multimedia programming language was called ", "requiredClozeDeletionPhrases": ["Script X"], "preferredCards": [ { "type": "cloze", "text": "Kaleida's multimedia programming language was called {{c1::Script X}}." } ] },
+          { "prefix": "Kaleida took ", "requiredClozeDeletionPhrases": ["three years"], "preferredCards": [ { "type": "cloze", "text": "Kaleida took {{c1::three years}} to produce Script X." } ] },
+          { "prefix": "Kaleida lost the business to ", "requiredClozeDeletionPhrases": ["Macromedia", "Asymetrix"], "preferredCards": [ { "type": "cloze", "text": "Kaleida lost the business to {{c1::Macromedia and Asymetrix}}." } ] },
+          { "prefix": "Kaleida closed ", "requiredClozeDeletionPhrases": ["1995"], "preferredCards": [ { "type": "cloze", "text": "Kaleida closed in {{c1::1995}}." } ] }
         ],
         "badButPlausibleCards": [
-          { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}} by {{c2::Apple Computer and IBM}} in {{c3::1991}}.", "whyBad": "Multi-fact non-atomic cloze: three deletions in one card means one review tests amount, backers, and year simultaneously." },
-          { "type": "cloze", "text": "Kaleida was funded by {{c1::Apple Computer and IBM}}.", "whyBad": "Grabbed the wrong fact: the prefix 'Kaleida was funded' gestures at the $40 million amount, not the backers." }
+          { "type": "cloze", "text": "Kaleida was funded to the tune of {{c1::$40 million}} by {{c2::Apple Computer and IBM}} in {{c3::1991}}.", "whyBad": "Multi-fact non-atomic cloze: three deletions in one card means one review tests amount, backers, and year simultaneously." }
         ]
       }
     },
@@ -179,17 +194,43 @@
         "preferredCards": [
           { "type": "basic", "front": "Which OSI layer routes packets between hosts?", "back": "The network layer (Layer 3)" }
         ],
-        "prefixCards": [
-          { "prefix": "Which OSI layer routes ", "preferredCards": [ { "type": "basic", "front": "Which OSI layer routes packets between hosts?", "back": "The network layer (Layer 3)" } ] },
+      "prefixCards": [
+          { "prefix": "Which OSI layer routes ", "preferredCards": [ { "type": "basic", "front": "Which OSI layer routes packets between hosts?", "back": "The network layer (Layer 3)" } ], "badButPlausibleCards": [
+            { "type": "basic", "front": "Which OSI layer transmits raw bits over a medium?", "back": "The physical layer (Layer 1)", "whyBad": "Grabbed the wrong fact: the prefix 'Which OSI layer routes' gestures at Layer 3, but this answers the Layer 1 sentence instead." },
+            { "type": "basic", "front": "Which OSI layer routes packets and provides end-to-end delivery?", "back": "The network layer routes and the transport layer delivers", "whyBad": "Non-atomic Front: conflates two adjacent layers (Layer 3 and Layer 4) so one card tests two distinct facts." },
+            { "type": "basic", "front": "What is important about the OSI network layer?", "back": "It routes packets between hosts using IP addresses", "whyBad": "Vague filler Front: 'What is important about' has no single correct answer and invites an open-ended dump." }
+          ] },
           { "prefix": "Which OSI layer transmits ", "preferredCards": [ { "type": "basic", "front": "Which OSI layer transmits raw bits over a medium?", "back": "The physical layer (Layer 1)" } ] },
           { "prefix": "What does the OSI data link layer ", "preferredCards": [ { "type": "basic", "front": "What does the OSI data link layer handle?", "back": "Node-to-node framing and MAC addressing" } ] },
           { "prefix": "Which OSI layer provides end-to-end ", "preferredCards": [ { "type": "basic", "front": "Which OSI layer provides end-to-end delivery?", "back": "The transport layer (Layer 4)" } ] },
-          { "prefix": "What is OSI Layer 7 ", "preferredCards": [ { "type": "basic", "front": "What is OSI Layer 7 called?", "back": "The application layer" } ], "knownMiss": "gpt-4o-mini rephrases this nearly-complete question ('What is the seventh layer of the OSI model?') instead of appending 'called?'. The pipeline correctly discards the restart, so the user sees the no-usable-card notice rather than a bad card. Reproduces 5/5 with and without the 2026-07-03 statement-prefix prompt line; an exact-prefix example in the prompt fixes it but is teach-to-the-test, so we keep the honest miss." }
+          { "prefix": "What is OSI Layer 7 ", "preferredCards": [ { "type": "basic", "front": "What is OSI Layer 7 called?", "back": "The application layer" } ], "knownMiss": { "reason": "gpt-4o-mini rephrases this nearly-complete question instead of appending 'called?'; the pipeline safely suppresses the restart.", "models": ["gpt-4o-mini"], "allowedFlags": ["missing-front", "missing-back"] } }
+        ],
+        "badButPlausibleCards": []
+      }
+    },
+    {
+      "id": "dechter-term-qualifier",
+      "section": "univocal cue - a disambiguating source qualifier must survive completion",
+      "tags": ["qualifier-preservation", "univocal", "source-grounding", "regression"],
+      "sourceText": "The term deep learning was introduced to the machine learning community by Rina Dechter in 1986, and to artificial neural networks by Igor Aizenberg and colleagues in 2000, in the context of Boolean threshold neurons.",
+      "frontPrefix": "Who introduced ",
+      "carding": {
+        "verdict": "basic",
+        "rationale": "Both attributions in the source are about 'the term': Dechter introduced the phrase to the ML community, not the technique. A completion that drops the qualifier ('Who introduced deep learning...?') is ambiguous between term and technique — and the technique reading is factually wrong. The Front must keep 'the term'. Live failure from the v2 launch video (2026-07-06); the drop reproduces intermittently on this two-attribution sentence, not on a single-clause trim.",
+        "requiredFrontPhrases": ["the term"],
+        "requiredFrontPhraseGroups": [["machine learning community", "1986"]],
+        "requiredBackPhrases": ["Rina Dechter"],
+        "forbiddenBackPhrases": ["1986"],
+        "plausibleUserPrefixes": ["Who introduced ", "Who introduced the term "],
+        "preferredCards": [
+          { "type": "basic", "front": "Who introduced the term \"deep learning\" to the machine learning community?", "back": "Rina Dechter" }
+        ],
+        "prefixCards": [
+          { "prefix": "Who introduced ", "preferredCards": [ { "type": "basic", "front": "Who introduced the term \"deep learning\" to the machine learning community?", "back": "Rina Dechter" } ] },
+          { "prefix": "Who introduced the term ", "preferredCards": [ { "type": "basic", "front": "Who introduced the term \"deep learning\" to the machine learning community?", "back": "Rina Dechter" } ] }
         ],
         "badButPlausibleCards": [
-          { "type": "basic", "front": "Which OSI layer transmits raw bits over a medium?", "back": "The physical layer (Layer 1)", "whyBad": "Grabbed the wrong fact: the prefix 'Which OSI layer routes' gestures at Layer 3, but this answers the Layer 1 sentence instead." },
-          { "type": "basic", "front": "Which OSI layer routes packets and provides end-to-end delivery?", "back": "The network layer routes and the transport layer delivers", "whyBad": "Non-atomic Front: conflates two adjacent layers (Layer 3 and Layer 4) so one card tests two distinct facts." },
-          { "type": "basic", "front": "What is important about the OSI network layer?", "back": "It routes packets between hosts using IP addresses", "whyBad": "Vague filler Front: 'What is important about' has no single correct answer and invites an open-ended dump." }
+          { "type": "basic", "front": "Who introduced deep learning to the machine learning community?", "back": "Rina Dechter", "whyBad": "Dropped the source's 'the term' qualifier, leaving the cue ambiguous between the term and the technique — and the technique reading is factually wrong. Exact completion observed in the v2 launch video." }
         ]
       }
     }

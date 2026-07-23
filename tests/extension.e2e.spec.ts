@@ -5,6 +5,19 @@ import os from 'os';
 
 const OUT_DIR = path.resolve(__dirname, 'screenshots');
 
+const AI_NETWORK_BLOCK_PATTERNS = [
+  'https://api.openai.com/**',
+  'https://ghostwriter-proxy.djthornton97.workers.dev/**',
+  'https://generativelanguage.googleapis.com/**',
+  'https://api.anthropic.com/**',
+  'https://openrouter.ai/**',
+  'https://api.ultimateai.org/**',
+  'https://smart.ultimateai.org/**',
+  'https://chat.ultimateai.org/**',
+  'http://127.0.0.1:11434/**',
+  'http://localhost:11434/**',
+] as const;
+
 // Resolve extension root by finding a manifest.json
 function resolveExtensionRoot(): string {
   const repoRoot =
@@ -45,6 +58,7 @@ test.describe('Ghostwriter for Anki UI', () => {
   let page: any;
   let userDataDir = '';
   let ankiActions: string[] = [];
+  let unexpectedAiRequests: string[] = [];
 
   async function extensionWorker() {
     return context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 10_000 });
@@ -90,6 +104,34 @@ test.describe('Ghostwriter for Anki UI', () => {
       }
     });
     if (!result?.ok) throw new Error(`Failed to open overlay: ${result?.error || 'unknown error'}`);
+  }
+
+  async function closeOverlayInFixtureTab() {
+    const worker = await extensionWorker();
+    const result = await worker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      const tab = tabs.find((candidate) => candidate.url?.startsWith('http://localhost:31337/'));
+      if (!tab?.id) return { ok: false, error: 'No fixture tab found.' };
+      try {
+        const response = await chrome.tabs.sendMessage(tab.id, { type: 'quickflash:closeOverlay' });
+        return response?.ok ? { ok: true } : { ok: false, error: 'overlay refused' };
+      } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+    if (!result?.ok) throw new Error(`Failed to close overlay: ${result?.error || 'unknown error'}`);
+  }
+
+  async function disableModelMetadataHelpers() {
+    const worker = await extensionWorker();
+    await worker.evaluate(async () => {
+      await chrome.storage.local.set({
+        quickflash_manualPrefs_v1: {
+          autoTagManual: false,
+          autoContextManual: false,
+        },
+      });
+    });
   }
 
   async function resetPageSourceState() {
@@ -140,6 +182,15 @@ test.describe('Ghostwriter for Anki UI', () => {
     // Always use the Playwright-bundled Chromium. More stable on CI.
     context = await chromium.launchPersistentContext(userDataDir, { ...commonOpts } as any);
 
+    // Fail closed before opening a test page. A missing mock must never consume a user's
+    // provider key or Ghostwriter's hosted quota.
+    for (const pattern of AI_NETWORK_BLOCK_PATTERNS) {
+      await context.route(pattern, async (route) => {
+        unexpectedAiRequests.push(route.request().url());
+        await route.abort('blockedbyclient');
+      });
+    }
+
     // ⬇️ Stub AnkiConnect before any page is used
     await context.route('http://127.0.0.1:8765/**', async (route) => {
       let body: any = {};
@@ -174,6 +225,16 @@ test.describe('Ghostwriter for Anki UI', () => {
 
     page = await context.newPage();
     page.on('console', m => console.log('[page]', m.type(), m.text()));
+  });
+
+  test.beforeEach(() => {
+    unexpectedAiRequests = [];
+  });
+
+  test.afterEach(() => {
+    const attempted = [...unexpectedAiRequests];
+    unexpectedAiRequests = [];
+    expect(attempted, `Unexpected real AI request(s): ${attempted.join(', ')}`).toEqual([]);
   });
 
   test.afterAll(async () => {
@@ -231,33 +292,68 @@ test.describe('Ghostwriter for Anki UI', () => {
     await panelPage.close();
   });
 
-  test('@screenshots overlay + tab screenshots (light & dark)', async () => {
-    await page.goto('http://localhost:31337/?__qf_ci=1', { waitUntil: 'domcontentloaded' });
-    await injectContentScriptIntoFixtureTab();
+  test('@release Source drawer switches between rendered and exact raw text', async () => {
+    const panelUrl = await extensionUrl('panel.html?__qf_ci=1');
+    const panelPage = await context.newPage();
+    const rawSource = String.raw`Let
+\[
+f(x_1,x_2)=x_1\lor x_2,
+\]
+and let \(X_1,X_2\) be independent Bernoulli\((p)\) random variables.
 
-    await page.waitForSelector('html[data-qf-cs="ready"]', { timeout: 5_000 }).catch(() => {});
+Then
+\[
+\theta(p):=\Pr_p(f(X)=1)
+=1-\Pr(X_1=X_2=0)
+=1-(1-p)^2
+=2p-p^2.
+\]`;
 
-    const csAlive = await page.evaluate(() => new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        window.removeEventListener('message', onMessage);
-        resolve(false);
-      }, 5000);
-      function onMessage(event) {
-        if (event?.data?.type === 'quickflash:test:pong') {
-          clearTimeout(timer);
-          window.removeEventListener('message', onMessage);
-          resolve(true);
-        }
-      }
-      window.addEventListener('message', onMessage);
-      window.postMessage({ type: 'quickflash:test:ping' }, '*');
-    }));
+    await panelPage.goto(panelUrl, { waitUntil: 'load' });
+    await expect(panelPage.locator('html')).toHaveAttribute('data-qf-panel', 'ready', { timeout: 30_000 });
 
-    if (!csAlive) {
-      throw new Error('Content script did not respond to ping within 5s');
+    const sourceDetails = panelPage.locator('#sourceContextDetails');
+    const sourceSummary = sourceDetails.locator('summary');
+    const renderedView = panelPage.locator('#sourceRenderedView');
+    const rawView = panelPage.locator('#source');
+
+    await rawView.evaluate((element: HTMLTextAreaElement, value) => {
+      element.value = value;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }, rawSource);
+
+    if (await sourceDetails.getAttribute('open') !== null) {
+      await sourceSummary.click();
     }
+    await expect(sourceDetails).not.toHaveAttribute('open', '');
+    await sourceSummary.click();
+    await expect(sourceDetails).toHaveAttribute('open', '');
 
-    await page.evaluate(() => window.postMessage({ type: 'quickflash:test:openPopover' }, '*'));
+    await expect(panelPage.locator('#sourceViewRendered')).toHaveAttribute('aria-pressed', 'true');
+    await expect(renderedView).toBeVisible();
+    await expect(rawView).toBeHidden();
+
+    await panelPage.locator('#sourceViewRaw').click();
+    await expect(sourceDetails).toHaveAttribute('open', '');
+    await expect(panelPage.locator('#sourceViewRaw')).toHaveAttribute('aria-pressed', 'true');
+    await expect(rawView).toBeVisible();
+    await expect(rawView).toHaveJSProperty('readOnly', true);
+    await expect(rawView).toHaveValue(rawSource);
+    await expect(renderedView).toBeHidden();
+
+    await panelPage.locator('#sourceViewRendered').click();
+    await expect(sourceDetails).toHaveAttribute('open', '');
+    await expect(panelPage.locator('#sourceViewRendered')).toHaveAttribute('aria-pressed', 'true');
+    await expect(renderedView).toBeVisible();
+    await expect(rawView).toBeHidden();
+
+    await panelPage.close();
+  });
+
+  test('@screenshots overlay + tab screenshots (light & dark)', async () => {
+    await page.goto('http://localhost:31337/', { waitUntil: 'domcontentloaded' });
+    await injectContentScriptIntoFixtureTab();
+    await openOverlayInFixtureTab();
 
     await page.waitForSelector('html[data-qf-overlay="open"]', { timeout: 15_000 });
     
@@ -284,12 +380,15 @@ test.describe('Ghostwriter for Anki UI', () => {
 
     await page.emulateMedia({ colorScheme: 'light' });
 
-    await page.evaluate(() => window.postMessage({ type: 'quickflash:test:openPanelTab' }, '*'));
-
-    const panelPage = await context.waitForEvent('page', {
+    const panelPagePromise = context.waitForEvent('page', {
       timeout: 15_000,
       predicate: (p) => /\/panel\.html(#.*)?$/.test(p.url()),
     });
+    const worker = await extensionWorker();
+    await worker.evaluate(async () => {
+      await chrome.tabs.create({ url: chrome.runtime.getURL('panel.html') });
+    });
+    const panelPage = await panelPagePromise;
     await panelPage.waitForLoadState('load');
     await panelPage.waitForTimeout(300); // small paint/font settle
 
@@ -302,10 +401,11 @@ test.describe('Ghostwriter for Anki UI', () => {
     await page.bringToFront();
   });
 
-  test('@online-smoke text selection sends directly to Anki', async () => {
+  test('@release text selection sends directly to Anki', async () => {
     ankiActions = [];
     await page.goto('http://localhost:31337/', { waitUntil: 'domcontentloaded' });
     await injectContentScriptIntoFixtureTab();
+    await disableModelMetadataHelpers();
     await selectFixtureText('#fixture-text');
     await openOverlayInFixtureTab();
 
@@ -326,7 +426,7 @@ test.describe('Ghostwriter for Anki UI', () => {
   });
 
   test('@release overlay refreshes Source after selecting new text without adding the previous draft', async () => {
-    await page.goto('http://localhost:31337/?__qf_ci=1', { waitUntil: 'domcontentloaded' });
+    await page.goto('http://localhost:31337/', { waitUntil: 'domcontentloaded' });
     await injectContentScriptIntoFixtureTab();
     await resetPageSourceState();
 
@@ -338,7 +438,7 @@ test.describe('Ghostwriter for Anki UI', () => {
     await expect(panel.locator('#source')).toHaveValue('Highlights become focused Anki cards.');
     await panel.locator('#front').fill('What do highlights become?');
 
-    await page.evaluate(() => window.postMessage({ type: 'quickflash:test:closeOverlay' }, '*'));
+    await closeOverlayInFixtureTab();
     await expect(page.locator('html')).not.toHaveAttribute('data-qf-overlay', 'open', { timeout: 15_000 });
 
     await selectFixtureText('#fixture-text-2');

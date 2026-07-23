@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
+const COPILOT_CORE = require(path.join(ROOT, "copilot-core.js"));
 const DEFAULT_FIXTURE = path.join(ROOT, "tests/evals/deep-learning-wikipedia.json");
 const DEFAULT_OUT_DIR = path.join(ROOT, "tests/evals/reports");
 const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
@@ -251,7 +252,7 @@ function loadEngine() {
   const promptWindow = {};
   const prompts = new Function("window", `${promptsSource}\nreturn window.QUICKFLASH_PROMPTS;`)(promptWindow);
 
-  const helpers = new Function(`
+  const helpers = new Function("COPILOT_CORE", `
     const copilot = { frontWordCap: ${FRONT_WORD_CAP}, backWordCap: ${BACK_WORD_CAP} };
     ${extractDeclaration(panelSource, "FRONT_ANSWER_CUE_TERMS")}
     ${extractDeclaration(panelSource, "FRONT_ANSWER_CONTEXT_TERMS")}
@@ -286,45 +287,16 @@ function loadEngine() {
     ${extractFunction(panelSource, "isExactComplementSourceStemPrefix")}
     ${extractFunction(panelSource, "buildExactComplementSourceStemCompletion")}
     ${extractFunction(panelSource, "buildStatementSourceStemCompletion")}
-    ${extractFunction(panelSource, "cleanSourcePatternQuestionPhrase")}
-    ${extractFunction(panelSource, "shortenPeriodBoundaryPhrase")}
-    ${extractFunction(panelSource, "buildPatternSourceCompletion")}
-    ${extractFunction(panelSource, "inferApproachSourceCompletion")}
-    ${extractFunction(panelSource, "inferPeriodSourceCompletion")}
-    ${extractFunction(panelSource, "inferContextSourceCompletion")}
-    ${extractFunction(panelSource, "inferAliasSourceCompletion")}
-    ${extractFunction(panelSource, "inferAbbreviationSourceCompletion")}
-    ${extractFunction(panelSource, "inferCoreProblemSourceCompletion")}
-    ${extractFunction(panelSource, "inferCorpusContentsSourceCompletion")}
-    ${extractFunction(panelSource, "inferNamedSetSourceCompletion")}
-    ${extractFunction(panelSource, "inferMeaningSourceCompletion")}
-    ${extractFunction(panelSource, "inferGovernmentRepealSourceCompletion")}
-    ${extractFunction(panelSource, "inferTreeStructureSourceCompletion")}
-    ${extractFunction(panelSource, "inferWordFunctionSourceCompletion")}
-    ${extractFunction(panelSource, "inferDirectDefinitionSourceCompletion")}
-    ${extractFunction(panelSource, "inferOriginSourceCompletion")}
-    ${extractFunction(panelSource, "inferContrastTypesSourceCompletion")}
-    ${extractFunction(panelSource, "inferPipelineSourceCompletion")}
-    ${extractFunction(panelSource, "inferLabelCaptureSourceCompletion")}
-    ${extractFunction(panelSource, "inferYearEventSourceCompletion")}
-    ${extractFunction(panelSource, "inferKindOfInverseSourceCompletion")}
-    ${extractFunction(panelSource, "inferReceiveLabelsSourceCompletion")}
-    ${extractFunction(panelSource, "inferConditionsSourceCompletion")}
-    ${extractFunction(panelSource, "inferColonExplanationSourceCompletion")}
-    ${extractFunction(panelSource, "inferContrastDifferenceSourceCompletion")}
-    ${extractFunction(panelSource, "inferAnalogySolutionSourceCompletion")}
-    ${extractFunction(panelSource, "inferPrecedesSourceCompletion")}
-    ${extractFunction(panelSource, "inferReverseDefinitionSourceCompletion")}
-    ${extractFunction(panelSource, "inferTeachesPurposeSourceCompletion")}
-    ${extractFunction(panelSource, "inferSourcePatternCompletion")}
     ${extractFunction(panelSource, "inferSourceStemCompletion")}
     ${extractFunction(panelSource, "stripExistingPrefixFromCompletion")}
     ${extractFunction(panelSource, "stripCopilotMetaOutput")}
     ${extractFunction(panelSource, "isDanglingCompletionWord")}
     ${extractFunction(panelSource, "truncateCopilotSuggestionWords")}
     ${extractFunction(panelSource, "normalizeCopilotSuggestion")}
+    ${extractFunction(panelSource, "getFrontNormalizationRetryReason")}
     ${extractFunction(panelSource, "stripFrontFromBack")}
     ${extractFunction(panelSource, "finalizeFrontQuestion")}
+    ${extractFunction(panelSource, "completionNeedsLeadingSpace")}
     ${extractFunction(panelSource, "normalizeFrontSuggestionForPrefix")}
     ${extractFunction(panelSource, "normalizeFrontLeakText")}
     ${extractFunction(panelSource, "normalizeAnswerTerm")}
@@ -346,43 +318,24 @@ function loadEngine() {
     ${extractFunction(panelSource, "normalizeBackSuggestionForFront")}
     ${extractFunction(panelSource, "stripAnswerCueLead")}
     ${extractFunction(panelSource, "inferProtectedAnswerFromAdvantageSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromApproachSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromContextSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromAliasSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromAbbreviationSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromCoreProblemSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromCorpusContentsSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromNamedSetSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromMeaningSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromGovernmentRepealSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromTreeStructureSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromWordFunctionSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromDirectDefinitionSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromOriginSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromContrastTypesSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromPipelineSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromLabelCaptureSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromYearEventSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromKindOfInverseSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromReceiveLabelsSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromConditionsSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromColonExplanationSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromContrastDifferenceSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromAnalogySolutionSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromPrecedesSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromReverseDefinitionSource")}
-    ${extractFunction(panelSource, "inferProtectedAnswerFromTeachesPurposeSource")}
     ${extractFunction(panelSource, "inferProtectedAnswerFromSimpleFactSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromPredicateSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromCausalSource")}
+    ${extractFunction(panelSource, "inferProtectedAnswerFromRelationalSource")}
     ${extractFunction(panelSource, "inferProtectedAnswerFromSource")}
+    ${extractFunction(panelSource, "getBackSourceAlignmentIssue")}
     ${extractFunction(panelSource, "getAnswerTermLeakReason")}
     ${extractFunction(panelSource, "getFrontAnswerLeakReason")}
+    ${extractFunction(panelSource, "trimAnswerBearingFrontTail")}
     ${extractFunction(panelSource, "getFrontCompletionFitIssue")}
     ${extractFunction(panelSource, "getFrontRelationshipDriftIssue")}
     ${extractFunction(panelSource, "getFrontDefinitionDriftIssue")}
     function getContextSourceText(page) { return String(page?.sourceText || page?.selection || "").trim(); }
     ${extractFunction(panelSource, "getFrontSuggestionBlockReason")}
+    ${extractFunction(panelSource, "buildFrontGuardRetryPrompt")}
     return {
       normalizeCopilotSuggestion,
+      getFrontNormalizationRetryReason,
       getSourceStemMatch,
       selectRelevantSource,
       inferSourceStemCompletion,
@@ -396,10 +349,13 @@ function loadEngine() {
       getFrontRelationshipDriftIssue,
       getFrontDefinitionDriftIssue,
       getFrontSuggestionBlockReason,
+      trimAnswerBearingFrontTail,
+      buildFrontGuardRetryPrompt,
       normalizeBackSuggestionForFront,
       getBackAnswerFitIssue,
+      getBackSourceAlignmentIssue,
     };
-  `)();
+  `)(COPILOT_CORE);
 
   return { prompts, helpers };
 }
@@ -504,6 +460,16 @@ function makePage(fixture, testCase) {
   };
 }
 
+function normalizeKnownMiss(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const reason = String(value.reason || "").trim();
+  const models = Array.isArray(value.models) ? value.models.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const allowedFlags = Array.isArray(value.allowedFlags)
+    ? value.allowedFlags.map(String).map((item) => item.trim()).filter(Boolean)
+    : [];
+  return reason && models.length && allowedFlags.length ? { reason, models, allowedFlags } : null;
+}
+
 function getCarding(testCase) {
   const carding = testCase.carding && typeof testCase.carding === "object"
     ? testCase.carding
@@ -524,7 +490,19 @@ function getCarding(testCase) {
     alternateCards: Array.isArray(carding.alternateCards) ? carding.alternateCards : [],
     badButPlausibleCards: Array.isArray(carding.badButPlausibleCards) ? carding.badButPlausibleCards : [],
     prefixCards: Array.isArray(carding.prefixCards) ? carding.prefixCards : [],
-    knownMiss: typeof carding.knownMiss === "string" ? carding.knownMiss : "",
+    knownMiss: normalizeKnownMiss(carding.knownMiss),
+    allowGuardedSuppression: carding.allowGuardedSuppression === true,
+    // Disambiguating phrases the completed Front must contain (normalized substring match),
+    // e.g. a source qualifier like "the term" whose loss would leave the cue ambiguous.
+    requiredFrontPhrases: Array.isArray(carding.requiredFrontPhrases) ? carding.requiredFrontPhrases : [],
+    requiredFrontPhraseGroups: Array.isArray(carding.requiredFrontPhraseGroups) ? carding.requiredFrontPhraseGroups : [],
+    requiredBackPhrases: Array.isArray(carding.requiredBackPhrases) ? carding.requiredBackPhrases : [],
+    requiredBackPhraseGroups: Array.isArray(carding.requiredBackPhraseGroups) ? carding.requiredBackPhraseGroups : [],
+    forbiddenBackPhrases: Array.isArray(carding.forbiddenBackPhrases) ? carding.forbiddenBackPhrases : [],
+    requiredClozeDeletionPhrases: Array.isArray(carding.requiredClozeDeletionPhrases)
+      ? carding.requiredClozeDeletionPhrases
+      : [],
+    maxClozeDeletions: Number.isInteger(carding.maxClozeDeletions) ? carding.maxClozeDeletions : null,
   };
 }
 
@@ -574,7 +552,15 @@ function getPrefixCarding(testCase, prefix = getEvalPrefix(testCase)) {
       alternateCards: carding.alternateCards,
       badButPlausibleCards: carding.badButPlausibleCards,
       matchedPrefix: "",
-      knownMiss: carding.knownMiss || "",
+      knownMiss: carding.knownMiss,
+      allowGuardedSuppression: carding.allowGuardedSuppression,
+      requiredFrontPhrases: carding.requiredFrontPhrases,
+      requiredFrontPhraseGroups: carding.requiredFrontPhraseGroups,
+      requiredBackPhrases: carding.requiredBackPhrases,
+      requiredBackPhraseGroups: carding.requiredBackPhraseGroups,
+      forbiddenBackPhrases: carding.forbiddenBackPhrases,
+      requiredClozeDeletionPhrases: carding.requiredClozeDeletionPhrases,
+      maxClozeDeletions: carding.maxClozeDeletions,
     };
   }
 
@@ -583,13 +569,40 @@ function getPrefixCarding(testCase, prefix = getEvalPrefix(testCase)) {
     : carding.preferredCards;
   const alternateCards = mergeCardLists(prefixCarding.alternateCards, carding.alternateCards);
   const badButPlausibleCards = mergeCardLists(prefixCarding.badButPlausibleCards, carding.badButPlausibleCards);
+  const requiredFrontPhrases = [...new Set([
+    ...carding.requiredFrontPhrases,
+    ...(Array.isArray(prefixCarding.requiredFrontPhrases) ? prefixCarding.requiredFrontPhrases : []),
+  ])];
+  const mergePhrases = (base, override) => [...new Set([
+    ...base,
+    ...(Array.isArray(override) ? override : []),
+  ])];
+  const mergeGroups = (base, override) => [
+    ...base,
+    ...(Array.isArray(override) ? override : []),
+  ].filter(Array.isArray);
 
   return {
     preferredCards,
     alternateCards,
     badButPlausibleCards,
     matchedPrefix: prefixCarding.prefix || "",
-    knownMiss: (typeof prefixCarding.knownMiss === "string" && prefixCarding.knownMiss) || carding.knownMiss || "",
+    knownMiss: normalizeKnownMiss(prefixCarding.knownMiss) || carding.knownMiss,
+    allowGuardedSuppression: prefixCarding.allowGuardedSuppression === undefined
+      ? carding.allowGuardedSuppression
+      : prefixCarding.allowGuardedSuppression === true,
+    requiredFrontPhrases,
+    requiredFrontPhraseGroups: mergeGroups(carding.requiredFrontPhraseGroups, prefixCarding.requiredFrontPhraseGroups),
+    requiredBackPhrases: mergePhrases(carding.requiredBackPhrases, prefixCarding.requiredBackPhrases),
+    requiredBackPhraseGroups: mergeGroups(carding.requiredBackPhraseGroups, prefixCarding.requiredBackPhraseGroups),
+    forbiddenBackPhrases: mergePhrases(carding.forbiddenBackPhrases, prefixCarding.forbiddenBackPhrases),
+    requiredClozeDeletionPhrases: mergePhrases(
+      carding.requiredClozeDeletionPhrases,
+      prefixCarding.requiredClozeDeletionPhrases
+    ),
+    maxClozeDeletions: Number.isInteger(prefixCarding.maxClozeDeletions)
+      ? prefixCarding.maxClozeDeletions
+      : carding.maxClozeDeletions,
   };
 }
 
@@ -624,14 +637,26 @@ function normalizeForCompare(value) {
 
 function findMatchingBadCard(testCase, generated) {
   const generatedFront = normalizeForCompare(generated.front);
-  if (!generatedFront) return null;
   const generatedBack = normalizeForCompare(generated.back);
+  const generatedCloze = normalizeForCompare(generated.cloze || generated.rawCloze);
   return getPrefixCarding(testCase, generated.frontPrefix).badButPlausibleCards.find((card) => {
+    if (card?.type === "cloze") {
+      const badCloze = normalizeForCompare(card.text);
+      return !!badCloze && !!generatedCloze && generatedCloze === badCloze;
+    }
     const badFront = normalizeForCompare(card?.front);
-    if (!badFront || generatedFront !== badFront) return false;
+    if (!badFront || !generatedFront || generatedFront !== badFront) return false;
     const badBack = normalizeForCompare(card?.back);
     return !badBack || generatedBack === badBack;
   }) || null;
+}
+
+function isAllowedGuardedSuppression(prefixRules, generated) {
+  return prefixRules?.allowGuardedSuppression === true
+    && !generated?.front
+    && !generated?.back
+    && !generated?.modelOutputIssue?.kind
+    && !!generated?.localGuard?.blockReason;
 }
 
 function formatCard(card) {
@@ -649,7 +674,7 @@ function buildFrontPrompt({ fixture, testCase, prompts, helpers }) {
   page.selection = helpers.selectRelevantSource(testCase.sourceText, frontPrefix, "");
   const sourceStem = helpers.getSourceStemMatch(testCase.sourceText, frontPrefix);
   const protectedAnswer = helpers.inferProtectedAnswerFromSource(
-    testCase.sourceText,
+    page.selection,
     frontPrefix
   );
   return {
@@ -660,6 +685,7 @@ function buildFrontPrompt({ fixture, testCase, prompts, helpers }) {
       other: "",
       protectedAnswer,
       sourceStem,
+      prefixEndsWithSpace: /\s$/u.test(frontPrefix),
       notes: "",
       page,
       caps: { frontWordCap: FRONT_WORD_CAP, backWordCap: BACK_WORD_CAP },
@@ -693,7 +719,10 @@ function buildBackPrompt({ fixture, testCase, front, prompts, helpers }) {
 function buildClozePrompt({ fixture, testCase, prompts, helpers }) {
   const page = makePage(fixture, testCase);
   const frontPrefix = getEvalPrefix(testCase);
-  page.selection = helpers.selectRelevantSource(testCase.sourceText, frontPrefix, "");
+  page.selection = helpers.selectRelevantSource(testCase.sourceText, frontPrefix, "", {
+    after: 1,
+    expandOnlyIfTailMissing: true,
+  });
   return {
     system: prompts.clozeSystem || prompts.frontSystem,
     prompt: prompts.buildUserPrompt({
@@ -701,6 +730,7 @@ function buildClozePrompt({ fixture, testCase, prompts, helpers }) {
       existing: frontPrefix,
       other: "",
       cloze: true,
+      prefixEndsWithSpace: /\s$/u.test(frontPrefix),
       notes: "",
       page,
       caps: { frontWordCap: FRONT_WORD_CAP, backWordCap: BACK_WORD_CAP },
@@ -723,7 +753,6 @@ async function chatCompletion(config, { system, prompt, maxTokens }) {
     max_tokens: maxTokens,
     n: 1,
     stream: false,
-    stop: ["\n\n", "\nQuestion:", "\nAnswer:"],
   };
 
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -768,7 +797,6 @@ async function geminiCompletion(config, { system, prompt, maxTokens }) {
     generationConfig: {
       maxOutputTokens: maxTokens,
       temperature: 0.1,
-      stopSequences: ["\n\n", "\nQuestion:", "\nAnswer:"],
       responseMimeType: "text/plain",
       ...(thinkingConfig ? { thinkingConfig } : {}),
     },
@@ -889,6 +917,7 @@ async function listProviderModels(config) {
 function judgeCase(testCase, generated, helpers) {
   const flags = [];
   const carding = getCarding(testCase);
+  const prefixRules = getPrefixCarding(testCase, generated.frontPrefix);
   const expectedBack = getExpectedBack(testCase, generated.frontPrefix);
 
   if (generated.dryRun) {
@@ -904,11 +933,27 @@ function judgeCase(testCase, generated, helpers) {
 
   // Cloze cards are judged on the cloze output: it must carry at least one {{c1::...}} deletion.
   if (carding.verdict === "cloze") {
-    const clozeText = generated.cloze || generated.rawCloze || "";
+    // Judge only the runtime-normalized value. Falling back to raw provider text
+    // would let malformed, over-cap, or prefix-drift output pass the eval gate.
+    const clozeText = generated.cloze || "";
     if (generated.modelOutputIssue?.kind) flags.push(`model-output:${generated.modelOutputIssue.kind}`);
     else if (!clozeText) flags.push("missing-cloze");
-    else if (!/\{\{c\d+::[^}]+\}\}/.test(clozeText)) flags.push("cloze-no-deletion");
-    return { flags, status: flags.length ? "needs-review" : "review", clozeText };
+    const deletions = COPILOT_CORE.parseClozeDeletions(clozeText) || [];
+    if (clozeText && !deletions.length) flags.push("cloze-no-deletion");
+    const maxClozeDeletions = getPrefixCarding(testCase, generated.frontPrefix).maxClozeDeletions;
+    const deletionCount = deletions.length;
+    if (Number.isInteger(maxClozeDeletions) && deletionCount > maxClozeDeletions) {
+      flags.push(`cloze-too-many-deletions:${deletionCount}>${maxClozeDeletions}`);
+    }
+    const deletionText = deletions.map((deletion) => deletion.content || "").join(" ");
+    for (const phrase of getPrefixCarding(testCase, generated.frontPrefix).requiredClozeDeletionPhrases) {
+      if (phrase && !COPILOT_CORE.containsTokenPhrase(deletionText, phrase)) {
+        flags.push(`cloze-missing-required-deletion:${clip(phrase, 60)}`);
+      }
+    }
+    const badCard = findMatchingBadCard(testCase, generated);
+    if (badCard) flags.push("matches-known-bad-card");
+    return { flags, status: flags.length ? "needs-review" : "review", clozeText, deletionCount, badCard };
   }
 
   if (generated.modelOutputIssue?.kind) {
@@ -923,8 +968,9 @@ function judgeCase(testCase, generated, helpers) {
     flags.push("fixture:maybe-salvage");
   }
 
-  if (carding.verdict === "basic" && !generated.front) flags.push("missing-front");
-  if (carding.verdict === "basic" && !generated.back) flags.push("missing-back");
+  const guardedSuppression = isAllowedGuardedSuppression(prefixRules, generated);
+  if (carding.verdict === "basic" && !guardedSuppression && !generated.front) flags.push("missing-front");
+  if (carding.verdict === "basic" && !guardedSuppression && !generated.back) flags.push("missing-back");
 
   const expectedLeak = expectedBack
     ? helpers.getFrontAnswerLeakReason(generated.front, {
@@ -955,11 +1001,46 @@ function judgeCase(testCase, generated, helpers) {
   });
   if (definitionDrift) flags.push(`front-drift:${definitionDrift}`);
 
-  const backFitIssue = helpers.getBackAnswerFitIssue(generated.front, generated.back);
+  const backFitIssue = helpers.getBackAnswerFitIssue(generated.front, generated.back)
+    || helpers.getBackSourceAlignmentIssue(generated.front, generated.back, testCase.sourceText);
   if (backFitIssue) flags.push(`back-fit:${backFitIssue}`);
 
   if (generated.front && !generated.front.toLowerCase().startsWith(generated.frontPrefix.trim().toLowerCase())) {
     flags.push("front-prefix-drift");
+  }
+
+  // A required disambiguating phrase (e.g. the source's "the term" qualifier) must survive
+  // into the completed Front; losing it leaves the cue ambiguous even when everything else fits.
+  if (carding.verdict === "basic" && generated.front) {
+    const requiredFrontPhrases = prefixRules.requiredFrontPhrases;
+    for (const phrase of requiredFrontPhrases) {
+      if (phrase && !COPILOT_CORE.containsTokenPhrase(generated.front, phrase)) {
+        flags.push(`front-missing-required:${clip(phrase, 60)}`);
+      }
+    }
+    for (const group of prefixRules.requiredFrontPhraseGroups) {
+      if (group.length && !group.some((phrase) => COPILOT_CORE.containsTokenPhrase(generated.front, phrase))) {
+        flags.push(`front-missing-required-group:${group.map((phrase) => clip(phrase, 30)).join("|")}`);
+      }
+    }
+  }
+
+  if (carding.verdict === "basic" && generated.back) {
+    for (const phrase of prefixRules.requiredBackPhrases) {
+      if (phrase && !COPILOT_CORE.containsTokenPhrase(generated.back, phrase)) {
+        flags.push(`back-missing-required:${clip(phrase, 60)}`);
+      }
+    }
+    for (const group of prefixRules.requiredBackPhraseGroups) {
+      if (group.length && !group.some((phrase) => COPILOT_CORE.containsTokenPhrase(generated.back, phrase))) {
+        flags.push(`back-missing-required-group:${group.map((phrase) => clip(phrase, 30)).join("|")}`);
+      }
+    }
+    for (const phrase of prefixRules.forbiddenBackPhrases) {
+      if (phrase && COPILOT_CORE.containsTokenPhrase(generated.back, phrase)) {
+        flags.push(`back-forbidden:${clip(phrase, 60)}`);
+      }
+    }
   }
 
   const badCard = findMatchingBadCard(testCase, generated);
@@ -976,6 +1057,33 @@ function judgeCase(testCase, generated, helpers) {
     backFitIssue,
     badCard: badCard ? { front: badCard.front || "", whyBad: badCard.whyBad || "" } : null,
   };
+}
+
+function getHardFlags(row) {
+  const hard = [
+    "front-leak",
+    "protected-leak",
+    "front-fit",
+    "front-drift",
+    "front-prefix-drift",
+    "front-missing-required",
+    "front-missing-required-group",
+    "back-fit",
+    "back-missing-required",
+    "back-missing-required-group",
+    "back-forbidden",
+    "matches-known-bad-card",
+    "missing-front",
+    "missing-back",
+    "model-output",
+    "missing-cloze",
+    "cloze-no-deletion",
+    "cloze-too-many-deletions",
+    "cloze-missing-required-deletion",
+  ];
+  return (row?.judgment?.flags || []).filter((flag) => (
+    hard.some((name) => String(flag) === name || String(flag).startsWith(`${name}:`))
+  ));
 }
 
 async function runCase({ fixture, testCase, prompts, helpers, config, live, includePrompts }) {
@@ -995,7 +1103,8 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     cardingRationale: carding.rationale,
     plausibleUserPrefixes: carding.plausibleUserPrefixes,
     prefixCardingMatched: prefixCarding.matchedPrefix,
-    knownMiss: prefixCarding.knownMiss || "",
+    allowGuardedSuppression: prefixCarding.allowGuardedSuppression,
+    knownMiss: prefixCarding.knownMiss || null,
     preferredCards: prefixCarding.preferredCards,
     alternateCards: prefixCarding.alternateCards,
     badButPlausibleCards: prefixCarding.badButPlausibleCards,
@@ -1038,11 +1147,48 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
         });
         row.rawCloze = clozeCompletion.text;
         row.clozeActualModel = clozeCompletion.model;
-        // The model may return the full sentence (incl. the prefix) or just the suffix.
-        const rawClozeTrim = String(row.rawCloze || "").trim();
-        row.cloze = rawClozeTrim.toLowerCase().startsWith(frontPrefix.trim().toLowerCase())
-          ? rawClozeTrim
-          : joinCompletion(frontPrefix, rawClozeTrim).trim();
+        const existingDeletionCount = (COPILOT_CORE.parseClozeDeletions(frontPrefix) || []).length;
+        const runtimeMaxDeletions = existingDeletionCount + 1;
+        const maxDeletions = Number.isInteger(prefixCarding.maxClozeDeletions)
+          ? Math.min(runtimeMaxDeletions, prefixCarding.maxClozeDeletions)
+          : runtimeMaxDeletions;
+        row.clozeValidation = COPILOT_CORE.validateClozeCompletion(
+          frontPrefix,
+          COPILOT_CORE.cleanClozeCompletionText(row.rawCloze),
+          {
+            maxFrontWords: FRONT_WORD_CAP,
+            maxDeletions,
+            requiredNewDeletions: 1,
+          }
+        );
+        row.clozeSuffix = row.clozeValidation.suffix;
+
+        // Mirror the runtime's single bounded repair for a non-empty, machine-reparable
+        // completion. Empty provider output is left empty rather than charged twice.
+        if (!row.clozeSuffix && row.clozeValidation.reason !== "empty") {
+          const retryPrompt = COPILOT_CORE.buildClozeGuardRetryPrompt(
+            clozePrompt.prompt,
+            row.rawCloze,
+            row.clozeValidation,
+            { maxFrontWords: FRONT_WORD_CAP, maxDeletions }
+          );
+          const retryCompletion = await chatCompletion(config, {
+            system: clozePrompt.system,
+            prompt: retryPrompt,
+            maxTokens: 90,
+          });
+          row.rawClozeRetry = retryCompletion.text;
+          row.clozeRetryActualModel = retryCompletion.model;
+          row.clozeRetryValidation = COPILOT_CORE.validateClozeCompletion(
+            frontPrefix,
+            COPILOT_CORE.cleanClozeCompletionText(row.rawClozeRetry),
+            { maxFrontWords: FRONT_WORD_CAP, maxDeletions, requiredNewDeletions: 1 }
+          );
+          row.clozeSuffix = row.clozeRetryValidation.suffix;
+        }
+        row.cloze = row.clozeSuffix
+          ? joinCompletion(frontPrefix, row.clozeSuffix).trim()
+          : "";
       } catch (err) {
         row.modelOutputIssue = buildProviderCallIssue(config, "cloze", err);
       }
@@ -1063,10 +1209,7 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     row.front = row.frontSuffix ? joinCompletion(frontPrefix, row.frontSuffix) : "";
     row.rawBack = sourceStemCompletion.back;
     row.back = helpers.normalizeBackSuggestionForFront(
-      helpers.normalizeCopilotSuggestion(sourceStemCompletion.back, "", {
-        role: "back",
-        maxWords: BACK_WORD_CAP,
-      }),
+      sourceStemCompletion.back,
       row.front
     );
     row.sourceStemCompletion = sourceStemCompletion;
@@ -1105,6 +1248,22 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     return row;
   }
   row.front = row.frontSuffix ? joinCompletion(frontPrefix, row.frontSuffix) : "";
+  const trimmedFrontSuffix = row.frontSuffix
+    ? helpers.trimAnswerBearingFrontTail(
+        row.frontSuffix,
+        frontPrefix,
+        frontPrompt.protectedAnswer
+      )
+    : "";
+  if (trimmedFrontSuffix) {
+    row.frontSuffix = trimmedFrontSuffix;
+    row.front = joinCompletion(frontPrefix, row.frontSuffix);
+    row.frontTailTrimmed = true;
+  }
+
+  const frontNormalizationReason = row.frontSuffix
+    ? ""
+    : helpers.getFrontNormalizationRetryReason(frontPrefix, row.rawFront);
 
   const leakReason = row.front
     ? helpers.getFrontAnswerLeakReason(row.front, {
@@ -1121,17 +1280,73 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     sourceText: testCase.sourceText,
     existingText: frontPrefix,
   }) : "";
-  const frontBlockReason = leakReason || frontFitIssue || relationshipDrift || definitionDrift;
-  if (row.frontSuffix && frontBlockReason) {
+  const frontBlockReason = row.front ? helpers.getFrontSuggestionBlockReason(
+    row.frontSuffix,
+    frontPrefix,
+    {
+      protectedAnswer: frontPrompt.protectedAnswer,
+      page: makePage(fixture, testCase),
+    }
+  ) : frontNormalizationReason;
+  if (frontBlockReason) {
     row.localGuard = {
       leakReason,
       fitIssue: frontFitIssue,
       relationshipDrift,
       definitionDrift,
+      normalizationReason: frontNormalizationReason,
       blockReason: frontBlockReason,
     };
-    row.frontSuffix = "";
-    row.front = "";
+    try {
+      const retryCompletion = await chatCompletion(config, {
+        system: frontPrompt.system,
+        prompt: helpers.buildFrontGuardRetryPrompt(
+          frontPrompt.prompt,
+          row.front || row.rawFront,
+          frontBlockReason
+        ),
+        maxTokens: 40,
+      });
+      row.rawFrontRetry = retryCompletion.text;
+      row.frontRetryActualModel = retryCompletion.model;
+      row.frontSuffix = helpers.normalizeFrontSuggestionForPrefix(
+        frontPrefix,
+        helpers.normalizeCopilotSuggestion(row.rawFrontRetry, frontPrefix, {
+          role: "front",
+          maxWords: FRONT_WORD_CAP,
+        })
+      );
+      row.front = row.frontSuffix ? joinCompletion(frontPrefix, row.frontSuffix) : "";
+      const trimmedRetrySuffix = row.frontSuffix
+        ? helpers.trimAnswerBearingFrontTail(
+            row.frontSuffix,
+            frontPrefix,
+            frontPrompt.protectedAnswer
+          )
+        : "";
+      if (trimmedRetrySuffix) {
+        row.frontSuffix = trimmedRetrySuffix;
+        row.front = joinCompletion(frontPrefix, row.frontSuffix);
+        row.frontTailTrimmed = true;
+      }
+      const retryBlockReason = row.front ? helpers.getFrontSuggestionBlockReason(
+        row.frontSuffix,
+        frontPrefix,
+        {
+          protectedAnswer: frontPrompt.protectedAnswer,
+          page: makePage(fixture, testCase),
+        }
+      ) : helpers.getFrontNormalizationRetryReason(frontPrefix, row.rawFrontRetry);
+      row.localGuard.retryBlockReason = retryBlockReason;
+      if (!row.frontSuffix || retryBlockReason) {
+        row.frontSuffix = "";
+        row.front = "";
+      }
+    } catch (err) {
+      row.modelOutputIssue = buildProviderCallIssue(config, "front-retry", err);
+      row.frontSuffix = "";
+      row.front = "";
+    }
   }
 
   if (row.front) {
@@ -1161,6 +1376,12 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     back = helpers.stripFrontFromBack(back, row.front);
     back = helpers.normalizeBackSuggestionForFront(back, row.front);
     row.back = back;
+    const runtimeBackIssue = helpers.getBackAnswerFitIssue(row.front, row.back)
+      || helpers.getBackSourceAlignmentIssue(row.front, row.back, testCase.sourceText);
+    if (runtimeBackIssue) {
+      row.localBackGuard = { blockReason: runtimeBackIssue, rejectedBack: row.back };
+      row.back = "";
+    }
     if (!row.back && looksLikeTaskNarration(row.rawBack)) {
       row.modelOutputIssue = buildTaskNarrationIssue(config, "back", row.rawBack);
     }
@@ -1391,13 +1612,17 @@ async function main() {
   }
   if (args.gate && live) {
     // Hard failures: the model produced an actually-bad card (leak, drift, non-fit,
-    // restated Back, matched a known-bad card, missing field). Soft "fixture:*" review
-    // flags do not gate. Cases annotated with a knownMiss reason are documented model
-    // limitations: they still run and appear in reports, but do not fail the gate.
-    const HARD = ["front-leak", "protected-leak", "front-fit", "front-drift", "back-fit", "matches-known-bad-card", "missing-front", "missing-back", "model-output", "missing-cloze", "cloze-no-deletion"];
-    const isHard = (row) => (row.judgment?.flags || []).some((f) => HARD.some((h) => String(f).startsWith(h)));
-    const hardFails = rows.filter((row) => !row.knownMiss && isHard(row));
-    const knownMisses = rows.filter((row) => row.knownMiss && isHard(row));
+    // restated Back, matched a known-bad card, dropped a required disambiguating phrase,
+    // missing field). Soft "fixture:*" review flags do not gate. A structured knownMiss can
+    // exempt only its exact flags on its exact model; any new hard flag still fails the gate.
+    const isAllowedKnownMiss = (row, flag) => {
+      const miss = row.knownMiss;
+      return !!miss
+        && miss.models.includes(config.model)
+        && miss.allowedFlags.includes(flag);
+    };
+    const hardFails = rows.filter((row) => getHardFlags(row).some((flag) => !isAllowedKnownMiss(row, flag)));
+    const knownMisses = rows.filter((row) => getHardFlags(row).some((flag) => isAllowedKnownMiss(row, flag)));
     if (knownMisses.length) {
       console.log(`Known misses (documented in the fixture, not gating): ${knownMisses.map((r) => r.id).join(", ")}`);
     }

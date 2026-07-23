@@ -124,7 +124,8 @@ describe('Copilot eval fixtures', () => {
 
     const term = fixture.cases.find((testCase) => testCase.id === 'term-introduction');
     assert.equal(term.carding.preferredCards[0].back, 'Rina Dechter');
-    assert.equal(term.carding.preferredCards[1].back, 'Igor Aizenberg and colleagues');
+    assert.equal(term.carding.preferredCards.length, 1);
+    assert.deepEqual(term.carding.requiredBackPhrases, ['Rina Dechter']);
     assert.equal(term.carding.alternateCards[0].back, '1986');
   });
 
