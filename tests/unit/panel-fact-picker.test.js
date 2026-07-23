@@ -29,6 +29,12 @@ const sourceLikelyMultiFact = new Function(
   `${extractFunction(panelJs, 'sourceLikelyMultiFact')}\nreturn sourceLikelyMultiFact;`
 )();
 
+function loadFactPickerPrefixNormalizer() {
+  return new Function(
+    `${extractFunction(panelJs, 'normalizeFactPickerPrefix')}\nreturn normalizeFactPickerPrefix;`
+  )();
+}
+
 const KALEIDA =
   'Kaleida, funded to the tune of $40 million by Apple Computer and IBM in 1991. Its mission was to create a multimedia programming language, which it produced — Script X. Kaleida closed in 1995.';
 
@@ -46,6 +52,10 @@ describe('copilot fact picker', () => {
     assert.match(panelJs, /async function generateCardFromFact/);
     assert.match(panelJs, /await ultimateChatJSON\(/); // reuses the existing JSON call path
     assert.match(panelJs, /_copilotFactCache/); // one extraction per unique source
+    assert.match(
+      extractFunction(panelJs, 'extractCandidateFacts'),
+      /COPILOT_CORE\?\.filterSourceGroundedFacts\?\.\(src, raw/
+    );
   });
 
   it('honors the user prefix and offers Use / Pick-another / Back-to-editor without overwriting', () => {
@@ -59,6 +69,50 @@ describe('copilot fact picker', () => {
     assert.match(applyFn, /copilot\.locks\.allSuspended = true;/);
     assert.match(applyFn, /copilot\._suspendCrossClear = true;/);
     assert.match(applyFn, /dispatchEvent\(new Event\("input", \{ bubbles: true \}\)\)/);
+  });
+
+  it('does not force a one-word setup stub into the picked-answer card', () => {
+    const normalizeFactPickerPrefix = loadFactPickerPrefixNormalizer();
+    assert.equal(normalizeFactPickerPrefix('Let'), '');
+    assert.equal(normalizeFactPickerPrefix('Suppose'), '');
+    assert.equal(normalizeFactPickerPrefix('What is'), 'What is');
+    assert.equal(normalizeFactPickerPrefix('How does the construction'), 'How does the construction');
+  });
+
+  it('reuses one live error region instead of appending duplicate failure messages', () => {
+    const picked = extractFunction(panelJs, 'onCopilotFactPicked');
+    assert.match(picked, /renderCopilotFactPickerError\(/);
+    const renderError = extractFunction(panelJs, 'renderCopilotFactPickerError');
+    assert.match(renderError, /querySelector\(["']\.cfp-error["']\)/);
+    assert.match(renderError, /role\s*=\s*["']status["']/);
+    assert.match(panelHtml, /\.cfp-error\s*\{/);
+
+    let errorNode = null;
+    let appendCount = 0;
+    const body = {
+      querySelector(selector) {
+        return selector === '.cfp-error' ? errorNode : null;
+      },
+      appendChild(node) {
+        errorNode = node;
+        appendCount += 1;
+      },
+    };
+    const document = {
+      createElement() {
+        return { className: '', role: '', hidden: true, textContent: '' };
+      },
+    };
+    const renderCopilotFactPickerError = new Function(
+      'document',
+      `${renderError}\nreturn renderCopilotFactPickerError;`
+    )(document);
+    assert.equal(renderCopilotFactPickerError(body, 'First failure'), errorNode);
+    assert.equal(renderCopilotFactPickerError(body, 'Second failure'), errorNode);
+    assert.equal(appendCount, 1);
+    assert.equal(errorNode.role, 'status');
+    assert.equal(errorNode.hidden, false);
+    assert.equal(errorNode.textContent, 'Second failure');
   });
 
   it('is offered on a Front failure and hidden on success and accept', () => {

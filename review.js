@@ -397,7 +397,7 @@ function render() {
     ai_assisted: "AI-assisted draft",
     user_written: "User-written draft",
   }[item.draft_origin] || "Card draft";
-  const aiBit = item.ai_suggestion_count ? ` · ${item.ai_suggestion_count} AI suggestion${item.ai_suggestion_count === 1 ? "" : "s"}` : "";
+  const aiBit = item.ai_suggestion_count ? ` · ${item.ai_suggestion_count} Copilot suggestion${item.ai_suggestion_count === 1 ? "" : "s"}` : "";
   draftOrigin.textContent = `${originLabel}${aiBit}`;
   if (statusPill) {
     statusPill.textContent = status === "skipped" ? "Rejected" : titleCase(status);

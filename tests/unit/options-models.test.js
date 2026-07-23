@@ -81,7 +81,7 @@ describe('options.js model presets', () => {
     assert.ok(optionsSource.includes('chrome.permissions.contains'));
     assert.ok(optionsSource.includes('chrome.permissions.request'));
     assert.ok(panelSource.includes('chrome.permissions.request({ origins: [origin] })'));
-    assert.ok(backgroundSource.includes('chrome.permissions.request({ origins: [origin] })'));
+    assert.ok(backgroundSource.includes('chrome.permissions.request({ origins: safeOrigins })'));
   });
 
   it('stores provider API keys outside synced options', () => {

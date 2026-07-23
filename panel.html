@@ -367,6 +367,7 @@
     .cfp-chip:hover { background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); border-color: color-mix(in oklab, var(--border) 50%, var(--accent)); }
     .cfp-chip:disabled { opacity: 0.55; cursor: default; }
     .cfp-chip-active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+    .cfp-error { margin-top: 10px; color: var(--muted); }
     .cfp-proposal-card { border: 0.5px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; background: var(--surface-2); }
     .cfp-line { font-size: 15px; margin: 6px 0; line-height: 1.45; }
     .cfp-label { display: inline-block; min-width: 44px; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 8px; vertical-align: 1px; }
@@ -497,8 +498,49 @@
     }
     .source-controls { gap: 6px; align-items: center; }
     .metadata-drawer-body { margin-top: 10px; }
+    .source-view-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 8px;
+    }
+    .source-view-toggle {
+      display: inline-flex;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+    }
+    .source-view-toggle button {
+      border: 0;
+      border-radius: 0;
+      padding: 4px 10px;
+      background: transparent;
+      color: var(--muted);
+      box-shadow: none;
+      font-size: 11px;
+      line-height: 1;
+    }
+    .source-view-toggle button[aria-pressed="true"] {
+      background: var(--accent);
+      color: var(--accent-ink);
+    }
+    .source-view-toggle button:focus-visible {
+      position: relative;
+      z-index: 1;
+      outline: var(--focus-outline) solid var(--ring);
+      outline-offset: -2px;
+    }
     .source-hidden-input {
-      display: none;
+      width: 100%;
+      height: 180px;
+      min-height: 180px;
+      box-sizing: border-box;
+      resize: vertical;
+      overflow: auto;
+      white-space: pre;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
     }
     .source-rendered-section {
       padding: 0;
@@ -658,6 +700,7 @@
       justify-content: space-between;
       gap: 8px;
     }
+    .front-title-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .card-type-row { display: inline-flex; align-items: center; gap: 6px; }
     .card-type-pill {
       display: inline-flex;
@@ -1056,7 +1099,8 @@
       flex: 1 1 40%;
     }
     .copilot-mini button,
-    .copilot-mini .source-pill {
+    .copilot-mini .source-pill,
+    .copilot-mini .backend-pill {
       flex: 0 0 auto;
       white-space: nowrap;
     }
@@ -1074,6 +1118,18 @@
       font-weight: 600;
       box-shadow: var(--shadow-sm);
     }
+    .backend-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in oklab, var(--accent) 30%, var(--border));
+      background: color-mix(in oklab, var(--accent) 8%, var(--surface));
+      color: var(--text);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .backend-pill[hidden] { display: none !important; }
 
     .row.single {
       grid-template-columns: 1fr;
@@ -1354,6 +1410,11 @@
       min-height: 138px;
     }
 
+    body.is-overlay-surface .source-hidden-input {
+      height: min(26vh, 210px);
+      min-height: 138px;
+    }
+
     body.is-overlay-surface .deck-model-row,
     body.is-overlay-surface .metadata-row {
       grid-template-columns: 1fr;
@@ -1537,8 +1598,7 @@
     .copilot-suggestion { display: none !important; }
     .copilot-working    { display: none !important; }
     /* ...except a blocked draft offered via "Use anyway" — it has no other surface, so it must
-       stay visible everywhere (overlay, side panel, tab). The movable-blank split editor lives
-       in its own takeover modal (#stemSplitTakeover) instead. */
+       stay visible everywhere (overlay, side panel, tab). */
     .copilot-suggestion.rejected-draft-mode:not([hidden]) { display: grid !important; }
   </style>
 </head>
@@ -1637,7 +1697,7 @@
                   <textarea id="notes" placeholder="Extra detail to map into the Anki note"></textarea>
                 </div>
                 <div class="copilot-row">
-                  <div class="small">AI suggestion status</div>
+                  <div class="small">Copilot status</div>
                   <div id="copilotStatus" class="copilot-status small"></div>
                 </div>
               </div>
@@ -1647,10 +1707,10 @@
                 <div class="quick-options">
                   <label class="inline"><input id="fillSourceField" type="checkbox" checked /> Fill <b>Source</b> field (if it exists)</label>
                   <label class="inline"><input id="includeBackLink" type="checkbox" /> Add clickable link on Back</label>
-                  <label class="inline"><input id="manualAutoTag" type="checkbox" /> Auto-tag with AI</label>
+                  <label class="inline"><input id="manualAutoTag" type="checkbox" /> Auto-tag</label>
                   <label class="inline"><input id="manualAutoContext" type="checkbox" /> Generate context</label>
                   <label class="inline"><input id="mathjaxPreview" type="checkbox" /> Auto preview</label>
-                  <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable AI suggestions</label>
+                  <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable Copilot autocomplete</label>
                 </div>
               </details>
             </div>
@@ -1672,16 +1732,22 @@
           </summary>
           <div class="card-entry-body metadata-drawer-body source-drawer-body">
             <div id="sourceGroup" data-field-block="source">
-              <div class="markdown-section source-rendered-section" data-preview-block="source">
+              <div class="source-view-toolbar">
+                <div class="source-view-toggle" role="group" aria-label="Source view">
+                  <button type="button" id="sourceViewRendered" aria-pressed="true">Rendered</button>
+                  <button type="button" id="sourceViewRaw" aria-pressed="false">Source</button>
+                </div>
+              </div>
+              <div id="sourceRenderedView" class="markdown-section source-rendered-section" data-preview-block="source">
                 <iframe id="previewSource" class="markdown-render preview-frame source-preview-frame" title="Source excerpt preview"></iframe>
                 <div class="preview-warning" data-preview-warning hidden>MathJax not loaded</div>
               </div>
-              <textarea id="source" class="source-hidden-input" aria-hidden="true" tabindex="-1" placeholder="Quote or excerpt from the source…"></textarea>
+              <textarea id="source" class="source-hidden-input" hidden readonly aria-label="Raw source text" spellcheck="false" placeholder="Quote or excerpt from the source…"></textarea>
             </div>
           </div>
         </details>
         <div id="longSourceNotice" class="small long-source-notice" role="status" aria-live="polite" hidden>
-          <span>Long selection — AI suggestions work best on a sentence or two. Try selecting a smaller passage.</span>
+          <span>Long selection — Copilot autocomplete works best on a sentence or two. Try selecting a smaller passage.</span>
           <button type="button" id="dismissLongSourceNotice">Dismiss</button>
         </div>
 
@@ -1769,7 +1835,10 @@
         <div id="standardFields">
           <div>
             <div class="label front-label-row">
-              <span>Question (Front)</span>
+              <span class="front-title-row">
+                <span>Question (Front)</span>
+                <span id="copilotBackend" class="backend-pill small" role="status" aria-live="polite" hidden></span>
+              </span>
               <span class="card-type-row">
                 <span class="card-type-hint" id="cardTypeHint" role="status" aria-live="polite" hidden>Cloze detected</span>
                 <span class="card-type-pill" id="cardTypePill" data-mismatch="false" role="group" aria-label="Card type">
@@ -1794,7 +1863,7 @@
             </div>
             <div class="copilot-suggestion" data-field="front" hidden>
               <div class="copilot-header">
-                <div class="copilot-meta">AI suggestion</div>
+                <div class="copilot-meta">Copilot suggestion</div>
                 <div class="copilot-hint small"></div>
               </div>
               <div class="copilot-text"></div>
@@ -1805,11 +1874,11 @@
             </div>
           </div>
 
-          <!-- Compact AI suggestion mini panel -->
+          <!-- Compact Copilot autocomplete panel -->
           <div id="copilotMini" class="copilot-mini">
             <select id="editorTemplateSelect" class="small" hidden></select>
             <button type="button" id="editorGenerateBtn" title="Draft one card from Source" tabindex="-1" hidden>Draft</button>
-            <button type="button" id="copilotMiniGenerate" title="Request AI suggestion" tabindex="-1">Suggest</button>
+            <button type="button" id="copilotMiniGenerate" title="Request Copilot suggestion" tabindex="-1">Suggest</button>
             <span id="sourceModePill" class="source-pill small" aria-live="polite">Source: Auto</span>
             <button type="button" id="copilotMiniAccept" title="Accept both" tabindex="-1">Accept</button>
             <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)" tabindex="-1">Reject</button>
@@ -1840,7 +1909,7 @@
             </div>
             <div class="copilot-suggestion" data-field="back" hidden>
               <div class="copilot-header">
-                <div class="copilot-meta">AI suggestion</div>
+                <div class="copilot-meta">Copilot suggestion</div>
                 <div class="copilot-hint small"></div>
               </div>
               <div class="copilot-text"></div>
@@ -1930,12 +1999,6 @@
     </div>
   </div>
 
-  <div id="stemSplitTakeover" class="modal-overlay copilot-fact-overlay" hidden>
-    <div class="modal copilot-fact-modal" role="dialog" aria-modal="true" aria-labelledby="stemSplitTakeoverTitle">
-      <div id="stemSplitTakeoverBody"></div>
-    </div>
-  </div>
-
   <div id="triageFooter" class="triage-footer" hidden>
     <button type="button" id="triageFooterPrev">[←] Prev</button>
     <button type="button" id="triageFooterReject" class="warning">[R] Reject</button>
@@ -1966,7 +2029,7 @@
             <code>Cmd/Ctrl + Shift + L</code>
           </li>
           <li>
-            <span>AI autocomplete</span>
+            <span>Copilot autocomplete</span>
             <code id="shortcutCopilot">Cmd/Ctrl + Shift + X</code>
           </li>
           <li>
@@ -1990,11 +2053,11 @@
     </div>
   </div>
 
-  <!-- Focused AI suggestion mode palette (keyboard-friendly) -->
+  <!-- Focused Copilot mode palette (keyboard-friendly) -->
   <div id="aiTemplateModal" class="modal-overlay" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiTemplateModalTitle">
       <header>
-        <h2 id="aiTemplateModalTitle">AI suggestion mode</h2>
+        <h2 id="aiTemplateModalTitle">Copilot mode</h2>
         <button type="button" id="aiTemplateModalClose" aria-label="Close">×</button>
       </header>
       <div class="modal-body">
@@ -2017,7 +2080,10 @@
   </div>
 
   <script src="defaults.js" defer></script>
+  <script src="copilot-core.js" defer></script>
   <script src="prompts.js" defer></script>
+  <script src="native-ai.js" defer></script>
+  <script src="metadata-fallback.js" defer></script>
   <script src="libs/markdown-it.min.js" defer></script>
   <script src="panel-markdown.js" defer></script>
   <script src="panel-ai-templates.js" defer></script>

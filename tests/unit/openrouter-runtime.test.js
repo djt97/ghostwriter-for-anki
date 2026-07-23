@@ -18,28 +18,27 @@ const privacySource = fs.readFileSync(
 
 describe('OpenRouter runtime wiring', () => {
   it('uses the OpenAI-compatible chat completions path and Auto Router default', () => {
-    assert.ok(backgroundSource.includes('https://openrouter.ai/api/v1'));
     assert.ok(panelSource.includes('https://openrouter.ai/api/v1'));
-    assert.ok(backgroundSource.includes('openrouter/auto'));
     assert.ok(panelSource.includes('openrouter/auto'));
-    assert.ok(backgroundSource.includes('/chat/completions'));
     assert.ok(panelSource.includes('/chat/completions'));
+    assert.doesNotMatch(backgroundSource, /quickflash:ultimateChatJSON/);
   });
 
   it('sends OpenRouter attribution headers', () => {
-    for (const source of [backgroundSource, panelSource]) {
-      assert.ok(source.includes('HTTP-Referer'));
-      assert.ok(source.includes('https://github.com/djt97/ghostwriter-for-anki'));
-      assert.ok(source.includes('X-OpenRouter-Title'));
-      assert.ok(source.includes('Ghostwriter for Anki'));
-    }
+    assert.ok(panelSource.includes('HTTP-Referer'));
+    assert.ok(panelSource.includes('https://github.com/djt97/ghostwriter-for-anki'));
+    assert.ok(panelSource.includes('X-OpenRouter-Title'));
+    assert.ok(panelSource.includes('Ghostwriter for Anki'));
   });
 
   it('does not route explicit OpenRouter selection through the free-tier proxy without a key', () => {
-    assert.ok(panelSource.includes('config.provider !== "openrouter"'));
-    assert.ok(backgroundSource.includes('if (provider === "openrouter")'));
-    assert.ok(backgroundSource.includes('OpenRouter API key missing'));
+    assert.match(
+      panelSource,
+      /if \(selectedProvider === "openai" \|\| selectedProvider === "ultimate"\) \{\s*return \{ backend: "free-tier"/
+    );
+    assert.match(panelSource, /return \{ backend: "missing", selectedProvider, hostedFallback: false \}/);
     assert.ok(panelSource.includes('OpenRouter API key missing'));
+    assert.doesNotMatch(backgroundSource, /quickflash:ultimateChatJSON/);
   });
 
   it('declares optional permission and CSP coverage for OpenRouter', () => {

@@ -33,27 +33,6 @@ const normalizeEditorSurface = new Function(`
   return normalizeEditorSurface;
 `)();
 
-// getOpenAIProviderConfig (depends on normalizeProvider)
-const getOpenAIProviderConfig = new Function(`
-  const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
-  const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
-  const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-  const ULTIMATE_HOST_RE = /^https:\\/\\/(?:api|smart|chat)\\.ultimateai\\.org$/i;
-  const ULTIMATE_DEFAULT_MODEL = "auto";
-  const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1";
-  const LOCAL_DEFAULT_MODEL = "llama3.2";
-  ${extractFunction(bgSource, 'normalizeProvider')}
-  ${extractFunction(bgSource, 'inferProviderFromOptions')}
-  ${extractFunction(bgSource, 'normalizeUltimateBaseUrl')}
-  ${extractFunction(bgSource, 'getOpenAIProviderConfig')}
-  return getOpenAIProviderConfig;
-`)();
-
-const buildOpenAICompatibleHeaders = new Function(`
-  ${extractFunction(bgSource, 'buildOpenAICompatibleHeaders')}
-  return buildOpenAICompatibleHeaders;
-`)();
-
 const migrateOptionsForFocusedV2 = new Function(`
   const OPTIONS_SCHEMA_VERSION = 2;
   const DEFAULT_QUEUE_SHORTCUT = "Meta+Shift+A";
@@ -182,152 +161,6 @@ describe('background.js pure functions', () => {
     });
   });
 
-  describe('getOpenAIProviderConfig', () => {
-    it('returns OpenAI config by default', () => {
-      const config = getOpenAIProviderConfig({});
-      assert.equal(config.provider, 'openai');
-      assert.equal(config.baseUrl, 'https://api.openai.com/v1');
-      assert.equal(config.model, 'gpt-4o-mini');
-    });
-
-    it('returns OpenAI config when provider is openai', () => {
-      const opts = {
-        llmProvider: 'openai',
-        openaiKey: 'sk-test',
-        openaiModel: 'gpt-4',
-      };
-      const config = getOpenAIProviderConfig(opts);
-      assert.equal(config.provider, 'openai');
-      assert.equal(config.apiKey, 'sk-test');
-      assert.equal(config.model, 'gpt-4');
-      assert.equal(config.baseUrl, 'https://api.openai.com/v1');
-	  });
-
-    it('strips trailing slashes from baseUrl', () => {
-      const config = getOpenAIProviderConfig({ openaiBaseUrl: 'https://api.example.com/v1///' }, 'openai');
-      assert.equal(config.baseUrl, 'https://api.example.com/v1');
-    });
-
-    it('does not use UltimateAI keys for direct OpenAI calls', () => {
-      const opts = { llmProvider: 'openai', ultimateKey: 'ultimate-fallback' };
-      const config = getOpenAIProviderConfig(opts);
-      assert.equal(config.provider, 'openai');
-      assert.equal(config.apiKey, '');
-    });
-
-    it('infers UltimateAI config for older saves with only an UltimateAI key', () => {
-      const opts = { ultimateKey: 'ultimate-key' };
-      const config = getOpenAIProviderConfig(opts);
-      assert.equal(config.provider, 'ultimate');
-      assert.equal(config.apiKey, 'ultimate-key');
-      assert.equal(config.baseUrl, 'https://api.ultimateai.org/v1');
-      assert.equal(config.model, 'auto');
-    });
-
-    it('returns OpenRouter config when provider is openrouter', () => {
-      const config = getOpenAIProviderConfig({
-        llmProvider: 'openrouter',
-        openrouterKey: 'or-test',
-      });
-      assert.equal(config.provider, 'openrouter');
-      assert.equal(config.apiKey, 'or-test');
-      assert.equal(config.baseUrl, 'https://openrouter.ai/api/v1');
-      assert.equal(config.model, 'openrouter/auto');
-    });
-
-    it('strips trailing slashes from OpenRouter baseUrl and preserves custom model', () => {
-      const config = getOpenAIProviderConfig({
-        llmProvider: 'openrouter',
-        openrouterBaseUrl: 'https://openrouter.ai/api/v1///',
-        openrouterModel: 'anthropic/claude-3.5-haiku',
-      });
-      assert.equal(config.baseUrl, 'https://openrouter.ai/api/v1');
-      assert.equal(config.model, 'anthropic/claude-3.5-haiku');
-    });
-
-    it('preserves the documented UltimateAI API host when configured', () => {
-      const config = getOpenAIProviderConfig({
-        llmProvider: 'ultimate',
-        ultimateBaseUrl: 'https://api.ultimateai.org/v1',
-      });
-      assert.equal(config.baseUrl, 'https://api.ultimateai.org/v1');
-    });
-
-    it('adds /v1 for the documented UltimateAI API host when omitted', () => {
-      const config = getOpenAIProviderConfig({
-        llmProvider: 'ultimate',
-        ultimateBaseUrl: 'https://api.ultimateai.org',
-      });
-      assert.equal(config.baseUrl, 'https://api.ultimateai.org/v1');
-    });
-
-    it('adds /v1 for the legacy account-page UltimateAI host when omitted', () => {
-      const config = getOpenAIProviderConfig({
-        llmProvider: 'ultimate',
-        ultimateBaseUrl: 'https://smart.ultimateai.org',
-      });
-      assert.equal(config.baseUrl, 'https://smart.ultimateai.org/v1');
-    });
-
-    it('adds /v1 for the alternate UltimateAI host when omitted', () => {
-      const config = getOpenAIProviderConfig({
-        llmProvider: 'ultimate',
-        ultimateBaseUrl: 'https://chat.ultimateai.org',
-      });
-      assert.equal(config.baseUrl, 'https://chat.ultimateai.org/v1');
-    });
-
-    it('respects overrideProvider parameter', () => {
-      const opts = { llmProvider: 'gemini' }; // gemini in opts
-      const config = getOpenAIProviderConfig(opts, 'openai'); // override to openai
-      assert.equal(config.provider, 'openai');
-    });
-
-    it('returns empty string for missing API key', () => {
-      const config = getOpenAIProviderConfig({});
-      assert.equal(config.apiKey, '');
-    });
-
-	    it('uses custom UltimateAI base URL when provided', () => {
-	      const opts = { llmProvider: 'ultimate', ultimateBaseUrl: 'https://custom.ai/v1' };
-      const config = getOpenAIProviderConfig(opts);
-      assert.equal(config.baseUrl, 'https://custom.ai/v1');
-    });
-
-    it('returns a keyless localhost config for the local provider', () => {
-      const config = getOpenAIProviderConfig({ llmProvider: 'local' });
-      assert.equal(config.provider, 'local');
-      assert.equal(config.apiKey, '');
-      assert.equal(config.baseUrl, 'http://127.0.0.1:11434/v1');
-      assert.equal(config.model, 'llama3.2');
-    });
-
-    it('honors a custom local base URL, key, and model', () => {
-      const config = getOpenAIProviderConfig({
-        llmProvider: 'local',
-        localBaseUrl: 'http://localhost:1234/v1///',
-        localKey: 'lm-studio',
-        localModel: 'qwen3:4b',
-      });
-      assert.equal(config.baseUrl, 'http://localhost:1234/v1');
-      assert.equal(config.apiKey, 'lm-studio');
-      assert.equal(config.model, 'qwen3:4b');
-    });
-  });
-
-  describe('buildOpenAICompatibleHeaders', () => {
-    it('adds OpenRouter attribution headers only for OpenRouter', () => {
-      const headers = buildOpenAICompatibleHeaders('openrouter', 'or-test');
-      assert.equal(headers.Authorization, 'Bearer or-test');
-      assert.equal(headers['HTTP-Referer'], 'https://github.com/djt97/ghostwriter-for-anki');
-      assert.equal(headers['X-OpenRouter-Title'], 'Ghostwriter for Anki');
-
-      const openaiHeaders = buildOpenAICompatibleHeaders('openai', 'sk-test');
-      assert.equal(openaiHeaders['HTTP-Referer'], undefined);
-      assert.equal(openaiHeaders['X-OpenRouter-Title'], undefined);
-    });
-  });
-
   describe('migrateOptionsForFocusedV2', () => {
     it('preserves existing API keys and provider settings', () => {
       const existing = {
@@ -374,19 +207,20 @@ describe('background.js pure functions', () => {
   });
 
   describe('buildUpdateNotice', () => {
-    it('mentions preserved credentials and the direct Add to Anki flow when keys exist', () => {
+    it('summarizes the 0.4.1 model choices while preserving credentials', () => {
       const notice = buildUpdateNotice({
-        previousVersion: '0.3.3',
-        currentVersion: '0.4.0',
+        previousVersion: '0.4.0',
+        currentVersion: '0.4.1',
         preservedCredentials: { openaiKey: true },
       });
-      assert.match(notice.title, /0\.4\.0/);
+      assert.match(notice.title, /0\.4\.1/);
       assert.match(notice.message, /API keys/);
-      assert.match(notice.message, /direct Add to Anki/);
+      assert.match(`${notice.message} ${notice.actions.join(' ')}`, /100 included model requests/i);
+      assert.match(`${notice.message} ${notice.actions.join(' ')}`, /Chrome on-device AI/i);
+      assert.match(`${notice.message} ${notice.actions.join(' ')}`, /model path/i);
       assert.equal(notice.dismissed, false);
       assert.ok(notice.actions.length >= 2);
-      assert.ok(notice.actions.some((action) => action.includes('directly through AnkiConnect')));
-      assert.doesNotMatch(`${notice.message} ${notice.actions.join(' ')}`, /Review Queue|queue workflow/i);
+      assert.doesNotMatch(`${notice.message} ${notice.actions.join(' ')}`, /AI suggestions|10 per day|20 lifetime/i);
     });
   });
 

@@ -42,6 +42,13 @@ const DEAD_SEA =
   "Q: What are the characteristics of the Dead Sea?\n" +
   "A: Salt lake located on the border between Israel and Jordan. Its shoreline is the lowest point on the Earth's surface, averaging 396 m below sea level. It is 74 km long. It is seven times as salty (30% by volume) as the ocean. Its density keeps swimmers afloat. Only simple organisms can live in its saline waters";
 
+const KALEIDA =
+  "Kaleida, funded to the tune of $40 million by Apple Computer and IBM in 1991. " +
+  "Hyped as a red-hot startup, Kaleida's mission was to create a multimedia programming language. " +
+  "It finally produced one, called Script X. But it took three years. " +
+  "Meanwhile, companies such as Macromedia and Asymetrix had snapped up all the business. " +
+  "Kaleida closed in 1995.";
+
 describe('copilot source targeting (selectRelevantSource)', () => {
   it('narrows a dense blob to the sentence the prefix gestures at, via recency weighting', () => {
     // "Dead Sea" also appears in the Q line; the last word typed ("keep") must win.
@@ -50,6 +57,27 @@ describe('copilot source targeting (selectRelevantSource)', () => {
     assert.ok(!/border between Israel and Jordan/.test(focused), 'must not grab the location fact');
     assert.ok(!/characteristics of the Dead Sea/.test(focused), 'must not grab the Q line');
     assert.ok(focused.length < DEAD_SEA.length);
+  });
+
+  it('keeps a unique high-confidence match narrowed instead of falling back to the full source', () => {
+    const focused = selectRelevantSource(DEAD_SEA, 'Why can the Dead Sea keep', '');
+
+    assert.match(focused, /density keeps swimmers afloat/);
+    assert.ok(focused.length < DEAD_SEA.length);
+  });
+
+  it('returns the full source when a weak subject-only match ties across sentences', () => {
+    // "Kaleida" occurs repeatedly, while the intended "take" appears as "took" in the source.
+    // Picking the first tied sentence grounds the model on the unrelated funding fact.
+    const focused = selectRelevantSource(KALEIDA, 'How long did Kaleida take ', '');
+
+    assert.equal(focused, KALEIDA);
+  });
+
+  it('narrows an explicitly disambiguated closure prefix to the close sentence', () => {
+    const focused = selectRelevantSource(KALEIDA, 'When did Kaleida close ', '');
+
+    assert.equal(focused, 'Kaleida closed in 1995.');
   });
 
   it('grounds the Back on the opposite field (the Front question)', () => {
@@ -76,5 +104,25 @@ describe('copilot source targeting (selectRelevantSource)', () => {
     assert.ok(!/Script X/.test(single), 'single-sentence targeting misses the adjacent answer');
     const windowed = selectRelevantSource(kaleida, '', front, { before: 1, after: 1 });
     assert.match(windowed, /Script X/, 'the Back window includes the adjacent answer sentence');
+  });
+
+  it('keeps Cloze context on the final typed relation instead of appending a distractor', () => {
+    const took = selectRelevantSource(
+      KALEIDA,
+      'Kaleida took ',
+      '',
+      { after: 1, expandOnlyIfTailMissing: true }
+    );
+    assert.equal(took, 'But it took three years.');
+    assert.ok(!/Macromedia/.test(took), 'a later distractor is not added after a complete relation match');
+
+    const called = selectRelevantSource(
+      KALEIDA,
+      "Kaleida's multimedia programming language was called ",
+      '',
+      { after: 1, expandOnlyIfTailMissing: true }
+    );
+    assert.match(called, /called Script X/, 'the selected context supplies the named answer');
+    assert.ok(!/three years/.test(called), 'the context window stays bounded to one adjacent sentence');
   });
 });

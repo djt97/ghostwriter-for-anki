@@ -19,7 +19,7 @@
   <main>
     <nav class="section-index" aria-label="Options sections">
       <a href="#connection" data-options-nav="connection" aria-current="page">Connection</a>
-      <a href="#copilot" data-options-nav="copilot">AI suggestions</a>
+      <a href="#copilot" data-options-nav="copilot">Copilot</a>
       <a href="#defaults" data-options-nav="defaults">Defaults</a>
       <a href="#setup" data-options-nav="setup">Setup</a>
       <a href="#help" data-options-nav="help">Help</a>
@@ -42,10 +42,10 @@
         <summary class="accordion-summary">
           <div class="row-inline section-title-row">
             <div>
-              <p class="eyebrow">AI suggestions</p>
+              <p class="eyebrow">Copilot autocomplete</p>
               <h2>Connection</h2>
               <p class="description">
-                Use the included first-run quota, then add your own key here for continued AI suggestions.
+                Use 100 included model requests per browser profile, or choose your own provider.
               </p>
             </div>
             <span class="badge theme-badge">
@@ -59,7 +59,46 @@
           </div>
         </summary>
         <div class="accordion-body">
-          <p id="freeTierStatus" class="small">Free suggestions: checking quota…</p>
+          <p id="freeTierStatus" class="small" role="status" aria-live="polite">Included model requests remaining: 100 of 100 — per browser profile</p>
+
+          <details class="accordion sub-accordion native-ai-card" open>
+            <summary class="accordion-summary">
+              <div>
+                <h3>Chrome on-device AI</h3>
+                <p class="description">Optional on-device model access for Copilot, tags, and context. Ghostwriter currently requests English input and output.</p>
+              </div>
+            </summary>
+            <div class="accordion-body">
+              <div class="native-ai-state-row">
+                <p id="nativeAiStatus" class="native-ai-status" role="status" aria-live="polite" data-state="checking">
+                  Checking this device…
+                </p>
+                <button id="nativeAiSetup" type="button" aria-describedby="nativeAiStatus">Set up Chrome on-device AI</button>
+              </div>
+              <div class="native-ai-progress-row" aria-live="polite">
+                <progress id="nativeAiProgress" max="1" value="0" aria-label="Chrome on-device model download progress" hidden></progress>
+                <span id="nativeAiProgressText" class="small" hidden></span>
+              </div>
+              <div class="grid two">
+                <div class="field">
+                  <label for="nativeAiEnabled">Use Chrome AI when no personal or local provider is selected</label>
+                  <select id="nativeAiEnabled" aria-describedby="nativeAiEnabledHelp">
+                    <option value="false">Off</option>
+                    <option value="true">On</option>
+                  </select>
+                  <p id="nativeAiEnabledHelp" class="small">Setup is always manual. Chrome manages the model download. Card text is processed on this device. After setup, click Save changes.</p>
+                </div>
+                <div class="field">
+                  <label for="nativeAiHostedFallback">If Chrome AI is unavailable</label>
+                  <select id="nativeAiHostedFallback" aria-describedby="nativeAiHostedFallbackHelp">
+                    <option value="false">Stop — never use a hosted fallback</option>
+                    <option value="true">Use the included hosted model</option>
+                  </select>
+                  <p id="nativeAiHostedFallbackHelp" class="small">Off by default. A configured personal or local provider remains your first choice. Turn this on only if you consent to a failed or unavailable on-device request being sent to Ghostwriter’s included hosted model.</p>
+                </div>
+              </div>
+            </div>
+          </details>
 
           <details class="accordion sub-accordion">
             <summary class="accordion-summary">
@@ -122,27 +161,27 @@
           <details class="accordion sub-accordion">
             <summary class="accordion-summary">
               <div>
-                <h3>AI helpers for cards</h3>
-                <p class="description">Optional helpers for context, tags, and previews.</p>
+                <h3>Card metadata helpers</h3>
+                <p class="description">Tags use a small local fallback; context reuses page/media metadata locally before trying a model.</p>
               </div>
             </summary>
             <div class="accordion-body">
               <div class="grid two">
                 <div class="field">
-                  <label for="manualAutoTag">Auto-tag with AI</label>
+                  <label for="manualAutoTag">Auto-tag cards</label>
                   <select id="manualAutoTag">
                     <option value="true">On</option>
                     <option value="false">Off</option>
                   </select>
-                  <p class="small">Optional helper for cards you add.</p>
+                  <p class="small">Uses your active model first. If no model is available, Ghostwriter may add one high-confidence local subject tag; otherwise it leaves your tags unchanged.</p>
                 </div>
                 <div class="field">
-                  <label for="manualAutoContext">Generate context with AI</label>
+                  <label for="manualAutoContext">Generate context</label>
                   <select id="manualAutoContext">
                     <option value="true">On</option>
                     <option value="false">Off</option>
                   </select>
-                  <p class="small">Optional helper for cards you add.</p>
+                  <p class="small">Uses page or media metadata locally first. If no useful label is available, it tries your active model; after a model failure there is no semantic-classifier fallback.</p>
                 </div>
                 <div class="field">
                   <label for="manualAutoPreview">Auto preview (manual editor)</label>
@@ -163,8 +202,8 @@
       <details class="accordion section-accordion" open>
         <summary class="accordion-summary">
           <div>
-            <p class="eyebrow">AI suggestions</p>
-            <h2>AI suggestions</h2>
+            <p class="eyebrow">Copilot autocomplete</p>
+            <h2>Copilot autocomplete</h2>
             <p class="description">Ghostwriter completes the card you have already started. Suggestions are manual by default.</p>
           </div>
         </summary>
@@ -179,12 +218,12 @@
             <div class="accordion-body">
               <div class="grid two">
                 <div class="field">
-                  <label for="autoCompleteAI">AI suggestions</label>
+                  <label for="autoCompleteAI">Copilot autocomplete</label>
                   <select id="autoCompleteAI">
                     <option value="true">On</option>
                     <option value="false">Off</option>
                   </select>
-                  <p class="small">Enable or disable manual AI suggestions in card fields.</p>
+                  <p class="small">Enable or disable manual Copilot completions in card fields.</p>
                 </div>
                 <div class="field">
                   <label for="copilotShortcut">Suggestion shortcut</label>
@@ -458,7 +497,7 @@
                   <dd><kbd>Cmd/Ctrl + Shift + L</kbd></dd>
                 </div>
                 <div>
-                  <dt>AI autocomplete</dt>
+                          <dt>Copilot autocomplete</dt>
                   <dd><kbd>Cmd/Ctrl + Shift + X</kbd></dd>
                 </div>
                 <div>
@@ -492,7 +531,7 @@
                 <li>Highlight the excerpt that matters.</li>
                 <li>Open Ghostwriter with <kbd>Option + Shift + F</kbd> on Mac or <kbd>Ctrl + Shift + F</kbd> on Windows/Linux.</li>
                 <li>Write the first few words of the question or answer.</li>
-                <li>Use <kbd>Cmd/Ctrl + Shift + X</kbd> for AI autocomplete when helpful.</li>
+                <li>Use <kbd>Cmd/Ctrl + Shift + X</kbd> for Copilot autocomplete when helpful.</li>
                 <li>Click Add to Anki when the card is ready.</li>
               </ol>
             </div>
@@ -528,8 +567,8 @@
         </summary>
         <div class="accordion-body">
           <p class="description">
-            Ghostwriter for Anki stores your settings and draft card text locally. If you enable AI features or AnkiConnect,
-            the selected text and prompts are sent to your chosen provider or local Anki instance.
+                    Ghostwriter stores settings and draft card text locally. The active model label shows whether a request is using
+                    your provider, Chrome on-device AI, or the included hosted model. AnkiConnect sends cards only to your local Anki instance.
           </p>
           <p class="small">
             Read the full <a href="privacy.md" target="_blank" rel="noopener">privacy policy</a>.
@@ -557,6 +596,8 @@
 
   <script src="defaults.js" defer></script>
   <script src="prompts.js" defer></script>
+  <script src="native-ai.js" defer></script>
+  <script src="native-ai-options.js" defer></script>
   <script src="options.js" defer></script>
 </body>
 </html>

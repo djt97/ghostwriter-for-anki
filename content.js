@@ -355,7 +355,7 @@ if (window.__QUICKFLASH_INJECTED__) {
     frame.className = 'overlay-frame';
     frame.src = chrome.runtime.getURL('panel.html#popover');
     frame.setAttribute('title', 'Ghostwriter for Anki');
-    frame.setAttribute('allow', 'clipboard-read; clipboard-write;');
+    frame.setAttribute('allow', 'clipboard-read; clipboard-write; language-model;');
     frame.setAttribute('loading', 'eager'); // avoids lazy-load races in CI
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads');
     popoverState.panelReady = false;

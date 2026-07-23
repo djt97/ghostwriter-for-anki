@@ -4,6 +4,7 @@
 const QF_TEST_MODE = /\b__qf_ci\b/i.test(location.search + location.hash);
 const PANEL_CONFIG = {};
 const $ = (sel) => document.querySelector(sel);
+const COPILOT_CORE = window.GhostwriterCopilotCore;
 
 // Populate version from manifest.json (single source of truth)
 try {
@@ -586,10 +587,13 @@ function bindStickyContextUI() {
 // ------- Options -------
 const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
 const PROVIDER_KEY_FIELDS = ["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey", "localKey"];
+const DEVICE_OPTIONS_KEY = "quickflash_device_options_v1";
+const DEVICE_OPTION_FIELDS = ["nativeAiEnabled", "nativeAiHostedFallback"];
 
 function sanitizeOptionsForSync(options = {}) {
   const clean = { ...(options || {}) };
   for (const key of PROVIDER_KEY_FIELDS) delete clean[key];
+  for (const key of DEVICE_OPTION_FIELDS) delete clean[key];
   return clean;
 }
 
@@ -610,13 +614,28 @@ async function getProviderSecrets() {
   }
 }
 
+async function getDeviceOptions() {
+  try {
+    const got = await chrome.storage.local.get(DEVICE_OPTIONS_KEY);
+    const raw = got?.[DEVICE_OPTIONS_KEY] || {};
+    const out = {};
+    for (const key of DEVICE_OPTION_FIELDS) {
+      if (typeof raw[key] === "boolean") out[key] = raw[key];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 async function getOptions() {
   try {
-    const [{ quickflash_options }, providerSecrets] = await Promise.all([
+    const [{ quickflash_options }, deviceOptions, providerSecrets] = await Promise.all([
       chrome.storage.sync.get("quickflash_options"),
+      getDeviceOptions(),
       getProviderSecrets(),
     ]);
-    return { ...(quickflash_options || {}), ...providerSecrets };
+    return { ...(quickflash_options || {}), ...deviceOptions, ...providerSecrets };
   } catch (error) {
     if (isExtensionContextInvalidated(error)) {
       return {};
@@ -717,54 +736,163 @@ const ULTIMATE_DEFAULT_MODEL = "auto";
 const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1";
 const LOCAL_DEFAULT_MODEL = "llama3.2";
 const CLAUDE_DEFAULT_MODEL = "claude-haiku-4-5-20251001";
-const FREE_TIER_LIMIT = 20;
-const FREE_TIER_DAILY_LIMIT = 10;
+const FREE_TIER_LIMIT = 100;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
+let freeTierStateQueue = Promise.resolve();
+
+function withFreeTierStateLock(task) {
+  const next = freeTierStateQueue.then(task, task);
+  freeTierStateQueue = next.catch(() => undefined);
+  return next;
+}
+
+function normalizeFreeTierUsed(value) {
+  const used = Number(value);
+  return Number.isFinite(used) && used > 0 ? Math.floor(used) : 0;
+}
+
+function normalizeFreeTierState(value, fallbackInstallId = "") {
+  const state = value && typeof value === "object" ? value : {};
+  const installId = typeof state.installId === "string" && state.installId.trim()
+    ? state.installId.trim()
+    : fallbackInstallId;
+  return { installId, used: normalizeFreeTierUsed(state.used) };
+}
+
+function readFreeTierQuotaHeader(headers, name) {
+  const raw = headers?.get?.(name);
+  if (raw === null || raw === undefined || String(raw).trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
+function parseFreeTierQuotaHeaders(headers) {
+  const limit = readFreeTierQuotaHeader(headers, "x-ghostwriter-quota-lifetime-limit");
+  const remaining = readFreeTierQuotaHeader(headers, "x-ghostwriter-quota-lifetime-remaining");
+  const explicitUsed = readFreeTierQuotaHeader(headers, "x-ghostwriter-quota-lifetime-used");
+  const derivedUsed = limit !== null && remaining !== null
+    ? Math.max(0, limit - remaining)
+    : null;
+  const used = explicitUsed === null
+    ? derivedUsed
+    : Math.max(explicitUsed, derivedUsed ?? 0);
+  const reason = String(headers?.get?.("x-ghostwriter-quota-reason") || "").trim().toLowerCase();
+  const retryAfterSeconds = readFreeTierQuotaHeader(headers, "retry-after");
+  return { used, limit, remaining, reason, retryAfterSeconds };
+}
 
 async function getFreeTierState() {
   try {
-	    const got = await chrome.storage.local.get(FREE_TIER_KEY);
-	    const state = got?.[FREE_TIER_KEY] || {};
-	    let changed = false;
-	    if (!state.installId) {
-	      state.installId = crypto.randomUUID();
-	      state.used = state.used || 0;
-	      changed = true;
-	    }
-	    const today = new Date().toISOString().slice(0, 10);
-	    const dailyUsed = state.dailyDate === today ? (state.dailyUsed || 0) : 0;
-	    if (state.dailyDate !== today) {
-	      state.dailyDate = today;
-	      state.dailyUsed = 0;
-	      changed = true;
-	    }
-	    if (changed) await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
-	    const lifetimeRemaining = Math.max(0, FREE_TIER_LIMIT - (state.used || 0));
-	    const dailyRemaining = Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed);
-	    return {
-	      installId: state.installId || "",
-	      used: state.used || 0,
-	      dailyUsed,
-	      remaining: Math.min(lifetimeRemaining, dailyRemaining),
-	      lifetimeRemaining,
-	      dailyRemaining,
-	    };
+    const response = await chrome.runtime?.sendMessage({
+      type: "ghostwriter:getFreeTierState",
+    });
+    if (response?.ok && response.state) return response.state;
+  } catch {}
+
+  try {
+    return withFreeTierStateLock(async () => {
+      const got = await chrome.storage.local.get(FREE_TIER_KEY);
+      const stored = got?.[FREE_TIER_KEY] || {};
+      const state = normalizeFreeTierState(stored, crypto.randomUUID());
+      if (
+        stored.installId !== state.installId
+        || stored.used !== state.used
+        || Object.keys(stored).some((key) => key !== "installId" && key !== "used")
+      ) {
+        await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+      }
+      return {
+        ...state,
+        limit: FREE_TIER_LIMIT,
+        remaining: Math.max(0, FREE_TIER_LIMIT - state.used),
+      };
+    });
   } catch { return { installId: "", used: 0, remaining: 0 }; }
 }
 
-async function incrementFreeTierUsage() {
+async function reconcileFreeTierUsage(headers, options = {}) {
+  const requestSucceeded = options.requestSucceeded === true;
+  const quota = parseFreeTierQuotaHeaders(headers);
   try {
-	    const got = await chrome.storage.local.get(FREE_TIER_KEY);
-	    const state = got?.[FREE_TIER_KEY] || {};
-	    const today = new Date().toISOString().slice(0, 10);
-	    if (state.dailyDate !== today) {
-	      state.dailyDate = today;
-	      state.dailyUsed = 0;
-	    }
-	    state.used = (state.used || 0) + 1;
-	    state.dailyUsed = (state.dailyUsed || 0) + 1;
-	    await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+    const response = await chrome.runtime?.sendMessage({
+      type: "ghostwriter:reconcileFreeTierUsage",
+      quota,
+      requestSucceeded,
+    });
+    if (response?.ok && response.state) return response.state;
   } catch {}
+
+  try {
+    return withFreeTierStateLock(async () => {
+      const got = await chrome.storage.local.get(FREE_TIER_KEY);
+      const stored = got?.[FREE_TIER_KEY] || {};
+      const state = normalizeFreeTierState(stored, crypto.randomUUID());
+      const nextUsed = quota.used === null
+        ? state.used + (requestSucceeded ? 1 : 0)
+        : Math.max(state.used, quota.used);
+      const next = { installId: state.installId, used: nextUsed };
+      await chrome.storage.local.set({ [FREE_TIER_KEY]: next });
+      return {
+        ...next,
+        limit: FREE_TIER_LIMIT,
+        remaining: Math.max(0, FREE_TIER_LIMIT - next.used),
+      };
+    });
+  } catch { return getFreeTierState(); }
+}
+
+function getFreeTierQuotaError(status, message, headers) {
+  const quota = parseFreeTierQuotaHeaders(headers);
+  const raw = String(message || "").toLowerCase();
+  const lifetimeExhausted = quota.reason === "install_lifetime_exhausted"
+    || raw.includes("install_lifetime_exhausted")
+    || (status === 429 && quota.remaining === 0);
+  if (lifetimeExhausted) {
+    return {
+      code: "free_tier_lifetime_exhausted",
+      message: "Included model request allowance used up (100 of 100) for this browser profile. Choose an on-device or local model, add your own provider key, or continue without model requests.",
+      retryAfterSeconds: null,
+    };
+  }
+  const requestsInFlight = quota.reason === "install_quota_in_flight"
+    || raw.includes("install_quota_in_flight");
+  if (requestsInFlight) {
+    return {
+      code: "free_tier_in_flight",
+      message: "Too many included model requests are already in progress for this browser profile. Try again shortly.",
+      retryAfterSeconds: quota.retryAfterSeconds,
+    };
+  }
+  const ipThrottled = quota.reason === "ip_rate_limited" || raw.includes("ip_rate_limited");
+  if (ipThrottled) {
+    return {
+      code: "free_tier_ip_throttled",
+      message: "Included model requests are temporarily rate limited for this network. Try again later.",
+      retryAfterSeconds: quota.retryAfterSeconds,
+    };
+  }
+  const serviceCapacityReached = quota.reason === "global_daily_exhausted"
+    || raw.includes("global_daily_exhausted");
+  if (serviceCapacityReached) {
+    return {
+      code: "free_tier_service_capacity",
+      message: "Ghostwriter's included model service is temporarily at capacity. Try again later, or use an on-device or local model or your own provider.",
+      retryAfterSeconds: quota.retryAfterSeconds,
+    };
+  }
+  return {
+    code: "free_tier_request_failed",
+    message: String(message || `Included model request failed with status ${status}.`),
+    retryAfterSeconds: quota.retryAfterSeconds,
+  };
+}
+
+function createFreeTierLifetimeError() {
+  const quotaError = getFreeTierQuotaError(429, "install_lifetime_exhausted", null);
+  return Object.assign(new Error(quotaError.message), {
+    code: quotaError.code,
+    status: 429,
+  });
 }
 
 function normalizeUltimateBaseUrl(value) {
@@ -812,13 +940,25 @@ function getOpenAIProviderConfig(opts, overrideProvider) {
 async function getOpenAIProviderConfigWithFreeTier(opts, overrideProvider) {
   const config = getOpenAIProviderConfig(opts, overrideProvider);
   // Local servers legitimately need no key — never divert them to the hosted free-tier proxy.
-  if (!config.apiKey && config.provider !== "openrouter" && config.provider !== "local") {
+  if (!config.apiKey && (config.provider === "openai" || config.provider === "ultimate")) {
     const ft = await getFreeTierState();
     if (ft.remaining > 0 && ft.installId) {
       return { ...config, provider: "free-tier", baseUrl: FREE_TIER_PROXY_URL, apiKey: `ft-${ft.installId}`, _freeTier: true };
     }
   }
   return config;
+}
+
+async function getFreeTierProviderConfig() {
+  const ft = await getFreeTierState();
+  if (!ft.installId || ft.remaining <= 0) throw createFreeTierLifetimeError();
+  return {
+    provider: "free-tier",
+    baseUrl: FREE_TIER_PROXY_URL,
+    apiKey: `ft-${ft.installId}`,
+    model: OPENAI_DEFAULT_MODEL,
+    _freeTier: true,
+  };
 }
 
 const AI_PROVIDER_HOST_PERMISSION_ORIGINS = new Set([
@@ -850,7 +990,10 @@ function getProviderDisplayName(provider) {
   if (provider === "openrouter") return "OpenRouter";
   if (provider === "claude") return "Anthropic Claude";
   if (provider === "local") return "Local model";
-  if (provider === "free-tier") return "Ghostwriter free suggestions";
+  if (provider === "native") return "Chrome on-device AI";
+  if (provider === "free-tier") return "Included hosted model";
+  if (provider === "free-tier-exhausted") return "Included model · 100/100 used";
+  if (provider === "missing") return "No model connected";
   return "UltimateAI";
 }
 
@@ -871,6 +1014,16 @@ function cleanProviderErrorMessage(message) {
 }
 
 function makeOpenAICompatibleHttpError(provider, status, message, headers) {
+  if (provider === "free-tier" && status === 429) {
+    const quotaError = getFreeTierQuotaError(status, message, headers);
+    setActiveModelBackend(quotaError.code === "free_tier_lifetime_exhausted" ? "free-tier-exhausted" : "free-tier");
+    const err = new Error(quotaError.message);
+    err.status = status;
+    err.code = quotaError.code;
+    err.retryAfterSeconds = quotaError.retryAfterSeconds;
+    err.headers = headers;
+    return err;
+  }
   const err = new Error(`${getProviderDisplayName(provider)} error ${status}: ${cleanProviderErrorMessage(message)}`);
   err.status = status;
   err.headers = headers;
@@ -884,6 +1037,94 @@ function hasProviderApiKey(opts = {}, provider) {
   if (provider === "claude") return !!opts.claudeKey;
   if (provider === "local") return true; // local servers need no key — never gate the copilot off
   return !!opts.ultimateKey;
+}
+
+function resolveModelBackend(opts = {}) {
+  const selectedProvider = inferProviderFromOptions(opts);
+  if (hasProviderApiKey(opts, selectedProvider)) {
+    return { backend: selectedProvider, selectedProvider, hostedFallback: false };
+  }
+  if (opts.nativeAiEnabled === true) {
+    return {
+      backend: "native",
+      selectedProvider,
+      hostedFallback: opts.nativeAiHostedFallback === true,
+    };
+  }
+  if (selectedProvider === "openai" || selectedProvider === "ultimate") {
+    return { backend: "free-tier", selectedProvider, hostedFallback: false };
+  }
+  return { backend: "missing", selectedProvider, hostedFallback: false };
+}
+
+function createMissingProviderError(provider) {
+  const providerName = getProviderDisplayName(provider);
+  return new Error(`${providerName} API key missing. Add it in Options, select a local model, or enable Chrome on-device AI.`);
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError" || error?.code === "ABORT_ERR";
+}
+
+function setActiveModelBackend(backend) {
+  const normalized = backend || "";
+  copilot.activeBackend = normalized;
+  const badge = document.querySelector("#copilotBackend");
+  if (!badge) return;
+  badge.textContent = normalized ? getProviderDisplayName(normalized) : "";
+  badge.hidden = !normalized;
+}
+
+async function runNativeModelTask(kind, { prompt, systemPrompt = "", signal, schema } = {}) {
+  const nativeApi = window.GHOSTWRITER_NATIVE_AI;
+  if (!nativeApi) {
+    throw Object.assign(new Error("Chrome on-device AI is not supported in this browser."), {
+      code: "unsupported",
+    });
+  }
+  let result;
+  if (kind === "json") {
+    result = await nativeApi.promptText({ prompt, systemPrompt, signal });
+  } else {
+    result = await nativeApi.runTask(kind, {
+      prompt,
+      systemPrompt,
+      signal,
+      ...(schema ? { schema } : {}),
+    });
+  }
+  if (typeof result === "string" && !result.trim()) {
+    throw Object.assign(new Error("Chrome on-device AI returned an empty response."), {
+      code: "invalid-response",
+    });
+  }
+  setActiveModelBackend("native");
+  return result;
+}
+
+function reportNativeHostedFallback(error) {
+  if (isAbortError(error)) throw error;
+  // Update the persistent privacy label before the network request starts. It must remain
+  // truthful even if the hosted request is slow or fails before producing a response.
+  setActiveModelBackend("free-tier");
+  showCopilotNotice("Chrome AI is unavailable; trying an included hosted request…");
+}
+
+async function runNativeBackendWithFallback(route, kind, options = {}, transformResult = null) {
+  try {
+    const nativeValue = await runNativeModelTask(kind, options);
+    return {
+      usedNative: true,
+      forceFreeTier: false,
+      value: typeof transformResult === "function" ? transformResult(nativeValue) : nativeValue,
+    };
+  } catch (error) {
+    // Prompt API implementations may reject with signal.reason itself (including our string
+    // reasons), so the signal is the authoritative cancellation check.
+    if (options?.signal?.aborted || !route?.hostedFallback || isAbortError(error)) throw error;
+    reportNativeHostedFallback(error);
+    return { usedNative: false, forceFreeTier: true, value: null };
+  }
 }
 
 function getKnownAiHostPermissionOrigin(baseUrl) {
@@ -935,8 +1176,38 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
   opts = opts || {};
 
   const optsAll = await getOptions();
-  const provider = inferProviderFromOptions(optsAll);
+  const route = resolveModelBackend(optsAll);
   const temperature = typeof opts.temperature === "number" ? opts.temperature : 0.2;
+  let forceFreeTier = route.backend === "free-tier";
+
+  if (route.backend === "native") {
+    const nativeAttempt = await runNativeBackendWithFallback(
+      route,
+      opts.nativeTask || "json",
+      {
+        prompt,
+        systemPrompt: opts.system || "You are a precise assistant. Return ONLY valid JSON.",
+        signal: opts.signal,
+        schema: opts.nativeSchema,
+      },
+      (nativeResult) => {
+        const parsed = typeof nativeResult === "string" ? parseJSONLoose(nativeResult) : nativeResult;
+        if (parsed === null) throw new Error("Could not parse JSON from Chrome on-device AI.");
+        if (parseArrayOrObject && !(Array.isArray(parsed) || (parsed && typeof parsed === "object"))) {
+          throw new Error("Chrome on-device AI did not return array/object JSON as requested.");
+        }
+        return parsed;
+      }
+    );
+    if (nativeAttempt.usedNative) return nativeAttempt.value;
+    forceFreeTier = nativeAttempt.forceFreeTier;
+  }
+
+  if (route.backend === "missing") {
+    throw createMissingProviderError(route.selectedProvider);
+  }
+
+  const provider = forceFreeTier ? "free-tier" : route.backend;
 
   // Gemini path
   if (provider === "gemini") {
@@ -955,15 +1226,35 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     return parsed;
   }
 
+  // Anthropic's Messages API is not OpenAI-compatible; keep structured tasks
+  // on the explicitly selected Claude connection.
+  if (provider === "claude") {
+    const parsedText = await claudeCompletion(prompt, {
+      model: mdl || opts.model || optsAll.claudeModel || CLAUDE_DEFAULT_MODEL,
+      maxTokens: typeof opts.maxTokens === "number" ? opts.maxTokens : 2048,
+      temperature,
+      system: opts.system,
+      signal: opts.signal,
+    });
+    const parsed = parseJSONLoose(parsedText);
+    if (parsed === null) throw new Error("Could not parse JSON from AI response.");
+    if (parseArrayOrObject && !(Array.isArray(parsed) || (parsed && typeof parsed === "object"))) {
+      throw new Error("AI did not return array/object JSON as requested.");
+    }
+    return parsed;
+  }
+
   // OpenAI-compatible path (UltimateAI / OpenAI / free-tier proxy)
-  const providerConfig = await getOpenAIProviderConfigWithFreeTier(optsAll);
+  const providerConfig = forceFreeTier
+    ? await getFreeTierProviderConfig()
+    : await getOpenAIProviderConfigWithFreeTier(optsAll);
   const { provider: providerName, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const model   = mdl || defaultModel;
   if (!apiKey && providerName !== "local") {
     if (providerName === "openrouter") {
       throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
     }
-    throw new Error("No API key configured and free suggestions used up. Add an API key in Settings for unlimited suggestions.");
+    throw createFreeTierLifetimeError();
   }
   const endpoint = `${baseUrl}/chat/completions`;
   const sysMsg = opts.system || "You are a precise assistant. Return ONLY valid JSON.";
@@ -996,6 +1287,9 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
       body: JSON.stringify(payload),
       signal: opts.signal, // honor caller aborts (e.g. fact extraction when the user moves on)
     });
+    if (_freeTier) {
+      await reconcileFreeTierUsage(r.headers, { requestSucceeded: r.ok });
+    }
     if (!r.ok) {
       if (r.status === 429) copilotBackoffFrom(r);
       let e = await r.text(); try { const j = JSON.parse(e); e = j.error?.message || e; } catch {}
@@ -1007,7 +1301,6 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
     throw err;
   }
   const content = getChatCompletionText(data, { requestedModel: model, provider: providerName, maxTokens: opts.maxTokens });
-  if (_freeTier) incrementFreeTierUsage();
   recordDebugResponse(content);
   const parsed = parseJSONLoose(content);
   if (parsed === null) throw new Error("Could not parse JSON from AI response.");
@@ -1015,6 +1308,7 @@ async function ultimateChatJSON(prompt, modelOrOpts, parseArrayOrObject = true, 
   if (parseArrayOrObject && !(Array.isArray(parsed) || (parsed && typeof parsed === 'object'))) {
     throw new Error("AI did not return array/object JSON as requested.");
   }
+  setActiveModelBackend(providerName);
   return parsed;
 }
 
@@ -1066,17 +1360,19 @@ function getChatCompletionText(data, { requestedModel, provider, maxTokens } = {
 }
 
 async function ultimateCompletion(prompt, options = {}) {
-  const { model, maxTokens = 96, temperature = 0.4, stop, signal, system } = options;
+  const { model, maxTokens = 96, temperature = 0.4, stop, signal, system, forceFreeTier = false } = options;
   const hasStop = Object.prototype.hasOwnProperty.call(options, "stop");
   const opts   = await getOptions();
-  const providerConfig = await getOpenAIProviderConfigWithFreeTier(opts);
+  const providerConfig = forceFreeTier
+    ? await getFreeTierProviderConfig()
+    : await getOpenAIProviderConfigWithFreeTier(opts);
   const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const mdl     = model || defaultModel;
   if (!apiKey && provider !== "local") {
     if (provider === "openrouter") {
       throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
     }
-    throw new Error("No API key configured and free suggestions used up. Add an API key in Settings.");
+    throw createFreeTierLifetimeError();
   }
   const endpoint = `${baseUrl}/chat/completions`;
   const systemPrompt = system || getCopilotSystemPrompt("front");
@@ -1119,6 +1415,9 @@ async function ultimateCompletion(prompt, options = {}) {
       body: JSON.stringify(payload),
       signal,
     });
+    if (_freeTier) {
+      await reconcileFreeTierUsage(res.headers, { requestSucceeded: res.ok });
+    }
     const rawResponse = await res.text().catch(() => "");
     try { data = rawResponse ? JSON.parse(rawResponse) : null; } catch {}
     if (!res.ok) {
@@ -1131,7 +1430,7 @@ async function ultimateCompletion(prompt, options = {}) {
     throw err;
   }
   const out = getChatCompletionText(data, { requestedModel: mdl, provider, maxTokens });
-  if (_freeTier) incrementFreeTierUsage();
+  setActiveModelBackend(provider);
   recordDebugResponse(out);
   return out;
 }
@@ -1318,6 +1617,7 @@ async function geminiCompletion(
       throw new Error(`Max tokens reached (${maxTokens}). Open Options to increase the limit.`);
     }
     recordDebugResponse(out);
+    setActiveModelBackend("gemini");
     return out;
   } catch (err) {
     recordDebugError(err);
@@ -1386,6 +1686,7 @@ async function geminiCompletionStream(
       );
     }
     if (debugActive) recordDebugResponse(debugBuffer);
+    setActiveModelBackend("gemini");
     onDone?.();
   };
 
@@ -1461,17 +1762,19 @@ async function geminiCompletionStream(
 // --- Streaming Chat Completions (OpenAI-compatible SSE) ---
 async function ultimateCompletionStream(
   prompt,
-  { model, maxTokens = 24, temperature = 0.2, stop, system, signal, onDelta, onStart, onDone } = {}
+  { model, maxTokens = 24, temperature = 0.2, stop, system, signal, onDelta, onStart, onDone, forceFreeTier = false } = {}
 ) {
   const opts   = await getOptions();
-  const providerConfig = await getOpenAIProviderConfigWithFreeTier(opts);
+  const providerConfig = forceFreeTier
+    ? await getFreeTierProviderConfig()
+    : await getOpenAIProviderConfigWithFreeTier(opts);
   const { provider, baseUrl, apiKey, model: defaultModel, _freeTier } = providerConfig;
   const mdl = model || defaultModel;
   if (!apiKey && provider !== "local") {
     if (provider === "openrouter") {
       throw new Error("OpenRouter API key missing. Add your OpenRouter key in Options to use this provider.");
     }
-    throw new Error("API key missing. Set it in Options.");
+    throw createFreeTierLifetimeError();
   }
   const endpoint = `${baseUrl}/chat/completions`;
   const systemPrompt = system || getCopilotSystemPrompt("front");
@@ -1483,6 +1786,7 @@ async function ultimateCompletionStream(
       stop,
       system,
       signal,
+      forceFreeTier,
     });
     onStart?.();
     if (text) onDelta?.(text);
@@ -1541,6 +1845,7 @@ async function ultimateCompletionStream(
       throw err;
     }
     if (debugActive) recordDebugResponse(debugBuffer);
+    setActiveModelBackend(provider);
     onDone?.();
   };
 
@@ -1693,6 +1998,7 @@ async function claudeCompletion(prompt, options = {}) {
 
   const data = await res.json();
   const out = (data?.content?.[0]?.text || "").trim();
+  setActiveModelBackend("claude");
   recordDebugResponse(out);
   return out;
 }
@@ -1728,6 +2034,8 @@ const copilot = {
   enabled: true,
   apiConfigured: false,
   provider: "openai",
+  activeBackend: "",
+  backendRoute: null,
   toggleEl: null,
   statusEl: null,
   lastStatus: "",
@@ -1813,7 +2121,7 @@ function resetRejectedCopilotDraft(state) {
   }
   state.suggestionEl?.classList?.remove?.("rejected-draft-mode");
   const metaEl = state.suggestionEl?.querySelector?.(".copilot-meta");
-  if (metaEl) metaEl.textContent = "AI suggestion";
+  if (metaEl) metaEl.textContent = "Copilot suggestion";
 }
 
 function rememberRejectedCopilotDraft(state, { suggestion = "", preview = "", reason = "" } = {}) {
@@ -1962,7 +2270,11 @@ function getCopilotSystemPrompt(kind = "front") {
       "Autocomplete one Anki Cloze card's Text field.",
       "Output only the text to insert. No analysis, labels, quotes, or markdown.",
       "Continue after the user's prefix; do not repeat or restate text already typed.",
-      "Produce one self-contained sentence with AT LEAST ONE deletion in exact {{c1::answer}} format (use {{c2::}}, {{c3::}} for more); never return zero deletions.",
+      "Produce one self-contained sentence with exactly ONE new deletion in exact {{c1::answer}} format around the answer that fills the Prefix's first missing answer slot; never return zero deletions.",
+      "If the answer is a coordinated list, keep the complete list inside that one deletion; never split its items across c1/c2.",
+      "The deletion must complete the exact relation expressed by the Prefix; never blank a different fact from the same sentence.",
+      "After the deletion, keep only grammar or context needed to identify that fact; do not append independent Source facts.",
+      "For a definitional Prefix, hide its concise defining property or contrast and compress rather than copy Source wording.",
       "Wrap only the key term(s) to recall; keep enough surrounding context to be unambiguous; each deletion atomic and grounded in the Source/title/notes.",
       "The sentence with its deletion(s) is the whole card; do not add a separate question or answer.",
       "Keep the sentence <= {{frontWordCap}} words, not counting the cloze markup."
@@ -2002,7 +2314,7 @@ function getCopilotSystemPrompt(kind = "front") {
     "If the completion would need an answer-bearing phrase such as \"by defining\", \"using\", \"where\", or \"namely\", stop before that phrase.",
     "Prefer a direct question. For command prefixes like State/Define/Name/List, complete the object of the command.",
     "Do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.",
-    "Keep the full Front <= {{frontWordCap}} words. Preserve the user's target; do not switch to easier source trivia."
+    "Keep the full Front <= {{frontWordCap}} words. Preserve the exact relation expressed by the prefix; never switch to another Source clause."
   ].join(" ")));
 }
 
@@ -2667,14 +2979,13 @@ function setCopilotEnabled(nextEnabled, { persist = false } = {}) {
 
   if (!enabled) {
     cancelCopilotRequests();
-    setCopilotStatus("Copilot off.");
+    setCopilotStatus("Copilot autocomplete off. Exact source assists remain available.");
   } else if (!copilot.apiConfigured) {
     cancelCopilotRequests();
-    const providerName = getProviderDisplayName(copilot.provider);
-    setCopilotStatus(`Add your ${providerName} API key in Options to use Copilot.`, true);
+    setCopilotStatus("Exact source assists remain available. Connect a provider or enable Chrome AI in Settings.");
   } else {
     if (copilot.manualOnly) {
-      setCopilotStatus(`Manual Copilot: press ${copilot.triggerShortcut} to suggest`);
+      setCopilotStatus(`Manual Copilot autocomplete: press ${copilot.triggerShortcut} to suggest`);
     } else {
       setCopilotStatus("Copilot ready.");
       try {
@@ -3038,10 +3349,7 @@ function cleanSourceStemAnswer(value) {
 }
 
 function firstSourceStemSentence(value) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  const match = text.match(/^([\s\S]*?[.!?])(?:\s+|$)/);
-  return (match?.[1] || text).replace(/[.!?]+$/g, "").trim();
+  return COPILOT_CORE?.firstSourceSentence?.(value) || "";
 }
 
 function buildSourceStemCompletion(frontLead, answer) {
@@ -3090,765 +3398,12 @@ function buildStatementSourceStemCompletion(statement, prefixText, { command = f
   };
 }
 
-function cleanSourcePatternQuestionPhrase(value) {
-  return normalizeStatementSourceText(value)
-    .replace(/\[[^\]]+\]/g, "")
-    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`:;,.!?]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function shortenPeriodBoundaryPhrase(value) {
-  let text = cleanSourcePatternQuestionPhrase(value)
-    .replace(/^(?:the\s+)?beginning\s+of\s+/i, "")
-    .replace(/^(?:the\s+)?first\s+known\s+use\s+of\s+/i, "the first known ")
-    .replace(/\s+by\s+hominins\b[\s\S]*$/i, "")
-    .replace(/\s+c\.\s*[\d.\s]+\s*(?:million|billion)?\s+years?\s+ago\b/ig, "")
-    .replace(/\s+with\s+the\s+invention\s+of\s+writing\s+systems\b[\s\S]*$/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (/^recorded\s+history\b/i.test(text)) return "recorded history";
-  return text;
-}
-
-function buildPatternSourceCompletion(fullFront, back, prefixText, split) {
-  const frontSuffix = stripExistingPrefixFromCompletion(finalizeFrontQuestion(fullFront), prefixText);
-  const cleanBack = cleanSourceStemAnswer(back).replace(/[.!?]+$/g, "").trim();
-  if (!frontSuffix || !cleanBack) return null;
-  return {
-    kind: "source-pattern",
-    split,
-    frontSuffix,
-    back: cleanBack,
-  };
-}
-
-function inferApproachSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^(?:what|which)\b/i.test(prefix)) return null;
-  if (!/\b(?:approach|method|technique|way|standard)\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /\b(?:an?|one|the)\s+(?:standard\s+)?(approach|method|technique|way)\s+to\s+(.{3,140}?)\s+(?:is|are|was|were)\s+(?:to\s+)?(?:make\s+use\s+of|use|uses|using|via|through)\s+(?:so-called\s+)?(.+?)(?:[:;.?!]|$)/i
-  );
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const kind = match[1].toLowerCase();
-  const target = cleanSourcePatternQuestionPhrase(match[2]);
-  const answer = cleanSourcePatternQuestionPhrase(match[3]);
-  if (!target || !answer || answer.split(/\s+/).length > 8) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${kind} to ${target}?`;
-  return buildPatternSourceCompletion(
-    fullFront,
-    `using ${answer.replace(/^(?:using|via|through)\s+/i, "")}`,
-    prefixText,
-    "approach"
-  );
-}
-
-function inferPeriodSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^which\s+(?:period|era|stage)?\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /^(.{2,90}?)(?:,\s*[^,]{2,160},)?\s+(?:is|are|was|were)\s+the\s+(period|era|stage)\s+of\s+(.{3,80}?)\s+between\s+(.{3,180}?)\s+and\s+(.+)$/i
-  );
-  if (!match?.[1] || !match?.[3] || !match?.[4] || !match?.[5]) return null;
-
-  const answer = cleanSourcePatternQuestionPhrase(match[1].split(/\s*,\s*/)[0]);
-  const domain = cleanSourcePatternQuestionPhrase(match[3]);
-  const start = shortenPeriodBoundaryPhrase(match[4]);
-  const end = shortenPeriodBoundaryPhrase(match[5]);
-  if (!answer || !domain || !start || !end) return null;
-  if (answer.split(/\s+/).length > 8) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} of ${domain} runs from ${start} to ${end}?`;
-  return buildPatternSourceCompletion(fullFront, answer, prefixText, "period");
-}
-
-function inferContextSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^in\s+what\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /^(.{2,80}?)\s+(?:is|are|was|were)\s+.{0,120}?\bused\s+primarily\s+in\s+(.{3,80}?)\s+to\s+/i
-  );
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const context = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!subject || !context || context.split(/\s+/).length > 8) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} context is the term "${subject}" primarily used?`;
-  return buildPatternSourceCompletion(fullFront, `in ${context}`, prefixText, "usage-context");
-}
-
-function inferAliasSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^(?:what|which)\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /\b(.{2,80}?)\s+(?:is|are|was|were)\s+(?:also\s+|sometimes\s+|commonly\s+|often\s+)?(?:called|known\s+as|referred\s+to\s+as|termed)\s+(.{2,80}?)(?:[.;:!?]|,|\band\b|$)/i
-  );
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const subject = cleanSourcePatternQuestionPhrase(match[1])
-    .replace(/^(?:incidentally|also|sometimes|commonly|often),?\s+/i, "")
-    .replace(/^(?:an?|the)\s+/i, "");
-  const alias = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!subject || !alias || alias.split(/\s+/).length > 8) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${subject} sometimes called?`;
-  return buildPatternSourceCompletion(fullFront, alias, prefixText, "alias");
-}
-
-function inferAbbreviationSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+does\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const parenthetical = sentence.match(
-    /^([A-Z][A-Za-z]+(?:\s+[A-Za-z][A-Za-z-]+){0,8})\s+\(([A-Z][A-Z0-9-]{1,12})\)\s+(?:is|are|was|were)\s+(.+?)(?:[.;:!?]|$)/
-  );
-  if (parenthetical?.[1] && parenthetical?.[2]) {
-    const expansion = cleanSourcePatternQuestionPhrase(parenthetical[1]);
-    const abbr = cleanSourcePatternQuestionPhrase(parenthetical[2]);
-    const contextMatch = cleanSourcePatternQuestionPhrase(parenthetical[3] || "").match(/\b(?:from|in)\s+(.{3,60})$/i);
-    const context = contextMatch?.[1] ? cleanSourcePatternQuestionPhrase(contextMatch[1]) : "";
-    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for${context ? ` in ${context}` : ""}?`;
-    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation-parenthetical");
-  }
-
-  const standsFor = sentence.match(
-    /^(?:[Ii]n\s+([^,]{2,80}),\s+)?([A-Z][A-Z0-9-]{1,12})\s+stands\s+for\s+(.+?)(?:[.;:!?]|$)/
-  );
-  if (standsFor?.[2] && standsFor?.[3]) {
-    const context = cleanSourcePatternQuestionPhrase(standsFor[1] || "");
-    const abbr = cleanSourcePatternQuestionPhrase(standsFor[2]);
-    const expansion = cleanSourcePatternQuestionPhrase(standsFor[3]);
-    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for${context ? ` in ${context}` : ""}?`;
-    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
-  }
-
-  const tokenStandsFor = sentence.match(
-    /\b([A-Z][A-Z0-9-]{1,12})\s+token,?\s+which\s+stands\s+for\s+(.+?)(?:[.;:!?]|$)/
-  );
-  if (tokenStandsFor?.[1] && tokenStandsFor?.[2]) {
-    const abbr = cleanSourcePatternQuestionPhrase(tokenStandsFor[1]);
-    const expansion = cleanSourcePatternQuestionPhrase(tokenStandsFor[2]);
-    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for?`;
-    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
-  }
-
-  const inlineStandsFor = sentence.match(
-    /\b([A-Z][A-Z0-9-]{1,12})\b.{0,80}?\bstands\s+for\s+(.+?)(?:[.;:!?]|$)/
-  );
-  if (inlineStandsFor?.[1] && inlineStandsFor?.[2]) {
-    const abbr = cleanSourcePatternQuestionPhrase(inlineStandsFor[1]);
-    const expansion = cleanSourcePatternQuestionPhrase(inlineStandsFor[2]);
-    const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for?`;
-    return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
-  }
-
-  const appositive = sentence.match(
-    /\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,8})\s*,\s*([A-Z][A-Z0-9-]{1,12})\b/
-  );
-  if (!appositive?.[1] || !appositive?.[2]) return null;
-
-  const expansion = cleanSourcePatternQuestionPhrase(appositive[1]);
-  const abbr = cleanSourcePatternQuestionPhrase(appositive[2]);
-  if (!expansion || !abbr) return null;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${abbr} stand for?`;
-  return buildPatternSourceCompletion(fullFront, expansion, prefixText, "abbreviation");
-}
-
-function inferCoreProblemSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+is\b/i.test(prefix)) return null;
-  if (/^what\s+is\s+meant\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /^((?:the\s+)?core\s+problem\s+.{3,120}?)\s+(?:is|are|was|were)\s+([^:.;!?]+)(?::|[.;!?]|$)/i
-  );
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const cue = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "the ");
-  const answer = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!cue || !answer || answer.split(/\s+/).length > 8) return null;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${cue}?`;
-  return buildPatternSourceCompletion(fullFront, answer, prefixText, "core-problem");
-}
-
-function inferCorpusContentsSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+is\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /\bcreated\s+(?:an?|the)?\s*(?:new\s+)?corpus\s+of\s+(.{3,120}?),\s*([A-Z][A-Za-z0-9-]{2,40})\s*,?\s+to\s+/i
-  );
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const contents = cleanSourcePatternQuestionPhrase(match[1]);
-  const name = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!contents || !name || contents.split(/\s+/).length > 10) return null;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} contained in the ${name} dataset?`;
-  return buildPatternSourceCompletion(fullFront, contents, prefixText, "corpus-contents");
-}
-
-function inferNamedSetSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+name\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /\b([A-Z][A-Z0-9-]{1,12})\s+maps\s+.{3,120}?\s+to\s+the\s+nearest\s+entry\s+in\s+(?:an?\s+)?(.{3,90}?),\s*(?:the\s+)?([A-Za-z][A-Za-z0-9 -]{2,40})(?:[.;:!?]|$)/
-  );
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const context = cleanSourcePatternQuestionPhrase(match[1]);
-  const rawNamedSet = cleanSourcePatternQuestionPhrase(match[2]);
-  const namedSet = /^(?:an?|the)\s+/i.test(rawNamedSet)
-    ? rawNamedSet.replace(/^(?:an?|the)\s+/i, "the ")
-    : `the ${rawNamedSet}`;
-  const name = cleanSourcePatternQuestionPhrase(match[3]).replace(/^(?:an?|the)\s+/i, "");
-  if (!context || !namedSet || !name || name.split(/\s+/).length > 5) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} is given to ${namedSet} in ${context}?`;
-  return buildPatternSourceCompletion(fullFront, `the ${name}`, prefixText, "named-set");
-}
-
-function inferMeaningSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^(?:in\s+words|what\s+does)\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^(.{2,80}?)\s+means:?\s+(.{3,180})$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:so|therefore|thus)\s+/i, "");
-  const meaning = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!subject || !meaning || subject.split(/\s+/).length > 6 || meaning.split(/\s+/).length > 14) return null;
-
-  const frontLead = /^in\s+words\b/i.test(prefix)
-    ? `${prefix.replace(/[,\s]+$/g, "")}, what does`
-    : prefix.replace(/\s+$/g, "");
-  const fullFront = `${frontLead} ${subject} mean?`;
-  return buildPatternSourceCompletion(fullFront, meaning, prefixText, "meaning");
-}
-
-function inferGovernmentRepealSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^which\s+government\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /^The\s+([A-Z][A-Za-z'-]+ government)\s+repealed\s+(.+?)(\s+entirely)?(?:\s+in\s+(\d{4}))?$/i
-  );
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const government = cleanSourcePatternQuestionPhrase(match[1]);
-  const target = cleanSourcePatternQuestionPhrase(match[2]);
-  const entirely = match[3] ? " entirely" : "";
-  const year = match[4] ? ` in ${match[4]}` : "";
-  if (!government || !target) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} repealed ${target}${entirely}${year}?`;
-  return buildPatternSourceCompletion(fullFront, government, prefixText, "government-repeal");
-}
-
-function inferTreeStructureSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+are\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /^(?:An?|The)\s+(.{3,80}?)\s+can\s+be\s+represented\s+as\s+a\s+tree:\s*(.{2,80}?)\s+at\s+internal\s+nodes\s+and\s+(.{2,80}?)\s+at\s+the\s+leaves$/i
-  );
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const rawSubject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const subject = `${rawSubject.charAt(0).toLowerCase()}${rawSubject.slice(1)}`;
-  const internal = cleanSourcePatternQuestionPhrase(match[2]);
-  const leaves = cleanSourcePatternQuestionPhrase(match[3]);
-  if (!subject || !internal || !leaves) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} the nodes and leaves of a ${subject} tree?`;
-  const back = `${internal} at internal nodes; ${leaves} at leaves`;
-  return buildPatternSourceCompletion(fullFront, back, prefixText, "tree-structure");
-}
-
-function inferWordFunctionSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+is\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^(?:An?|The)\s+([A-Za-z][A-Za-z0-9 -]{2,60})\s+is\s+a\s+word\s+that\s+(.{3,120})$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const term = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  let functionPhrase = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!term || !functionPhrase) return null;
-  functionPhrase = functionPhrase.replace(/^shows\b/i, "show");
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} the function of a ${term}?`;
-  return buildPatternSourceCompletion(fullFront, `to ${functionPhrase}`, prefixText, "word-function");
-}
-
-function inferDirectDefinitionSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^define\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^([A-Z][A-Za-z0-9 -]{1,50})\s+(?:is|are|means|refers\s+to)\s+(.{3,180})$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const term = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const definition = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!term || !definition || term.split(/\s+/).length > 5) return null;
-
-  return buildPatternSourceCompletion(`Define ${term}.`, definition, prefixText, "direct-definition");
-}
-
-function inferOriginSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^where\s+did\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^(.{3,80}?)\s+(?:is|are|was|were)\s+(?:generally\s+)?traced\s+back\s+to\s+(.{3,80})$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const rawSubject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const subject = `${rawSubject.charAt(0).toLowerCase()}${rawSubject.slice(1)}`;
-  const origin = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!subject || !origin || origin.split(/\s+/).length > 8) return null;
-
-  return buildPatternSourceCompletion(`Where did ${subject} originate from?`, origin, prefixText, "origin");
-}
-
-function inferContrastTypesSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+are\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(
-    /\b(?:an?|the)\s+([A-Za-z-]+)\s+([A-Za-z-]+)\s+is\s+.+?\bin\s+contrast\s+to\s+(?:an?|the)\s+([A-Za-z-]+)\s+\2\b/i
-  );
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const first = cleanSourcePatternQuestionPhrase(match[1]);
-  const kind = cleanSourcePatternQuestionPhrase(match[2]);
-  const second = cleanSourcePatternQuestionPhrase(match[3]);
-  if (!first || !kind || !second) return null;
-
-  const pluralKind = /s$/i.test(kind) ? kind : `${kind}s`;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} the two main types of ${pluralKind}?`;
-  return buildPatternSourceCompletion(fullFront, `${first} and ${second}`, prefixText, "contrast-types");
-}
-
-function inferPipelineSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^how\s+does\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^((?:the\s+)?[A-Za-z][A-Za-z0-9 -]{2,60})\s+sees\s+(.{3,90}?),\s+produces\s+(.{3,90}?),\s+and\s+(.{3,160})$/i);
-  if (!match?.[1] || !match?.[2] || !match?.[3] || !match?.[4]) return null;
-
-  const subjectCore = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const subject = `the ${subjectCore.charAt(0).toLowerCase()}${subjectCore.slice(1)}`;
-  const firstStep = cleanSourcePatternQuestionPhrase(match[2]);
-  const secondStep = cleanSourcePatternQuestionPhrase(match[3]);
-  const thirdStep = cleanSourcePatternQuestionPhrase(match[4]);
-  if (!subject || !firstStep || !secondStep || !thirdStep) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${subject} work?`;
-  const back = `sees ${firstStep}; produces ${secondStep}; guesses hidden patch embeddings`;
-  return buildPatternSourceCompletion(fullFront, back, prefixText, "pipeline");
-}
-
-function inferLabelCaptureSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+does\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^([A-Z][A-Za-z0-9-]{1,20})\s+is\s+([A-Z][A-Za-z0-9-]+)[’']?s\s+label\s+for\s+(.{3,140})$/i);
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const label = cleanSourcePatternQuestionPhrase(match[1]);
-  const tool = cleanSourcePatternQuestionPhrase(match[2]);
-  const captured = cleanSourcePatternQuestionPhrase(match[3]);
-  if (!label || !tool || !captured) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${label} capture in ${tool}?`;
-  return buildPatternSourceCompletion(fullFront, captured, prefixText, "label-capture");
-}
-
-function inferYearEventSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^in\s+what\s+year\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const repeal = sentence.match(/^The\s+(.{3,80}?)\s+repealed\s+(.+?)(\s+entirely)?\s+in\s+(\d{4})$/i);
-  if (repeal?.[1] && repeal?.[2] && repeal?.[4]) {
-    const subject = cleanSourcePatternQuestionPhrase(repeal[1]);
-    const target = cleanSourcePatternQuestionPhrase(repeal[2]);
-    const entirely = repeal[3] ? " entirely" : "";
-    const year = cleanSourcePatternQuestionPhrase(repeal[4]);
-    const fullFront = `${prefix.replace(/\s+$/g, "")} did the ${subject} repeal ${target}${entirely}?`;
-    return buildPatternSourceCompletion(fullFront, year, prefixText, "event-year");
-  }
-
-  const cameFrom = sentence.match(/^(.{2,80}?)\s+came\s+from\s+(.+?)\s+in\s+(?:late\s+)?(\d{4})$/i);
-  if (!cameFrom?.[1] || !cameFrom?.[3]) return null;
-  const subject = cleanSourcePatternQuestionPhrase(cameFrom[1]);
-  const year = cleanSourcePatternQuestionPhrase(cameFrom[3]);
-  if (!subject || !year) return null;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} did ${subject} appear?`;
-  return buildPatternSourceCompletion(fullFront, year, prefixText, "event-year");
-}
-
-function inferKindOfInverseSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+kind\s+of\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^The\s+(.{2,80}?\bencoder)\s+is\s+the\s+(.{2,80}?\bencoder)(?:\s+in\s+(.{2,60}))?$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const answer = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const rawTarget = cleanSourcePatternQuestionPhrase(match[2]);
-  const target = /^(?:an?|the)\s+/i.test(rawTarget)
-    ? rawTarget.replace(/^(?:an?|the)\s+/i, "the ")
-    : `the ${rawTarget}`;
-  const context = cleanSourcePatternQuestionPhrase(match[3] || "");
-  if (!answer || !target) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} encoder is ${target}${context ? ` in ${context}` : ""}?`;
-  return buildPatternSourceCompletion(fullFront, answer, prefixText, "kind-inverse");
-}
-
-function inferReceiveLabelsSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^when\s+\w+/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^When\s+(.+?),\s+(?:words|tokens)\s+receive\s+(.+?\s+and\s+.+)$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const context = cleanSourcePatternQuestionPhrase(match[1]);
-  const labels = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!context || !labels || labels.split(/\s+/).length > 10) return null;
-
-  const fullFront = `When ${context}, what are two labels assigned to words?`;
-  return buildPatternSourceCompletion(fullFront, labels, prefixText, "receive-labels");
-}
-
-function inferConditionsSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+are\s+the\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^(?:An?|The)\s+(.{2,80}?)\s+is\s+(.{2,80}?)\s+if\s+(.+?\s+and\s+.+)$/i);
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const subject = cleanSourcePatternQuestionPhrase(match[1]);
-  const property = cleanSourcePatternQuestionPhrase(match[2]);
-  const conditions = cleanSourcePatternQuestionPhrase(match[3]);
-  if (!subject || !property || !conditions) return null;
-
-  const count = /\s+and\s+/i.test(conditions) ? "two " : "";
-  const subjectPhrase = /^(?:language|problem|set|function)\b/i.test(subject) ? `a ${subject}` : subject;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${count}conditions for ${subjectPhrase} to be ${property}?`;
-  return buildPatternSourceCompletion(fullFront, conditions, prefixText, "conditions");
-}
-
-function inferColonExplanationSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+is\s+meant\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^The\s+core\s+problem\s+in\s+(.{3,100}?)\s+is\s+(.{2,80}?):\s+(.{3,180})$/i);
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const context = cleanSourcePatternQuestionPhrase(match[1]);
-  const term = cleanSourcePatternQuestionPhrase(match[2]);
-  const explanation = cleanSourcePatternQuestionPhrase(match[3]);
-  if (!context || !term || !explanation) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} by ${term} in ${context}?`;
-  return buildPatternSourceCompletion(fullFront, explanation, prefixText, "colon-explanation");
-}
-
-function inferContrastDifferenceSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+is\s+the\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^(.{2,80}?)\s+keeps\s+(.+?),\s+while\s+(.{2,80}?)\s+keeps\s+(.+)$/i);
-  if (!match?.[1] || !match?.[2] || !match?.[3] || !match?.[4]) return null;
-
-  const first = cleanSourcePatternQuestionPhrase(match[1]);
-  const firstAction = cleanSourcePatternQuestionPhrase(match[2]);
-  const second = cleanSourcePatternQuestionPhrase(match[3]);
-  const secondAction = cleanSourcePatternQuestionPhrase(match[4]);
-  if (!first || !firstAction || !second || !secondAction) return null;
-
-  const firstCue = `${first.charAt(0).toLowerCase()}${first.slice(1)}`;
-  const secondCue = `${second.charAt(0).toLowerCase()}${second.slice(1)}`;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} difference between ${firstCue} and ${secondCue}?`;
-  const back = `${first.replace(/\s+search$/i, "")} keeps one best choice; ${secondCue} keeps several choices`;
-  return buildPatternSourceCompletion(fullFront, back, prefixText, "contrast-difference");
-}
-
-function inferAnalogySolutionSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^i\s+cannot\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^(.{2,80}?)\s+is\s+like:\s+(I\s+cannot\s+.+?),\s+so\s+(.+)$/i);
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const subject = cleanSourcePatternQuestionPhrase(match[1]);
-  const scenario = cleanSourcePatternQuestionPhrase(match[2]);
-  let solution = cleanSourcePatternQuestionPhrase(match[3])
-    .replace(/\s+and\s+ignore\s+the\s+rest$/i, "")
-    .replace(/^at\s+each\s+fork\s+I\s+will\s+keep\s+only\s+/i, "keep only ")
-    .replace(/\bmy\s+best\s+(\w+\s+)?guesses\b/i, "the best few guesses");
-  if (!/\bat\s+each\s+fork\b/i.test(solution)) solution = `${solution} at each fork`;
-  if (!subject || !scenario || !solution) return null;
-
-  const subjectCue = `${subject.charAt(0).toLowerCase()}${subject.slice(1)}`;
-  const fullFront = `${scenario}. What is ${subjectCue}'s solution?`;
-  return buildPatternSourceCompletion(fullFront, solution, prefixText, "analogy-solution");
-}
-
-function inferPrecedesSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+does\s+(?:an?|the)?\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^(?:An?|The)\s+([A-Za-z][A-Za-z0-9 -]{2,50})\s+usually\s+(?:comes\s+before|precedes)\s+(.{3,90})$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const answer = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!subject || !answer || answer.split(/\s+/).length > 8) return null;
-
-  const fullFront = `${prefix.replace(/\s+$/g, "")} ${subject} usually precede?`;
-  return buildPatternSourceCompletion(fullFront, answer, prefixText, "precedes");
-}
-
-function inferReverseDefinitionSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!prefix || /^(?:who|what|when|where|why|how|which|define|state|name|list)\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^([A-Z][A-Za-z0-9 -]{1,50})\s+(?:means|is|refers\s+to)\s+(.{3,180})$/i);
-  if (!match?.[1] || !match?.[2]) return null;
-
-  const term = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const definition = cleanSourcePatternQuestionPhrase(match[2]);
-  if (!term || !definition) return null;
-
-  const prefixIndex = buildCompletionPrefixIndex(prefix);
-  const definitionIndex = buildCompletionPrefixIndex(definition);
-  if (!definitionIndex.text.startsWith(prefixIndex.text)) return null;
-
-  return buildPatternSourceCompletion(`${definition}.`, term, prefixText, "reverse-definition");
-}
-
-function inferTeachesPurposeSourceCompletion(sourceText, prefixText) {
-  const prefix = String(prefixText || "").trim();
-  if (!/^what\s+is\b/i.test(prefix)) return null;
-
-  const sentence = cleanSourcePatternQuestionPhrase(sourceText);
-  if (!sentence) return null;
-
-  const match = sentence.match(/^([A-Za-z][A-Za-z0-9 -]{2,80})\s+teaches\s+([A-Z][A-Za-z0-9-]{1,30})\s+(.+?)(?::|,\s+not\b|$)/i);
-  if (!match?.[1] || !match?.[2] || !match?.[3]) return null;
-
-  const subject = cleanSourcePatternQuestionPhrase(match[1]).replace(/^(?:an?|the)\s+/i, "");
-  const target = cleanSourcePatternQuestionPhrase(match[2]);
-  const learning = cleanSourcePatternQuestionPhrase(match[3]);
-  if (!subject || !target || !learning || learning.split(/\s+/).length > 10) return null;
-
-  const subjectPhrase = `${subject.charAt(0).toLowerCase()}${subject.slice(1)}`;
-  const frontSubject = subject.toLowerCase().includes(target.toLowerCase())
-    ? subjectPhrase
-    : `${subjectPhrase} ${target}`;
-  const fullFront = `${prefix.replace(/\s+$/g, "")} the purpose of ${frontSubject}?`;
-  return buildPatternSourceCompletion(fullFront, `to teach ${target} ${learning}`, prefixText, "teaches-purpose");
-}
-
-function inferSourcePatternCompletion(sourceText, prefixText) {
-  return inferApproachSourceCompletion(sourceText, prefixText)
-    || inferPeriodSourceCompletion(sourceText, prefixText)
-    || inferContextSourceCompletion(sourceText, prefixText)
-    || inferAliasSourceCompletion(sourceText, prefixText)
-    || inferAbbreviationSourceCompletion(sourceText, prefixText)
-    || inferCoreProblemSourceCompletion(sourceText, prefixText)
-    || inferCorpusContentsSourceCompletion(sourceText, prefixText)
-    || inferNamedSetSourceCompletion(sourceText, prefixText)
-    || inferMeaningSourceCompletion(sourceText, prefixText)
-    || inferGovernmentRepealSourceCompletion(sourceText, prefixText)
-    || inferTreeStructureSourceCompletion(sourceText, prefixText)
-    || inferWordFunctionSourceCompletion(sourceText, prefixText)
-    || inferDirectDefinitionSourceCompletion(sourceText, prefixText)
-    || inferOriginSourceCompletion(sourceText, prefixText)
-    || inferContrastTypesSourceCompletion(sourceText, prefixText)
-    || inferPipelineSourceCompletion(sourceText, prefixText)
-    || inferLabelCaptureSourceCompletion(sourceText, prefixText)
-    || inferYearEventSourceCompletion(sourceText, prefixText)
-    || inferKindOfInverseSourceCompletion(sourceText, prefixText)
-    || inferReceiveLabelsSourceCompletion(sourceText, prefixText)
-    || inferConditionsSourceCompletion(sourceText, prefixText)
-    || inferColonExplanationSourceCompletion(sourceText, prefixText)
-    || inferContrastDifferenceSourceCompletion(sourceText, prefixText)
-    || inferAnalogySolutionSourceCompletion(sourceText, prefixText)
-    || inferPrecedesSourceCompletion(sourceText, prefixText)
-    || inferReverseDefinitionSourceCompletion(sourceText, prefixText)
-    || inferTeachesPurposeSourceCompletion(sourceText, prefixText)
-    || null;
-}
-
-function inferSourceStemCompletion(sourceText, prefixText) {
-  if (isStateCommandPrefix(prefixText)) {
-    const statement = getSourceStatementSplit(sourceText);
-    const completion = buildStatementSourceStemCompletion(statement, prefixText, { command: true });
-    if (completion) return { ...completion, kind: "source-stem", split: "statement-command" };
-  }
-
-  const sourcePatternCompletion = inferSourcePatternCompletion(sourceText, prefixText);
-  if (sourcePatternCompletion) return sourcePatternCompletion;
-
-  const match = getSourceStemMatch(sourceText, prefixText);
-  if (!match?.continuation) return null;
-
-  const sourceStatement = getSourceStatementSplit(sourceText);
-  if (sourceStemTargetsStatement(match, sourceStatement)) {
-    const completion = buildStatementSourceStemCompletion(sourceStatement, prefixText);
-    if (completion) return { ...completion, kind: "source-stem", split: "statement" };
-  }
-
-  const sentence = firstSourceStemSentence(match.continuation);
-  if (!sentence) return null;
-
-  const statement = getSourceStatementSplit(`${match.prefix} ${sentence}`);
-  if (statement) {
-    const completion = buildStatementSourceStemCompletion(statement, prefixText);
-    if (completion) return { ...completion, kind: "source-stem", split: "statement" };
-  }
-
-  if (isExactComplementSourceStemPrefix(prefixText)) {
-    const completion = buildExactComplementSourceStemCompletion(sentence);
-    if (completion) return { ...completion, kind: "source-stem", split: "source-complement" };
-  }
-
-  const iff = sentence.match(/^(.{5,120}?\b(?:iff|if\s+and\s+only\s+if)\b)\s+(.+)$/i);
-  if (iff) {
-    const frontLead = iff[1].replace(/\biff\b/i, "if and only if");
-    const completion = buildSourceStemCompletion(frontLead, iff[2]);
-    if (completion) return { ...completion, kind: "source-stem", split: "iff" };
-  }
-
-  const contrast = sentence.match(/^(.{8,}?\b(?:not|never|without)\b.{0,140}?)\s+(?:and|but|rather\s+than|rather|instead)\s+(.+)$/i);
-  if (contrast) {
-    const completion = buildSourceStemCompletion(contrast[1], contrast[2]);
-    if (completion) return { ...completion, kind: "source-stem", split: "contrast" };
-  }
-
-  const passiveComplement = sentence.match(
-    /^(.{5,}?\b(?:(?:can|could|may|might|must|should|will|would)\s+(?:also\s+)?(?:be\s+)?|(?:is|are|was|were|be|been|being)\s+(?:also\s+)?)[a-z]+(?:ed|en)\s+(?:to|for|as|in|on|with|by|after))\s+(.+)$/i
-  );
-  if (passiveComplement) {
-    const completion = buildSourceStemCompletion(passiveComplement[1], passiveComplement[2]);
-    if (completion) return { ...completion, kind: "source-stem", split: "passive-complement" };
-  }
-
-  const activeMethodComplement = sentence.match(
-    /^(.{5,160}?\b(?:by|via|through|using))\s+(.+)$/i
-  );
-  if (activeMethodComplement) {
-    const completion = buildSourceStemCompletion(activeMethodComplement[1], activeMethodComplement[2]);
-    if (completion) return { ...completion, kind: "source-stem", split: "active-method-complement" };
-  }
-
-  const combinedSentence = `${match.prefix} ${sentence}`.replace(/\s+/g, " ").trim();
-  const copularComplement = combinedSentence.match(
-    /^(.{2,180}?\b(?:is defined as|are defined as|refers to|consists of|is called|are called|is named after|are named after|was named after|were named after|is named for|are named for|was named for|were named for|means|mean|denotes|equals|is|are|was|were))\s+(.+)$/i
-  );
-  if (copularComplement) {
-    const completion = buildSourceStemCompletion(copularComplement[1], copularComplement[2]);
-    const frontSuffix = stripExistingPrefixFromCompletion(completion?.frontSuffix || "", prefixText);
-    if (completion && frontSuffix) {
-      return {
-        ...completion,
-        frontSuffix,
-        kind: "source-stem",
-        split: "copular-complement",
-      };
-    }
-  }
-
-  return null;
+function inferSourceStemCompletion(sourceText, prefixText, options = {}) {
+  return COPILOT_CORE?.inferLiteralSourceSplit?.(sourceText, prefixText, {
+    maxFrontWords: copilot.frontWordCap,
+    maxBackWords: 24,
+    ...options,
+  }) || null;
 }
 
 function stripExistingPrefixFromCompletion(completionText, existingText) {
@@ -3945,7 +3500,11 @@ function clearStemSplitUI(state) {
   if (!state) return;
   state._stemSplit = null;
   state._stemSplitExisting = "";
-  hideStemSplitTakeover();
+  state._sourceSplitCorrection = null;
+  state._sourceSplitActive = false;
+  state._sourceSplitOwnsBack = false;
+  state._sourceSplitOwnedByFront = false;
+  state._sourceSplitOriginalText = "";
 }
 
 // "No usable card" feedback the user can actually see. setCopilotStatus() writes into a drawer
@@ -3967,135 +3526,23 @@ function hideFrontNoCardNotice(state) {
   state.noCardEl.hidden = true;
 }
 
-function getStemSplitTakeoverBody() { return document.getElementById("stemSplitTakeoverBody"); }
-
-function hideStemSplitTakeover() {
-  const overlay = document.getElementById("stemSplitTakeover");
-  const body = getStemSplitTakeoverBody();
-  if (overlay) overlay.hidden = true;
-  if (body) body.innerHTML = "";
-}
-
-function stemSplitTokensKey(plan) {
-  if (!plan) return "";
-  // Key over the FULL sentence (typed + movable), normalized: as the user types through the
-  // sentence, words migrate from movable to typed, but an Esc dismissal must keep holding.
-  return plan.typedTokens.concat(plan.tokens).map(normalizeStemToken).filter(Boolean).join(" ");
-}
-
-// The split editor takes over the panel like the fact picker does: the front/back boxes give way
-// to the full sentence until the user commits or backs out. Focus stays in the (covered) Front
-// textarea the whole time, so Tab, ⌥←→, and plain typing keep working while it's up.
-function renderStemSplitTakeover(state) {
-  const overlay = document.getElementById("stemSplitTakeover");
-  const body = getStemSplitTakeoverBody();
-  const plan = state._stemSplit;
-  if (!overlay || !body || !plan) return;
-  body.innerHTML = "";
-
-  const head = document.createElement("div");
-  head.className = "cfp-head";
-  const title = document.createElement("div");
-  title.className = "cfp-message";
-  title.id = "stemSplitTakeoverTitle";
-  title.textContent = "Exact match to source text detected";
-  head.appendChild(title);
-  const backBtn = document.createElement("button");
-  backBtn.type = "button";
-  backBtn.className = "cfp-back";
-  backBtn.textContent = "Back to editor";
-  backBtn.addEventListener("click", () => dismissStemSplitTakeover(state));
-  head.appendChild(backBtn);
-  body.appendChild(head);
-
-  const explain = document.createElement("div");
-  explain.className = "sst-explain";
-  explain.textContent = "Your text continues the source word-for-word, so Ghostwriter split the sentence into a card. The highlighted words become the answer.";
-  body.appendChild(explain);
-
-  const sentence = document.createElement("div");
-  sentence.className = "sst-sentence";
-  for (const word of plan.typedTokens) {
-    const span = document.createElement("span");
-    span.className = "stem-split-word typed";
-    span.textContent = word;
-    sentence.appendChild(span);
-  }
-  plan.tokens.forEach((word, i) => {
-    const span = document.createElement("span");
-    span.className = `stem-split-word movable${i >= plan.splitIndex ? " blank" : ""}`;
-    span.textContent = word;
-    span.title = "Start the answer here";
-    span.addEventListener("click", () => setStemSplitIndex(state, i));
-    sentence.appendChild(span);
-  });
-  body.appendChild(sentence);
-
-  const hint = document.createElement("div");
-  hint.className = "sst-hint";
-  hint.textContent = "Click a word to start the answer · ⌥ ← → nudge · Enter or Tab accepts · Esc backs out";
-  body.appendChild(hint);
-
-  const actions = document.createElement("div");
-  actions.className = "sst-actions";
-  const left = document.createElement("button");
-  left.type = "button";
-  left.className = "sst-nudge";
-  left.textContent = "◀";
-  left.title = "Grow the answer by one word (⌥←)";
-  left.addEventListener("click", () => moveStemSplit(state, -1));
-  actions.appendChild(left);
-  const right = document.createElement("button");
-  right.type = "button";
-  right.className = "sst-nudge";
-  right.textContent = "▶";
-  right.title = "Shrink the answer by one word (⌥→)";
-  right.addEventListener("click", () => moveStemSplit(state, 1));
-  actions.appendChild(right);
-  const accept = document.createElement("button");
-  accept.type = "button";
-  accept.className = "cfp-accept";
-  accept.textContent = "Use this card";
-  accept.addEventListener("click", () => acceptStemSplitCard(state));
-  actions.appendChild(accept);
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "cfp-cancel";
-  cancel.textContent = "Back to editor";
-  cancel.addEventListener("click", () => dismissStemSplitTakeover(state));
-  actions.appendChild(cancel);
-  body.appendChild(actions);
-
-  overlay.hidden = false;
-}
-
-// Backing out remembers the sentence so the takeover doesn't re-pop while the user keeps typing
-// through it — the deterministic completion falls back to plain ghost text for that sentence.
-function dismissStemSplitTakeover(state) {
-  if (state) state._stemTakeoverDismissedKey = stemSplitTokensKey(state._stemSplit);
-  hideStemSplitTakeover();
-  rejectCopilotSuggestion(state);
-  rejectCopilotSuggestion(copilot.fields.get("back"));
-  state?.textarea?.focus?.();
-}
-
-function acceptStemSplitCard(state) {
-  const backState = copilot.fields.get("back");
-  if (applyCopilotSuggestion(state) && backState?.suggestion) {
-    applyCopilotSuggestion(backState); // no-op if autoFillBack already consumed it
-  }
-  state?.textarea?.focus?.();
-}
-
-function renderStemCompletion(state, frontSuffix, back, { userDriven = false } = {}) {
+function renderStemCompletion(state, frontSuffix, back, { userDriven = false, preserveBack = false } = {}) {
   state.suggestion = frontSuffix;
+  state._sourceSplitActive = true;
   hideFrontNoCardNotice(state);
   if (state.suggestionEl) {
     state.suggestionEl.hidden = false;
     state.suggestionEl.classList.remove("loading", "error");
   }
   if (state.textEl) state.textEl.textContent = frontSuffix;
-  if (state.hintEl) state.hintEl.textContent = "Press Tab or click Accept";
+  if (state.hintEl) {
+    const correction = state._sourceSplitCorrection;
+    state.hintEl.textContent = correction
+      ? `Split from source · correct “${correction.from}” to “${correction.to}” · Tab to accept`
+      : state._stemSplit
+        ? "Split from source · Tab to accept · Option+←/→ moves the answer"
+        : "Split from source · Tab to accept";
+  }
   if (state.ghostEl && state.mirrorEl && state.ghostTextEl) {
     state.mirrorEl.textContent = state.textarea?.value || "";
     state.ghostTextEl.textContent = frontSuffix;
@@ -4103,15 +3550,26 @@ function renderStemCompletion(state, frontSuffix, back, { userDriven = false } =
   }
   const existing = state._stemSplitExisting || "";
   const frontForBack = `${existing}${frontSuffix ? (/\s$/.test(existing) ? "" : " ") + frontSuffix : ""}`.trim().slice(0, 500);
-  setBackDraftSuggestionFromSourceStem(back, frontForBack, { force: userDriven });
-  const suppressed = !!state._stemTakeoverDismissedKey
-    && state._stemTakeoverDismissedKey === stemSplitTokensKey(state._stemSplit);
-  if (state._stemSplit && !suppressed) {
-    renderStemSplitTakeover(state);
-  } else {
-    hideStemSplitTakeover();
+  state._sourceSplitOwnsBack = false;
+  if (!preserveBack) {
+    state._sourceSplitOwnsBack = setBackDraftSuggestionFromSourceStem(back, frontForBack, { force: userDriven });
+    if (!state._sourceSplitOwnsBack) {
+      state.suggestion = "";
+      clearSuggestionUI(state, { mirrorValue: state.textarea?.value || "" });
+      clearStemSplitUI(state);
+      return false;
+    }
+  }
+  const offeredKey = `${state._stemSplitExisting}\n${frontSuffix}\n${back}`;
+  if (state._sourceSplitOfferedKey !== offeredKey) {
+    state._sourceSplitOfferedKey = offeredKey;
+    updateLocalMetrics((metrics) => {
+      bumpMetric(metrics, "source_split_offered");
+      return metrics;
+    });
   }
   updateShortcutCoach(state.fieldId);
+  return true;
 }
 
 function setStemSplitIndex(state, index) {
@@ -4120,8 +3578,7 @@ function setStemSplitIndex(state, index) {
   const outputs = buildStemSplitOutputs(plan, index);
   if (!outputs || outputs.splitIndex === plan.splitIndex) return false;
   plan.splitIndex = outputs.splitIndex;
-  renderStemCompletion(state, outputs.frontSuffix, outputs.back, { userDriven: true });
-  return true;
+  return renderStemCompletion(state, outputs.frontSuffix, outputs.back, { userDriven: true });
 }
 
 function moveStemSplit(state, delta) {
@@ -4143,16 +3600,64 @@ function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWord
   text = stripCopilotMetaOutput(text);
   if (!text) return "";
 
-  text = stripExistingPrefixFromCompletion(text, existingText);
-  if (!text) return "";
-
-  const cap = typeof maxWords === "number"
+  const configuredCap = typeof maxWords === "number"
     ? maxWords
     : (role === "front" ? copilot.frontWordCap : copilot.backWordCap);
+  if (role === "front") {
+    return COPILOT_CORE?.normalizeFrontSuffix?.(existingText, text, {
+      maxFrontWords: configuredCap,
+    }) || "";
+  }
+
+  text = stripExistingPrefixFromCompletion(text, existingText);
+  if (!text) return "";
+  const cap = configuredCap;
+  if (cap < 1) return "";
   text = truncateCopilotSuggestionWords(text, cap, role);
 
   // IMPORTANT: do NOT drop suffix matches; streaming models often send suffix-sized deltas first.
   return text;
+}
+
+function cleanClozeCompletionText(raw) {
+  return COPILOT_CORE?.cleanClozeCompletionText?.(raw) || "";
+}
+
+function getClozeSuggestionValidation(
+  raw,
+  existingText,
+  { maxWords, maxDeletions, requiredNewDeletions = 1 } = {}
+) {
+  const text = cleanClozeCompletionText(raw);
+  return COPILOT_CORE?.validateClozeCompletion?.(existingText, text, {
+    maxFrontWords: typeof maxWords === "number" ? maxWords : copilot.frontWordCap,
+    maxDeletions: Number.isFinite(Number(maxDeletions))
+      ? Number(maxDeletions)
+      : Number.POSITIVE_INFINITY,
+    requiredNewDeletions,
+  }) || { suffix: "", reason: text ? "malformed-cloze" : "empty" };
+}
+
+function normalizeClozeSuggestion(raw, existingText, options = {}) {
+  return getClozeSuggestionValidation(raw, existingText, options).suffix || "";
+}
+
+function getFrontNormalizationRetryReason(existingText, rawText) {
+  const raw = String(rawText || "").trim();
+  if (!raw) return "";
+  const normalized = normalizeCopilotSuggestion(raw, existingText, {
+    role: "front",
+    maxWords: copilot.frontWordCap,
+  });
+  if (normalized) return "";
+  const classification = COPILOT_CORE?.classifyFrontCompletion?.(existingText, raw) || "";
+  if (classification === "prefix-drift") {
+    return "The response restarted or changed the exact Prefix instead of continuing it";
+  }
+  if (classification === "partial-repeat") {
+    return "The response only repeated part or all of the Prefix";
+  }
+  return "The response could not be appended to the exact Prefix";
 }
 
 function isDanglingCompletionWord(value) {
@@ -4245,11 +3750,21 @@ function finalizeFrontQuestion(text) {
   return s; // leave as-is
 }
 
+function completionNeedsLeadingSpace(existingText, suggestionText) {
+  const existing = String(existingText || "");
+  const suggestion = String(suggestionText || "");
+  if (!existing || /[\s\n]$/.test(existing) || !suggestion || suggestion.startsWith(" ")) return false;
+  // Closing punctuation, ellipses, possessives, and hyphenated continuations attach directly.
+  const attachesDirectly = ".,!?;:…%)]>'’\"-–—".includes(suggestion[0])
+    || suggestion.charCodeAt(0) === 125; // closing curly brace
+  return !attachesDirectly;
+}
+
 function normalizeFrontSuggestionForPrefix(existingText, suggestionText) {
   const suggestion = String(suggestionText || "").trim();
   if (!suggestion) return "";
   const existing = String(existingText || "");
-  const needsSpace = existing && !/[\s\n]$/.test(existing) && !suggestion.startsWith(" ");
+  const needsSpace = completionNeedsLeadingSpace(existing, suggestion);
   const draft = `${existing}${needsSpace ? " " : ""}${suggestion}`.replace(/\s+/g, " ").trim();
   const finalized = finalizeFrontQuestion(draft);
   const suffix = stripExistingPrefixFromCompletion(finalized, existing);
@@ -4312,6 +3827,18 @@ function getAnswerTerms(value, { distinctiveOnly = false } = {}) {
     .split(/[^a-z0-9]+/i)
     .map(normalizeAnswerTerm)
     .filter(Boolean)
+    .filter((term) => term.length >= 3)
+    .map((term) => {
+      if (term.length > 5 && term.endsWith("ing")) {
+        const base = term.slice(0, -3);
+        return /(.)\1$/.test(base) ? base.slice(0, -1) : base;
+      }
+      if (term.length > 4 && term.endsWith("ed")) {
+        const base = term.slice(0, -2);
+        return /(.)\1$/.test(base) ? base.slice(0, -1) : base;
+      }
+      return term;
+    })
     .filter((term) => term.length >= 3);
   const unique = [...new Set(terms)];
   if (!distinctiveOnly) return unique;
@@ -4325,7 +3852,7 @@ function getSourceGroundingTerms(value) {
     ...FRONT_ANSWER_GENERIC_TERMS,
     "about", "after", "before", "between", "during", "from", "into", "onto",
     "over", "under", "through", "toward", "towards", "without", "within",
-    "standard", "main", "primary", "basic", "important", "specific",
+    "standard", "main", "primary", "basic", "important", "specific", "beneficial",
     "source", "card", "front", "back", "question", "answer",
   ]);
   return getAnswerTerms(value, { distinctiveOnly: true })
@@ -4603,131 +4130,6 @@ function inferProtectedAnswerFromAdvantageSource(sourceText, existingText) {
   return normalized;
 }
 
-function inferProtectedAnswerFromApproachSource(sourceText, existingText) {
-  const prefix = String(existingText || "").trim();
-  if (!/^(?:what|which|how)\b/i.test(prefix)) return "";
-  if (!/\b(?:approach|method|technique|way|standard)\b/i.test(prefix)) return "";
-
-  const sentence = String(sourceText || "")
-    .trim()
-    .split(/(?:[.!?]\s+|\n)/)[0]
-    ?.trim() || "";
-  if (!sentence) return "";
-
-  const match = sentence.match(
-    /\b(?:an?|one|the)\s+(?:standard\s+)?(?:approach|method|technique|way)\s+to\s+.{3,140}?\s+(?:is|are|was|were)\s+(?:to\s+)?(?:make\s+use\s+of|use|uses|using|via|through)\s+(?:so-called\s+)?(.+?)(?:[:;.?!]|$)/i
-  );
-  if (!match?.[1]) return "";
-
-  const answer = match[1]
-    .replace(/\[[^\]]+\]/g, "")
-    .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!answer || answer.split(/\s+/).length > 8) return "";
-  return `using ${answer.replace(/^(?:using|via|through)\s+/i, "")}`;
-}
-
-function inferProtectedAnswerFromContextSource(sourceText, existingText) {
-  return inferContextSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromAliasSource(sourceText, existingText) {
-  return inferAliasSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromAbbreviationSource(sourceText, existingText) {
-  return inferAbbreviationSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromCoreProblemSource(sourceText, existingText) {
-  return inferCoreProblemSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromCorpusContentsSource(sourceText, existingText) {
-  return inferCorpusContentsSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromNamedSetSource(sourceText, existingText) {
-  return inferNamedSetSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromMeaningSource(sourceText, existingText) {
-  return inferMeaningSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromGovernmentRepealSource(sourceText, existingText) {
-  return inferGovernmentRepealSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromTreeStructureSource(sourceText, existingText) {
-  return inferTreeStructureSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromWordFunctionSource(sourceText, existingText) {
-  return inferWordFunctionSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromDirectDefinitionSource(sourceText, existingText) {
-  return inferDirectDefinitionSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromOriginSource(sourceText, existingText) {
-  return inferOriginSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromContrastTypesSource(sourceText, existingText) {
-  return inferContrastTypesSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromPipelineSource(sourceText, existingText) {
-  return inferPipelineSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromLabelCaptureSource(sourceText, existingText) {
-  return inferLabelCaptureSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromYearEventSource(sourceText, existingText) {
-  return inferYearEventSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromKindOfInverseSource(sourceText, existingText) {
-  return inferKindOfInverseSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromReceiveLabelsSource(sourceText, existingText) {
-  return inferReceiveLabelsSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromConditionsSource(sourceText, existingText) {
-  return inferConditionsSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromColonExplanationSource(sourceText, existingText) {
-  return inferColonExplanationSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromContrastDifferenceSource(sourceText, existingText) {
-  return inferContrastDifferenceSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromAnalogySolutionSource(sourceText, existingText) {
-  return inferAnalogySolutionSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromPrecedesSource(sourceText, existingText) {
-  return inferPrecedesSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromReverseDefinitionSource(sourceText, existingText) {
-  return inferReverseDefinitionSourceCompletion(sourceText, existingText)?.back || "";
-}
-
-function inferProtectedAnswerFromTeachesPurposeSource(sourceText, existingText) {
-  return inferTeachesPurposeSourceCompletion(sourceText, existingText)?.back || "";
-}
-
 function inferProtectedAnswerFromSimpleFactSource(sourceText, existingText) {
   const prefix = String(existingText || "").trim();
   if (!/^(?:what|which|who|where)\b/i.test(prefix)) return "";
@@ -4770,92 +4172,94 @@ function inferProtectedAnswerFromSimpleFactSource(sourceText, existingText) {
   return answerSubject;
 }
 
+function inferProtectedAnswerFromPredicateSource(sourceText, existingText) {
+  const prefix = String(existingText || "").trim();
+  const cue = prefix.match(/^what\s+does\s+(.+?)\s*[?]?$/i)?.[1] || "";
+  if (!cue) return "";
+  const cueWords = cue.match(/[A-Za-z0-9][A-Za-z0-9'-]*/g) || [];
+  if (cueWords.length < 2) return "";
+
+  const sentence = String(sourceText || "")
+    .trim()
+    .split(/(?:[.!?]\s+|\n)/)[0]
+    ?.trim() || "";
+  if (!sentence) return "";
+  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let subjectEnd = -1;
+  // Prefer the longest suffix of the typed subject that occurs verbatim in the
+  // selected source sentence. This tolerates a contextual modifier in the cue
+  // ("OSI data link layer") without guessing across unrelated sentences.
+  for (let start = 0; start <= cueWords.length - 2; start += 1) {
+    const phrase = cueWords.slice(start).map(escape).join("\\s+");
+    const match = new RegExp(`\\b${phrase}\\b`, "iu").exec(sentence);
+    if (match) {
+      subjectEnd = match.index + match[0].length;
+      break;
+    }
+  }
+  if (subjectEnd < 0) return "";
+
+  const predicate = sentence.slice(subjectEnd).replace(/^[\s,;:\-–—]+/u, "");
+  const predicateMatch = predicate.match(/^([A-Za-z][A-Za-z'-]*)\s+(.+)$/u);
+  if (!predicateMatch || !/(?:s|es)$/iu.test(predicateMatch[1])) return "";
+  const answer = predicateMatch[2]
+    .replace(/[;:,.!?]+$/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!answer || !getAnswerTerms(answer, { distinctiveOnly: true }).length) return "";
+  return answer.length > 180 ? `${answer.slice(0, 180).trimEnd()}...` : answer;
+}
+
+function inferProtectedAnswerFromCausalSource(sourceText, existingText) {
+  if (!/^why\b/i.test(String(existingText || "").trim())) return "";
+  const source = String(sourceText || "").trim();
+  if (!source) return "";
+  const matches = [...source.matchAll(/\bbecause\s+([^.!?]+)(?:[.!?]|$)/gi)];
+  if (matches.length !== 1) return "";
+  const answer = String(matches[0][1] || "")
+    .replace(/\s+/g, " ")
+    .replace(/[;:,.!?]+$/g, "")
+    .trim();
+  if (!answer || !getAnswerTerms(answer, { distinctiveOnly: true }).length) return "";
+  return answer.length > 180 ? `${answer.slice(0, 180).trimEnd()}...` : answer;
+}
+
+function inferProtectedAnswerFromRelationalSource(sourceText, existingText) {
+  const prefix = String(existingText || "").trim();
+  if (!/^what\s+(?:do|does|did|is|are|was|were)\b/i.test(prefix)) return "";
+  const sentence = String(sourceText || "")
+    .trim()
+    .split(/(?:[.!?]\s+|\n)/)[0]
+    ?.trim() || "";
+  if (!sentence) return "";
+
+  const patterns = [
+    /\b(?:enable|enables|enabled|allow|allows|allowed)\s+(.+?)(?:,\s*(?:potentially|thereby|thus|which|while)\b|[.;!?]|$)/i,
+    /\b(?:is|are|was|were)\s+(?:primarily\s+)?used\s+(?:in|for|to)\s+(.+?)(?:[.;!?]|$)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = sentence.match(pattern);
+    const answer = String(match?.[1] || "")
+      .replace(/\s+/g, " ")
+      .replace(/[;:,.!?]+$/g, "")
+      .trim();
+    if (!answer || !getAnswerTerms(answer, { distinctiveOnly: true }).length) continue;
+    return answer.length > 180 ? `${answer.slice(0, 180).trimEnd()}...` : answer;
+  }
+  return "";
+}
+
 function getSourceTextForProtectedAnswer(page = null) {
   const sourceField = document.querySelector("#source")?.value || "";
   return (getContextSourceText(page) || sourceField || "").trim();
 }
 
 function inferProtectedAnswerFromSource(sourceText, existingText) {
+  const causalAnswer = inferProtectedAnswerFromCausalSource(sourceText, existingText);
+  if (causalAnswer) return causalAnswer;
+
   const advantageAnswer = inferProtectedAnswerFromAdvantageSource(sourceText, existingText);
   if (advantageAnswer) return advantageAnswer;
-
-  const approachAnswer = inferProtectedAnswerFromApproachSource(sourceText, existingText);
-  if (approachAnswer) return approachAnswer;
-
-  const contextAnswer = inferProtectedAnswerFromContextSource(sourceText, existingText);
-  if (contextAnswer) return contextAnswer;
-
-  const aliasAnswer = inferProtectedAnswerFromAliasSource(sourceText, existingText);
-  if (aliasAnswer) return aliasAnswer;
-
-  const abbreviationAnswer = inferProtectedAnswerFromAbbreviationSource(sourceText, existingText);
-  if (abbreviationAnswer) return abbreviationAnswer;
-
-  const coreProblemAnswer = inferProtectedAnswerFromCoreProblemSource(sourceText, existingText);
-  if (coreProblemAnswer) return coreProblemAnswer;
-
-  const corpusContentsAnswer = inferProtectedAnswerFromCorpusContentsSource(sourceText, existingText);
-  if (corpusContentsAnswer) return corpusContentsAnswer;
-
-  const namedSetAnswer = inferProtectedAnswerFromNamedSetSource(sourceText, existingText);
-  if (namedSetAnswer) return namedSetAnswer;
-
-  const meaningAnswer = inferProtectedAnswerFromMeaningSource(sourceText, existingText);
-  if (meaningAnswer) return meaningAnswer;
-
-  const governmentRepealAnswer = inferProtectedAnswerFromGovernmentRepealSource(sourceText, existingText);
-  if (governmentRepealAnswer) return governmentRepealAnswer;
-
-  const treeStructureAnswer = inferProtectedAnswerFromTreeStructureSource(sourceText, existingText);
-  if (treeStructureAnswer) return treeStructureAnswer;
-
-  const wordFunctionAnswer = inferProtectedAnswerFromWordFunctionSource(sourceText, existingText);
-  if (wordFunctionAnswer) return wordFunctionAnswer;
-
-  const directDefinitionAnswer = inferProtectedAnswerFromDirectDefinitionSource(sourceText, existingText);
-  if (directDefinitionAnswer) return directDefinitionAnswer;
-
-  const originAnswer = inferProtectedAnswerFromOriginSource(sourceText, existingText);
-  if (originAnswer) return originAnswer;
-
-  const contrastTypesAnswer = inferProtectedAnswerFromContrastTypesSource(sourceText, existingText);
-  if (contrastTypesAnswer) return contrastTypesAnswer;
-
-  const pipelineAnswer = inferProtectedAnswerFromPipelineSource(sourceText, existingText);
-  if (pipelineAnswer) return pipelineAnswer;
-
-  const labelCaptureAnswer = inferProtectedAnswerFromLabelCaptureSource(sourceText, existingText);
-  if (labelCaptureAnswer) return labelCaptureAnswer;
-
-  const yearEventAnswer = inferProtectedAnswerFromYearEventSource(sourceText, existingText);
-  if (yearEventAnswer) return yearEventAnswer;
-
-  const kindOfInverseAnswer = inferProtectedAnswerFromKindOfInverseSource(sourceText, existingText);
-  if (kindOfInverseAnswer) return kindOfInverseAnswer;
-
-  const receiveLabelsAnswer = inferProtectedAnswerFromReceiveLabelsSource(sourceText, existingText);
-  if (receiveLabelsAnswer) return receiveLabelsAnswer;
-
-  const conditionsAnswer = inferProtectedAnswerFromConditionsSource(sourceText, existingText);
-  if (conditionsAnswer) return conditionsAnswer;
-
-  const colonExplanationAnswer = inferProtectedAnswerFromColonExplanationSource(sourceText, existingText);
-  if (colonExplanationAnswer) return colonExplanationAnswer;
-
-  const contrastDifferenceAnswer = inferProtectedAnswerFromContrastDifferenceSource(sourceText, existingText);
-  if (contrastDifferenceAnswer) return contrastDifferenceAnswer;
-
-  const analogySolutionAnswer = inferProtectedAnswerFromAnalogySolutionSource(sourceText, existingText);
-  if (analogySolutionAnswer) return analogySolutionAnswer;
-
-  const precedesAnswer = inferProtectedAnswerFromPrecedesSource(sourceText, existingText);
-  if (precedesAnswer) return precedesAnswer;
-
-  const reverseDefinitionAnswer = inferProtectedAnswerFromReverseDefinitionSource(sourceText, existingText);
-  if (reverseDefinitionAnswer) return reverseDefinitionAnswer;
-
-  const teachesPurposeAnswer = inferProtectedAnswerFromTeachesPurposeSource(sourceText, existingText);
-  if (teachesPurposeAnswer) return teachesPurposeAnswer;
 
   const source = String(sourceText || "").trim();
   const prefix = String(existingText || "").trim();
@@ -4863,6 +4267,12 @@ function inferProtectedAnswerFromSource(sourceText, existingText) {
 
   const simpleFactAnswer = inferProtectedAnswerFromSimpleFactSource(source, prefix);
   if (simpleFactAnswer) return simpleFactAnswer;
+
+  const relationalAnswer = inferProtectedAnswerFromRelationalSource(source, prefix);
+  if (relationalAnswer) return relationalAnswer;
+
+  const predicateAnswer = inferProtectedAnswerFromPredicateSource(source, prefix);
+  if (predicateAnswer) return predicateAnswer;
 
   const statement = getSourceStatementSplit(source);
   if (statement?.answer) {
@@ -4905,7 +4315,25 @@ function inferProtectedAnswerFromSource(sourceText, existingText) {
 function getProtectedBackAnswerForFront({ existingText = "", backText = "", page = null } = {}) {
   const explicitBack = String(backText || "").trim();
   if (explicitBack) return explicitBack;
-  return inferProtectedAnswerFromSource(getSourceTextForProtectedAnswer(page), existingText);
+  const source = getSourceTextForProtectedAnswer(page);
+  const focusedSource = selectRelevantSource(source, existingText, "");
+  return inferProtectedAnswerFromSource(focusedSource, existingText);
+}
+
+function getBackSourceAlignmentIssue(frontText, backText, sourceText) {
+  const front = String(frontText || "").trim();
+  const back = String(backText || "").trim();
+  const source = String(sourceText || "").trim();
+  if (!front || !back || !source) return "";
+  const focusedSource = selectRelevantSource(source, front, "");
+  const expected = inferProtectedAnswerFromSource(focusedSource, front);
+  if (!expected) return "";
+  const expectedTerms = getAnswerTerms(expected, { distinctiveOnly: true })
+    .filter((term) => term.length >= 4);
+  if (expectedTerms.length < 2) return "";
+  const backTerms = new Set(getAnswerTerms(back));
+  if (expectedTerms.some((term) => backTerms.has(term))) return "";
+  return "Back does not answer the source relation targeted by the Front";
 }
 
 function getAnswerTermLeakReason(frontText, { existingText = "", backText = "" } = {}) {
@@ -4985,6 +4413,30 @@ function getFrontAnswerLeakReason(frontText, { existingText = "", backText = "" 
   return "";
 }
 
+function trimAnswerBearingFrontTail(suggestionText, existingText, protectedAnswer) {
+  const suggestion = String(suggestionText || "").trim();
+  const answer = String(protectedAnswer || "").trim();
+  if (!suggestion || !answer) return "";
+  const marker = /\b(?:in terms of|with respect to|regarding|namely|specifically|including|such as)\b/iu.exec(suggestion);
+  if (!marker || marker.index < 1) return "";
+
+  const existingTerms = new Set(getAnswerTerms(existingText));
+  const answerTerms = new Set(
+    getAnswerTerms(answer).filter((term) => term.length >= 4 && !existingTerms.has(term))
+  );
+  const tailTerms = getAnswerTerms(suggestion.slice(marker.index));
+  if (!tailTerms.some((term) => answerTerms.has(term))) return "";
+
+  const head = suggestion.slice(0, marker.index).replace(/[\s,;:\-–—]+$/u, "").trim();
+  if (!head || isDanglingCompletionWord(head.split(/\s+/u).pop())) return "";
+  const trimmed = normalizeFrontSuggestionForPrefix(existingText, head);
+  if (!trimmed) return "";
+  const full = `${String(existingText || "").trim()} ${trimmed}`.trim();
+  if (getFrontCompletionFitIssue(full)) return "";
+  if (getFrontAnswerLeakReason(full, { existingText, backText: answer })) return "";
+  return trimmed;
+}
+
 function getFrontCompletionFitIssue(frontText) {
   const text = String(frontText || "").replace(/\s+/g, " ").trim();
   if (!text) return "";
@@ -5038,6 +4490,9 @@ function getFrontCompletionFitIssue(frontText) {
   if (/\bdown\s+to\s*\?$/i.test(text)) {
     return "";
   }
+  if (/\b(?:characteri[sz]ed|defined|determined|measured|represented|identified|distinguished|classified)\s+by\s*\?$/i.test(text)) {
+    return "";
+  }
   if (/\b(?:of|to|than|with|by|for|because|that|which|who|where|when|how)\s*[?.!]?$/i.test(text)) {
     return "Front ends with a dangling word";
   }
@@ -5074,11 +4529,6 @@ function getFrontDefinitionDriftIssue(frontText, { sourceText = "", existingText
   if (!definition?.aliases?.length) return "";
   const simpleFactAnswer = inferProtectedAnswerFromSimpleFactSource(sourceText, existingText);
   if (simpleFactAnswer && frontIncludesDefinedTermAlias(simpleFactAnswer, definition.aliases)) return "";
-  const sourcePattern = inferSourcePatternCompletion(sourceText, existingText);
-  if (sourcePattern?.frontSuffix) {
-    const expectedFront = `${String(existingText || "").trim()} ${sourcePattern.frontSuffix}`.replace(/\s+/g, " ").trim();
-    if (normalizeFrontLeakText(expectedFront) === normalizeFrontLeakText(frontText)) return "";
-  }
   if (frontIncludesDefinedTermAlias(frontText, definition.aliases)) return "";
   return "Front substitutes a related term instead of the source-defined term";
 }
@@ -5096,12 +4546,20 @@ function getFrontSuggestionBlockReason(suggestion, existingText, ctx = {}) {
   }) || getFrontDefinitionDriftIssue(fullDraft, {
     sourceText: getContextSourceText(ctx.page),
     existingText,
+  }) || COPILOT_CORE?.getAttributionQualifierIssue?.(fullDraft, {
+    sourceText: getContextSourceText(ctx.page),
+    existingText,
+    protectedAnswer,
   }) || getFrontSourceGroundingIssue(fullDraft, {
     sourceText: getContextSourceText(ctx.page),
     title: ctx.page?.title || "",
     notes: ctx.notes || "",
     existingText,
   });
+}
+
+function isHardFrontBlockReason(reason) {
+  return /^Front (?:drops the source attribution qualifier|omits the scope or date needed|omits the scope or date tied|uses the scope or date from)/.test(String(reason || ""));
 }
 
 function buildFrontGuardRetryPrompt(basePrompt, rejectedDraft, reason) {
@@ -5129,12 +4587,25 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
   state._lastFrontBlockReason = "";
   state._frontValidationCtx = ctx;
   try {
-    const suggestion = await callFrontLLM(prompt, sys, controller, state, existingText);
+    const providerSuggestion = await callFrontLLM(prompt, sys, controller, state, existingText);
     if (controller?.signal?.aborted) return "";
-    const blockReason = getFrontSuggestionBlockReason(suggestion, existingText, ctx);
-    if (!suggestion || !blockReason) return suggestion;
+    const protectedAnswer = String(ctx.protectedAnswer || ctx.other || "").trim();
+    const suggestion = trimAnswerBearingFrontTail(
+      providerSuggestion,
+      existingText,
+      protectedAnswer
+    ) || providerSuggestion;
+    const normalizationReason = suggestion
+      ? ""
+      : getFrontNormalizationRetryReason(existingText, state._lastFrontRawOutput);
+    const blockReason = suggestion
+      ? getFrontSuggestionBlockReason(suggestion, existingText, ctx)
+      : normalizationReason;
+    if (!blockReason) return suggestion;
 
-    const fullDraft = (existingText + ` ${suggestion}`).trim();
+    const fullDraft = suggestion
+      ? (existingText + ` ${suggestion}`).trim()
+      : String(state._lastFrontRawOutput || "").trim();
     console.debug("[Copilot] Rewriting blocked Front suggestion:", blockReason, fullDraft);
     state._lastFrontBlockReason = blockReason;
     clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
@@ -5151,10 +4622,17 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
 
     copilot._skipRateLimit = true;
     const retryPrompt = buildFrontGuardRetryPrompt(prompt, fullDraft, blockReason);
-    const retry = await callFrontLLM(retryPrompt, sys, controller, state, existingText);
+    const providerRetry = await callFrontLLM(retryPrompt, sys, controller, state, existingText);
     if (controller?.signal?.aborted) return "";
+    const retry = trimAnswerBearingFrontTail(
+      providerRetry,
+      existingText,
+      protectedAnswer
+    ) || providerRetry;
 
-    const retryReason = getFrontSuggestionBlockReason(retry, existingText, ctx);
+    const retryReason = retry
+      ? getFrontSuggestionBlockReason(retry, existingText, ctx)
+      : getFrontNormalizationRetryReason(existingText, state._lastFrontRawOutput);
     if (retry && !retryReason) {
       state._lastFrontBlockReason = "";
       return retry;
@@ -5166,11 +4644,14 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
     }
     state._lastFrontLeakBlocked = true;
     clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
-    rememberRejectedCopilotDraft(state, {
-      suggestion: retry || suggestion,
-      preview: retry ? (existingText + ` ${retry}`).trim() : fullDraft,
-      reason: retryReason || blockReason,
-    });
+    const finalReason = retryReason || blockReason;
+    if ((retry || suggestion) && !isHardFrontBlockReason(finalReason)) {
+      rememberRejectedCopilotDraft(state, {
+        suggestion: retry || suggestion,
+        preview: retry ? (existingText + ` ${retry}`).trim() : fullDraft,
+        reason: finalReason,
+      });
+    }
     return "";
   } finally {
     if (state._frontValidationCtx === ctx) {
@@ -5233,6 +4714,7 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
       onStart: () => { copilot._skipRateLimit = true; },
       onDelta: (chunk) => {
         acc += chunk;
+        state._lastFrontRawOutput = acc;
         const live = getDisplayableFrontSuggestion(
           state,
           normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords }),
@@ -5240,7 +4722,9 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
         );
         anyVisible = anyVisible || !!live;
         updateSuggestionUI(state, live);
-        if (live.split(/\s+/).filter(Boolean).length >= capWords && !local.signal.aborted) {
+        const reachedCap = (COPILOT_CORE?.wordCount?.(existingText) || getTypedWordCount(existingText))
+          + (COPILOT_CORE?.wordCount?.(live) || getTypedWordCount(live)) >= capWords;
+        if (reachedCap && !local.signal.aborted) {
           abortCopilotController(local, COPILOT_ABORT_EARLY_STOP);
         }
       },
@@ -5266,13 +4750,13 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
   updateSuggestionUI(state, liveNow);
   if (liveNow) return liveNow;
 
-  if (!anyVisible) {
-    return geminiFrontNonStream(prompt, sys, local, existingText, capWords);
+  if (!anyVisible && !acc.trim()) {
+    return geminiFrontNonStream(prompt, sys, local, state, existingText, capWords);
   }
   return "";
 }
 
-async function geminiFrontNonStream(prompt, sys, local, existingText, capWords) {
+async function geminiFrontNonStream(prompt, sys, local, state, existingText, capWords) {
   const raw = await geminiCompletion(prompt, {
     maxTokens: getCopilotMaxTokens("front"),
     temperature: 0.1,
@@ -5280,6 +4764,7 @@ async function geminiFrontNonStream(prompt, sys, local, existingText, capWords) 
     system: sys,
     signal: local.signal,
   }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
+  state._lastFrontRawOutput = raw || "";
   let single = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
   if (!single) {
     showLiteFallbackToast("Used lite fallback");
@@ -5291,12 +4776,13 @@ async function geminiFrontNonStream(prompt, sys, local, existingText, capWords) 
       system: sys,
       signal: local.signal,
     }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
+    state._lastFrontRawOutput = rawLite || "";
     single = normalizeCopilotSuggestion(rawLite || "", existingText, { role: "front", maxWords: capWords });
   }
   return normalizeFrontSuggestionForPrefix(existingText, single);
 }
 
-async function openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal) {
+async function openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal, forceFreeTier = false) {
   let suggestion = "";
   let partial = "";
   let abortedByEarlyStop = false;
@@ -5315,9 +4801,11 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
       stop: undefined,
       signal: local.signal,
       system: sys,
+      forceFreeTier,
       onStart: () => { copilot._skipRateLimit = true; },
       onDelta: (chunk) => {
         partial += chunk;
+        state._lastFrontRawOutput = partial;
         const live = getDisplayableFrontSuggestion(
           state,
           normalizeCopilotSuggestion(partial, existingText, { role: "front", maxWords: capWords }),
@@ -5325,7 +4813,8 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
         );
         suggestion = live;
         updateSuggestionUI(state, live);
-        const reachedCap = live.split(/\s+/).filter(Boolean).length >= capWords;
+        const reachedCap = (COPILOT_CORE?.wordCount?.(existingText) || getTypedWordCount(existingText))
+          + (COPILOT_CORE?.wordCount?.(live) || getTypedWordCount(live)) >= capWords;
         if ((reachedCap || Date.now() > deadline) && !local.signal.aborted) {
           abortedByEarlyStop = true;
           abortCopilotController(local, COPILOT_ABORT_EARLY_STOP);
@@ -5338,15 +4827,17 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
     clearTimeout(hardTimer);
   }
   if (parentSignal?.aborted && !abortedByEarlyStop) return "";
-  if (!suggestion && !abortedByEarlyStop && !parentSignal?.aborted) {
+  if (!suggestion && !partial.trim() && !abortedByEarlyStop && !parentSignal?.aborted) {
     const raw = await ultimateCompletion(prompt, {
       maxTokens: getCopilotMaxTokens("front"),
       temperature: 0.1,
       stop: undefined,
       signal: local.signal,
       system: sys,
+      forceFreeTier,
     }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
     if (parentSignal?.aborted) return "";
+    state._lastFrontRawOutput = raw || "";
     suggestion = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
   }
   return normalizeFrontSuggestionForPrefix(existingText, suggestion);
@@ -5354,12 +4845,35 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
 
 async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
   const opts = await getOptions();
-  const provider = inferProviderFromOptions(opts);
+  const route = resolveModelBackend(opts);
+  let provider = route.backend;
+  let forceFreeTier = provider === "free-tier";
   const capWords = copilot.frontWordCap;
   const parentSignal = ctrl?.signal;
   const { local, cleanup } = makeLinkedAbort(parentSignal);
+  state._lastFrontRawOutput = "";
 
   try {
+    if (provider === "native") {
+      const nativeAttempt = await runNativeBackendWithFallback(route, "front", {
+        prompt,
+        systemPrompt: sys,
+        signal: local.signal,
+      });
+      if (nativeAttempt.usedNative) {
+        const raw = nativeAttempt.value;
+        state._lastFrontRawOutput = raw || "";
+        return normalizeFrontSuggestionForPrefix(
+          existingText,
+          normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords })
+        );
+      }
+      if (nativeAttempt.forceFreeTier) {
+        provider = "free-tier";
+        forceFreeTier = true;
+      }
+    }
+    if (provider === "missing") throw createMissingProviderError(route.selectedProvider);
     console.debug("[Copilot] provider:", provider, "mode:front", "stream:", opts.geminiStreamFront === true);
     if (provider === "gemini" && opts.geminiStreamFront === true) {
       const result = await geminiFrontStream(prompt, sys, local, state, existingText, capWords);
@@ -5367,13 +4881,83 @@ async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
     }
     if (provider === "gemini") {
       if (parentSignal?.aborted) return "";
-      return await geminiFrontNonStream(prompt, sys, local, existingText, capWords);
+      return await geminiFrontNonStream(prompt, sys, local, state, existingText, capWords);
     }
     if (provider === "claude") {
       if (parentSignal?.aborted) return "";
-      return await claudeFrontCall(prompt, sys, local, existingText, capWords);
+      return await claudeFrontCall(prompt, sys, local, state, existingText, capWords);
     }
-    return await openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal);
+    return await openAIFrontStream(prompt, sys, local, state, existingText, capWords, parentSignal, forceFreeTier);
+  } finally {
+    cleanup();
+  }
+}
+
+async function callClozeLLM(prompt, sys, ctrl, existingText) {
+  const opts = await getOptions();
+  const route = resolveModelBackend(opts);
+  let provider = route.backend;
+  let forceFreeTier = provider === "free-tier";
+  const parentSignal = ctrl?.signal;
+  const { local, cleanup } = makeLinkedAbort(parentSignal);
+  try {
+    if (provider === "missing") throw createMissingProviderError(route.selectedProvider);
+    const request = {
+      maxTokens: Math.max(90, getCopilotMaxTokens("front")),
+      temperature: 0.1,
+      stop: undefined,
+      system: sys,
+      signal: local.signal,
+    };
+    const requestRaw = async (requestPrompt) => {
+      let raw = "";
+      if (provider === "native") {
+        const nativeAttempt = await runNativeBackendWithFallback(route, "cloze", {
+          prompt: requestPrompt,
+          systemPrompt: sys,
+          signal: local.signal,
+        });
+        if (nativeAttempt.usedNative) raw = nativeAttempt.value;
+        if (nativeAttempt.forceFreeTier) {
+          provider = "free-tier";
+          forceFreeTier = true;
+        }
+      }
+      if (provider === "gemini") raw = await geminiCompletion(requestPrompt, request);
+      else if (provider === "claude") raw = await claudeCompletion(requestPrompt, request);
+      else if (provider !== "native") {
+        raw = await ultimateCompletion(requestPrompt, { ...request, forceFreeTier });
+      }
+      return raw || "";
+    };
+
+    const existingDeletions = COPILOT_CORE?.parseClozeDeletions?.(existingText) || [];
+    const maxDeletions = existingDeletions.length + 1;
+    const validationOptions = {
+      maxWords: copilot.frontWordCap,
+      maxDeletions,
+    };
+    const raw = await requestRaw(prompt);
+    if (parentSignal?.aborted || local.signal.aborted) return "";
+    let validation = getClozeSuggestionValidation(raw, existingText, validationOptions);
+    if (validation.suffix || validation.reason === "empty") return validation.suffix || "";
+
+    const retryPrompt = COPILOT_CORE?.buildClozeGuardRetryPrompt?.(
+      prompt,
+      raw,
+      validation,
+      { maxFrontWords: copilot.frontWordCap, maxDeletions }
+    );
+    if (!retryPrompt) return "";
+    console.debug("[Copilot] Rewriting invalid Cloze completion:", validation.reason);
+    copilot._skipRateLimit = true;
+    const retryRaw = await requestRaw(retryPrompt);
+    if (parentSignal?.aborted || local.signal.aborted) return "";
+    validation = getClozeSuggestionValidation(retryRaw, existingText, validationOptions);
+    return validation.suffix || "";
+  } catch (err) {
+    if (err?.name === "AbortError") return "";
+    throw err;
   } finally {
     cleanup();
   }
@@ -5409,13 +4993,14 @@ async function geminiBackCall(prompt, sys, signal, existingText, capWords) {
   return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
 }
 
-async function openAIBackCall(prompt, sys, signal, existingText, capWords) {
+async function openAIBackCall(prompt, sys, signal, existingText, capWords, forceFreeTier = false) {
   const raw = await ultimateCompletion(prompt, {
     maxTokens: getCopilotMaxTokens("back"),
     temperature: 0.1,
     stop: undefined,
     system: sys,
     signal,
+    forceFreeTier,
   }).catch((err) => {
     if (err?.name === "AbortError") return "";
     throw err;
@@ -5424,12 +5009,13 @@ async function openAIBackCall(prompt, sys, signal, existingText, capWords) {
   return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
 }
 
-async function claudeFrontCall(prompt, sys, local, existingText, capWords) {
+async function claudeFrontCall(prompt, sys, local, state, existingText, capWords) {
   const raw = await claudeCompletion(prompt, {
     maxTokens: getCopilotMaxTokens("front"),
     system: sys,
     signal: local.signal,
   }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
+  state._lastFrontRawOutput = raw || "";
   return normalizeFrontSuggestionForPrefix(
     existingText,
     normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords })
@@ -5451,8 +5037,26 @@ async function claudeBackCall(prompt, sys, signal, existingText, capWords) {
 
 async function callBackLLM(prompt, sys, ctrl, existingText) {
   const opts = await getOptions();
-  const provider = inferProviderFromOptions(opts);
+  const route = resolveModelBackend(opts);
+  let provider = route.backend;
+  let forceFreeTier = provider === "free-tier";
   const capWords = copilot.backWordCap;
+  if (provider === "native") {
+    const nativeAttempt = await runNativeBackendWithFallback(route, "back", {
+      prompt,
+      systemPrompt: sys,
+      signal: ctrl.signal,
+    });
+    if (nativeAttempt.usedNative) {
+      const raw = nativeAttempt.value;
+      return normalizeCopilotSuggestion(raw || "", existingText, { role: "back", maxWords: capWords });
+    }
+    if (nativeAttempt.forceFreeTier) {
+      provider = "free-tier";
+      forceFreeTier = true;
+    }
+  }
+  if (provider === "missing") throw createMissingProviderError(route.selectedProvider);
   console.debug("[Copilot] provider:", provider, "mode:back");
   if (provider === "gemini") {
     return geminiBackCall(prompt, sys, ctrl.signal, existingText, capWords);
@@ -5460,7 +5064,7 @@ async function callBackLLM(prompt, sys, ctrl, existingText) {
   if (provider === "claude") {
     return claudeBackCall(prompt, sys, ctrl.signal, existingText, capWords);
   }
-  return openAIBackCall(prompt, sys, ctrl.signal, existingText, capWords);
+  return openAIBackCall(prompt, sys, ctrl.signal, existingText, capWords, forceFreeTier);
 }
 
 // Cloze mode is active when the selected note type is a cloze model, or the Front
@@ -5479,7 +5083,12 @@ function isClozeCopilotActive(frontText) {
 // the first/most-salient one. General lexical targeting — no per-topic rules. Returns the
 // whole source unchanged for short/single-sentence sources or when there is no lexical
 // signal, so single-fact highlights are unaffected.
-function selectRelevantSource(sourceText, prefix, other, { before = 0, after = 0 } = {}) {
+function selectRelevantSource(
+  sourceText,
+  prefix,
+  other,
+  { before = 0, after = 0, expandOnlyIfTailMissing = false } = {}
+) {
   const src = String(sourceText || "").trim();
   if (!src) return src;
   const sentences = (src.match(/[^.!?]+[.!?]*/g) || [src]).map((s) => s.trim()).filter(Boolean);
@@ -5487,20 +5096,40 @@ function selectRelevantSource(sourceText, prefix, other, { before = 0, after = 0
   const STOP = new Set(
     "the a an of to in on at by for and or nor but is are was were be been being am it its this that these those with as from into onto over under which who whom whose what where when why how do does did can could would should will shall may might must not no than then so such very more most also only".split(/\s+/)
   );
-  const stems = (t) =>
+  const wordAliases = (word) => {
+    const aliases = [word];
+    if (word.length > 4 && word.endsWith("ies")) aliases.push(`${word.slice(0, -3)}y`);
+    else if (word.length > 5 && word.endsWith("ing")) {
+      const base = word.slice(0, -3);
+      aliases.push(base, `${base}e`);
+      if (/(.)\1$/u.test(base)) aliases.push(base.slice(0, -1));
+    } else if (word.length > 4 && word.endsWith("ed")) {
+      const base = word.slice(0, -2);
+      aliases.push(base, `${base}e`);
+      if (/(.)\1$/u.test(base)) aliases.push(base.slice(0, -1));
+    } else if (word.length > 3 && word.endsWith("s")) {
+      aliases.push(word.slice(0, -1));
+    }
+    return [...new Set(aliases.filter((term) => term.length >= 3))];
+  };
+  const stemGroups = (t) =>
     (String(t || "").toLowerCase().match(/[a-z0-9]+/g) || [])
-      .filter((w) => w.length >= 3 && !STOP.has(w))
-      .map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w));
-  const prefixStems = stems(prefix);
-  const last = prefixStems.length ? prefixStems[prefixStems.length - 1] : null;
+      .filter((word) => word.length >= 3 && !STOP.has(word))
+      .map(wordAliases);
+  const prefixGroups = stemGroups(prefix);
+  const prefixStems = prefixGroups.flat();
+  const lastTerms = prefixGroups.length ? prefixGroups[prefixGroups.length - 1] : [];
   const weights = new Map();
-  for (const s of [...prefixStems, ...stems(other)]) weights.set(s, Math.max(weights.get(s) || 0, 1));
-  if (last) weights.set(last, 3); // the most recently typed word is the strongest intent signal
+  for (const term of [...prefixStems, ...stemGroups(other).flat()]) {
+    weights.set(term, Math.max(weights.get(term) || 0, 1));
+  }
+  for (const term of lastTerms) weights.set(term, 3); // the most recently typed word is strongest
   if (!weights.size) return src;
   let bestIdx = -1;
   let bestScore = 0;
+  let bestCount = 0;
   sentences.forEach((sentence, i) => {
-    const terms = new Set(stems(sentence));
+    const terms = new Set(stemGroups(sentence).flat());
     let score = 0;
     weights.forEach((w, term) => {
       if (terms.has(term)) score += w;
@@ -5508,15 +5137,25 @@ function selectRelevantSource(sourceText, prefix, other, { before = 0, after = 0
     if (score > bestScore) {
       bestScore = score;
       bestIdx = i;
+      bestCount = 1;
+    } else if (score > 0 && score === bestScore) {
+      bestCount += 1;
     }
   });
-  if (bestScore <= 0 || bestIdx < 0) return src; // no signal -> don't narrow (avoid mis-targeting)
+  // A tie is weak evidence, not permission to pick whichever fact appeared first.
+  // Keep the full Source so the prompt can use the exact relation in the typed prefix.
+  if (bestScore <= 0 || bestIdx < 0 || bestCount !== 1) return src;
   if (!before && !after) return sentences[bestIdx];
+  let effectiveAfter = after;
+  if (expandOnlyIfTailMissing && effectiveAfter > 0 && lastTerms.length) {
+    const bestTerms = new Set(stemGroups(sentences[bestIdx]).flat());
+    if (lastTerms.some((term) => bestTerms.has(term))) effectiveAfter = 0;
+  }
   // Widen to a small window (used for the Back) so an answer that sits one clause away — e.g.
   // "...produced one, called Script X" following "...create a multimedia programming language" — is
   // available. The Front stays single-sentence to keep the cue focused and leak-free.
   const start = Math.max(0, bestIdx - before);
-  const end = Math.min(sentences.length, bestIdx + after + 1);
+  const end = Math.min(sentences.length, bestIdx + effectiveAfter + 1);
   return sentences.slice(start, end).join(" ");
 }
 
@@ -5528,7 +5167,11 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
     pageSourceText,
     existing,
     ctx.other,
-    fieldId === "back" ? { before: 1, after: 1 } : undefined
+    fieldId === "back"
+      ? { before: 1, after: 1 }
+      : ctx.cloze
+      ? { after: 1, expandOnlyIfTailMissing: true }
+      : undefined
   );
   const focusedPage =
     focusedSource && focusedSource !== pageSourceText
@@ -5560,7 +5203,7 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   // clip noisy long excerpts so we don't flood the model
   const clip = (s, n = 240) => (s || "").replace(/\s+/g, " ").trim().slice(0, n);
   const hasExisting = !!(existing && existing.trim());
-  const sourceCap = fieldId === "back" ? 320 : 220;
+  const sourceCap = fieldId === "back" ? 360 : 600;
 
   const lines = [
     `Complete ${role}. Output text only.`,
@@ -5631,8 +5274,8 @@ function maybeRequestBackDraft(frontForBack) {
 
 function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = false } = {}) {
   const backState = copilot.fields.get("back");
-  if (!backState?.textarea) return;
-  if ((backState.textarea.value || "").trim()) return;
+  if (!backState?.textarea) return false;
+  if ((backState.textarea.value || "").trim()) return false;
 
   const sourceText = getCopilotSourceTextForLimit(copilot?.pageCtx || null);
   let suggestion = preserveSourceLatexForBackSuggestion(
@@ -5642,14 +5285,15 @@ function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = fal
   // force = the user slid the blank there deliberately; the fit guard must not veto their pick,
   // and the front/back previews must never desync.
   if (!suggestion && force) suggestion = String(backText || "").trim();
-  if (!suggestion) return;
-  if (!force && getBackAnswerFitIssue(frontText, suggestion)) return;
+  if (!suggestion) return false;
+  if (!force && getBackAnswerFitIssue(frontText, suggestion)) return false;
 
   abortCopilotController(backState.controller);
   backState.controller = null;
   if (backState.timer) { clearTimeout(backState.timer); backState.timer = null; }
   resetRejectedCopilotDraft(backState);
   backState.suggestion = suggestion;
+  backState._sourceSplitOwnedByFront = true;
   if (backState.suggestionEl) {
     backState.suggestionEl.hidden = false;
     backState.suggestionEl.classList.remove("loading", "error");
@@ -5666,6 +5310,7 @@ function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = fal
     backState.workingEl.textContent = "";
   }
   updateShortcutCoach("back");
+  return true;
 }
 
 async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
@@ -5803,13 +5448,14 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       sourceText: sourceTextForLimit,
       existingText: existingBack,
     });
-    const fitIssue = getBackAnswerFitIssue(frontForStrip, suggestion);
+    const fitIssue = getBackAnswerFitIssue(frontForStrip, suggestion)
+      || getBackSourceAlignmentIssue(frontForStrip, suggestion, sourceTextForLimit);
     if (fitIssue) {
       clearSuggestionUI(backState, { mirrorValue: existingBack });
       backState.suggestion = "";
       rememberRejectedCopilotDraft(backState, { suggestion, reason: fitIssue });
       showRejectedCopilotDraft(backState);
-      setCopilotStatus(`AI returned a grammatically incomplete Back answer (${fitIssue}). Review the rejected draft or regenerate.`, true);
+      setCopilotStatus(`AI returned an unusable Back answer (${fitIssue}). Review the rejected draft or regenerate.`, true);
       return;
     }
 
@@ -5882,13 +5528,21 @@ function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
   if (!suggestion) return false;
   const area = state.textarea;
   if (!area) return false;
+  const usingSourceSplit = !!state._sourceSplitActive && !usingRejected;
+  const usingOwnedSourceBack = state.fieldId === "back" && !!state._sourceSplitOwnedByFront && !usingRejected;
+  const sourceSplitOwnsBack = usingSourceSplit && !!state._sourceSplitOwnsBack;
   hideCopilotFactPicker(); // committing a suggestion supersedes any open fact picker
-  const before = area.value.slice(0, area.selectionStart ?? area.value.length);
-  const after = area.value.slice(area.selectionEnd ?? area.value.length);
+  let before = area.value.slice(0, area.selectionStart ?? area.value.length);
+  let after = area.value.slice(area.selectionEnd ?? area.value.length);
+  if (usingSourceSplit && state._sourceSplitCorrection && state._stemSplitExisting) {
+    if (area.value !== state._sourceSplitOriginalText) return false;
+    before = state._stemSplitExisting;
+    after = "";
+  }
   if (state.fieldId === "front") {
     suggestion = normalizeFrontSuggestionForPrefix(before, suggestion);
   }
-  const needsSpace = before && !/[\s\n]$/.test(before) && suggestion && !suggestion.startsWith(" ");
+  const needsSpace = completionNeedsLeadingSpace(before, suggestion);
   const insertion = `${needsSpace ? " " : ""}${suggestion}`;
   area.value = `${before}${insertion}${after}`;
   const cursor = before.length + insertion.length;
@@ -5919,7 +5573,7 @@ function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
   if (state.mirrorEl) state.mirrorEl.textContent = area.value;
   if (state.fieldId === "front") {
     copilot.locks.frontAccepted = true;
-    if (copilot.autoFillBack) {
+    if (copilot.autoFillBack || sourceSplitOwnsBack) {
       const backState = copilot.fields.get("back");
       if (backState?.suggestion) {
         applyCopilotSuggestion(backState);
@@ -5933,7 +5587,8 @@ function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
   copilot.acceptedCount = (copilot.acceptedCount || 0) + 1;
   recordShortcutCoachEvent("suggestionAccepted").catch(() => {});
   updateLocalMetrics((metrics) => {
-    bumpMetric(metrics, "ai_suggestions_accepted");
+    if (usingSourceSplit) bumpMetric(metrics, "source_split_accepted");
+    else if (!usingOwnedSourceBack) bumpMetric(metrics, "ai_suggestions_accepted");
     return metrics;
   });
   updateShortcutCoach(state.fieldId);
@@ -5968,8 +5623,9 @@ async function extractCandidateFacts(sourceText, { signal } = {}) {
     "List the candidate ANSWERS a flashcard could test from the Source. Each item is the single value, name, " +
     "date, number, or term ITSELF — the bare answer, as short as possible — NOT a clause or a description of it. " +
     "Extract \"1991\", not \"founded in 1991\"; \"$40 million\", not \"$40 million in funding\"; \"1995\", not " +
-    "\"closed in 1995\"; \"Apple and IBM\", not \"funded by Apple and IBM\". Output only JSON: {\"facts\":[\"...\"]}. " +
-    "At most 8, deduplicated, each the bare answer (usually 1-4 words), grounded in the Source's wording. If the " +
+    "\"closed in 1995\". Copy every answer as one exact, contiguous phrase from the Source; do not shorten or " +
+    "paraphrase names. Output only JSON: {\"facts\":[\"...\"]}. At most 8, deduplicated, each the bare answer " +
+    "(usually 1-4 words). If the " +
     "Source has only one fact, return just that one.";
   try {
     const parsed = await ultimateChatJSON(
@@ -5977,15 +5633,12 @@ async function extractCandidateFacts(sourceText, { signal } = {}) {
       { system, temperature: 0, maxTokens: 300, signal }
     );
     const raw = Array.isArray(parsed?.facts) ? parsed.facts : (Array.isArray(parsed) ? parsed : []);
-    const seen = new Set();
-    const facts = [];
-    for (const f of raw) {
-      const clean = String(f || "").replace(/\s+/g, " ").trim().replace(/^[-•*\d.)\s]+/, "");
-      const key = clean.toLowerCase();
-      if (clean && clean.length <= 80 && !seen.has(key)) { seen.add(key); facts.push(clean); }
-      if (facts.length >= 8) break;
-    }
-    return facts;
+    // Treat model extraction as untrusted: only exact normalized phrases from a
+    // single source sentence can become selectable, authoritative Backs.
+    return COPILOT_CORE?.filterSourceGroundedFacts?.(src, raw, {
+      maxFacts: 8,
+      maxLength: 80,
+    }) || [];
   } catch {
     return [];
   }
@@ -6011,18 +5664,26 @@ async function getCandidateFacts(sourceText, opts) {
   return pending;
 }
 
+function normalizeFactPickerPrefix(value) {
+  const prefix = String(value || "").replace(/\s+/g, " ").trim();
+  if (/^(?:let|suppose|given|consider|assume)[\s,:;.!-]*$/i.test(prefix)) return "";
+  return prefix;
+}
+
 // Given a picked answer, ask the model for a complete card grounded in the source. Honors the user's
 // started Front when compatible. Returns {type:'basic',front,back} or {type:'cloze',text}, or null.
 async function generateCardFromFact(fact, { prefix = "", sourceText = "", cloze = false, signal } = {}) {
   const answer = String(fact || "").trim();
   const src = String(sourceText || "").trim();
+  const usablePrefix = normalizeFactPickerPrefix(prefix);
   if (!answer) return null;
   if (cloze) {
-    const system =
+    const system = appendStrictMathRule(
       "Write one Anki cloze card that tests the given Answer, grounded in the Source. Output only JSON: " +
       "{\"text\":\"...\"}. The text is a single source-grounded sentence containing the Answer wrapped as one " +
       "deletion {{c1::answer}}, keeping the rest of the sentence as context. Use the Source's wording. " +
-      "Never wrap the whole sentence; exactly one deletion.";
+      "Never wrap the whole sentence; exactly one deletion."
+    );
     const parsed = await ultimateChatJSON(
       `Answer to test: ${answer}\nSource:\n${src.slice(0, 1200)}\n\nOutput:`,
       { system, temperature: 0.1, maxTokens: 180, signal }
@@ -6030,18 +5691,88 @@ async function generateCardFromFact(fact, { prefix = "", sourceText = "", cloze 
     const text = String(parsed?.text || "").trim();
     return /\{\{c\d+::[^}]+\}\}/.test(text) ? { type: "cloze", text } : null;
   }
-  const system =
+  const system = appendStrictMathRule(
     "Write one atomic Anki card whose Back is exactly the given Answer, grounded in the Source. Output only " +
     "JSON: {\"front\":\"...\",\"back\":\"...\"}. The Front is a clear, univocal question whose single answer is " +
     "the Answer, with the Answer NOT appearing in the Front. If the user's started Front is compatible with this " +
-    "Answer, honor its wording; otherwise write the clearest question. Keep the Back to the Answer itself.";
+    "Answer, honor its wording; otherwise write the clearest question. Use only relationships and notation stated " +
+    "in the Source, preserving its symbols and disambiguating setup. Keep the Back to the Answer itself."
+  );
   const parsed = await ultimateChatJSON(
-    `Answer for the Back: ${answer}\n${prefix ? `User's started Front: ${prefix}\n` : ""}Source:\n${src.slice(0, 1200)}\n\nOutput:`,
+    `Answer for the Back: ${answer}\n${usablePrefix ? `User's started Front: ${usablePrefix}\n` : ""}Source:\n${src.slice(0, 1200)}\n\nOutput:`,
     { system, temperature: 0.1, maxTokens: 180, signal }
   );
   const front = String(parsed?.front || "").trim();
-  const back = String(parsed?.back || answer).trim();
-  return front ? { type: "basic", front, back } : null;
+  // The selected fact is the authoritative Back; do not let the second model
+  // call paraphrase or embellish it.
+  return front ? { type: "basic", front, back: answer } : null;
+}
+
+function validateCopilotProposedCard(card, {
+  answer = "",
+  sourceText = "",
+  cloze = false,
+  returnDetails = false,
+} = {}) {
+  const invalid = (reason) => returnDetails ? { card: null, reason } : null;
+  const valid = (normalizedCard) => returnDetails
+    ? { card: normalizedCard, reason: "" }
+    : normalizedCard;
+  const expectedType = cloze ? "cloze" : "basic";
+  if (!card) return invalid("No card draft was returned");
+  if (card.type !== expectedType) return invalid("The draft used the wrong card type");
+  if (expectedType === "cloze") {
+    const text = normalizeClozeSuggestion(card.text, "", { maxWords: copilot.frontWordCap });
+    const deletions = COPILOT_CORE?.parseClozeDeletions?.(text) || [];
+    if (!text) return invalid("The cloze draft was malformed or too long");
+    if (deletions.length !== 1) return invalid("The cloze draft must contain exactly one deletion");
+    const deletedAnswer = String(deletions[0].content || "").split("::")[0].trim();
+    const deletionMatchesAnswer = COPILOT_CORE?.areGroundingFactsEquivalent
+      ? COPILOT_CORE.areGroundingFactsEquivalent(deletedAnswer, answer)
+      : (
+          COPILOT_CORE?.containsTokenPhrase?.(deletedAnswer, answer)
+          && COPILOT_CORE?.containsTokenPhrase?.(answer, deletedAnswer)
+        );
+    if (answer && !deletionMatchesAnswer) {
+      return invalid("The cloze deletion did not match the selected answer");
+    }
+    const groundingIssue = COPILOT_CORE?.getCardSourceGroundingIssue?.(text, {
+      sourceText,
+      answer,
+      cloze: true,
+    });
+    if (!COPILOT_CORE?.getCardSourceGroundingIssue) {
+      return invalid("Source grounding is unavailable");
+    }
+    if (groundingIssue) return invalid(groundingIssue);
+    return valid({ type: "cloze", text });
+  }
+
+  const front = String(card.front || "").replace(/\s+/g, " ").trim();
+  const back = String(answer || card.back || "").replace(/\s+/g, " ").trim();
+  if (!front || !back) return invalid("The draft was missing a Front or Back");
+  if ((COPILOT_CORE?.wordCount?.(front) || getTypedWordCount(front)) > copilot.frontWordCap) {
+    return invalid("The drafted Front was too long");
+  }
+  const blockReason = getFrontSuggestionBlockReason(front, "", {
+    protectedAnswer: back,
+    other: back,
+    notes: "",
+    page: { selection: sourceText },
+  });
+  const groundingIssue = COPILOT_CORE?.getCardSourceGroundingIssue?.(front, {
+    sourceText,
+    answer: back,
+    cloze: false,
+  });
+  if (!COPILOT_CORE?.getCardSourceGroundingIssue) {
+    return invalid("Source grounding is unavailable");
+  }
+  if (groundingIssue) return invalid(groundingIssue);
+  if (blockReason) return invalid(blockReason);
+  const answerFitIssue = getBackAnswerFitIssue(front, back);
+  if (answerFitIssue) return invalid(answerFitIssue);
+  return valid({ type: "basic", front, back });
 }
 
 let _copilotFactPickerGen = 0; // bumped on every hide so in-flight generations can detect dismissal
@@ -6073,6 +5804,20 @@ function cfpHeader(titleText, { showBack = true } = {}) {
     head.appendChild(back);
   }
   return head;
+}
+
+function renderCopilotFactPickerError(body, message) {
+  if (!body) return null;
+  let note = body.querySelector(".cfp-error");
+  if (!note) {
+    note = document.createElement("div");
+    note.className = "small cfp-error";
+    note.role = "status";
+    body.appendChild(note);
+  }
+  note.hidden = false;
+  note.textContent = message;
+  return note;
 }
 
 // Offer the picker for a Front failure over a multi-fact source. Returns true if it took over the UI
@@ -6128,24 +5873,41 @@ async function onCopilotFactPicked(state, fact, ctx) {
   const body = getFactPickerBody();
   if (!body) return;
   const gen = _copilotFactPickerGen;
+  const previousError = body.querySelector(".cfp-error");
+  if (previousError) {
+    previousError.hidden = true;
+    previousError.textContent = "";
+  }
   body.querySelectorAll(".cfp-chip").forEach((c) => {
     c.disabled = true;
     if (c.textContent === fact) c.classList.add("cfp-chip-active");
   });
   let card = null;
+  let generationFailed = false;
   try {
     card = await generateCardFromFact(fact, {
       prefix: ctx.prefix, sourceText: ctx.sourceText, cloze: ctx.cloze,
     });
-  } catch {}
+  } catch {
+    generationFailed = true;
+  }
   if (gen !== _copilotFactPickerGen) return; // picker was dismissed/superseded while generating — drop it
+  const validation = validateCopilotProposedCard(card, {
+    answer: fact,
+    sourceText: ctx.sourceText,
+    cloze: ctx.cloze,
+    returnDetails: true,
+  });
+  card = validation.card;
   if (!card) {
     body.querySelectorAll(".cfp-chip").forEach((c) => { c.disabled = false; c.classList.remove("cfp-chip-active"); });
-    const note = document.createElement("div");
-    note.className = "small";
-    note.style.color = "var(--muted)";
-    note.textContent = "Couldn't build a card for that — try another fact.";
-    body.appendChild(note);
+    const groundingRejected = /source|ground|context|qualifier|relationship/i.test(validation.reason || "");
+    const message = generationFailed
+      ? "Couldn't draft a card for that answer. Try again or choose another answer."
+      : groundingRejected
+        ? "The draft wasn't sufficiently grounded in this source. Try again or choose another answer."
+        : "Couldn't build a safe card for that answer. Try again or choose another answer.";
+    renderCopilotFactPickerError(body, message);
     return;
   }
   showCopilotCardProposal(state, card, ctx);
@@ -6260,8 +6022,11 @@ function acceptBothSuggestions() {
   if (backState?.ghostEl)  backState.ghostEl.hidden  = true;
 }
 
-function rejectCopilotSuggestion(state) {
+function rejectCopilotSuggestion(state, { skipSourcePair = false } = {}) {
   if (!state) return;
+  const dismissedSourceSplit = !!state._sourceSplitActive && !!state.suggestion;
+  const rejectOwnedBack = !skipSourcePair && state.fieldId === "front" && !!state._sourceSplitOwnsBack;
+  const rejectOwningFront = !skipSourcePair && state.fieldId === "back" && !!state._sourceSplitOwnedByFront;
   abortCopilotController(state.controller);
   state.controller = null;
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
@@ -6279,6 +6044,14 @@ function rejectCopilotSuggestion(state) {
   if (state.ghostTextEl) state.ghostTextEl.textContent = "";
   if (state.mirrorEl)    state.mirrorEl.textContent = state.textarea?.value || "";
   if (state.workingEl)   state.workingEl.hidden = true;
+  if (dismissedSourceSplit) {
+    updateLocalMetrics((metrics) => {
+      bumpMetric(metrics, "source_split_dismissed");
+      return metrics;
+    });
+  }
+  if (rejectOwnedBack) rejectCopilotSuggestion(copilot.fields.get("back"), { skipSourcePair: true });
+  if (rejectOwningFront) rejectCopilotSuggestion(copilot.fields.get("front"), { skipSourcePair: true });
   updateShortcutCoach(state.fieldId);
 }
 
@@ -6317,7 +6090,7 @@ function scheduleCopilot(state, { delay = 600, force = false } = {}) {
   }, ms);
 }
 
-async function requestCopilot(state, { force = false, withOther = false } = {}) {
+async function requestCopilot(state, { force = false, withOther = false, localOnly = false } = {}) {
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   if (copilot.manualOnly && !force) return;
   if (copilot.locks.allSuspended && !force) return;
@@ -6357,16 +6130,6 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   if (!force && trimmed === state.lastValue) return;
   state.lastValue = trimmed;
 
-  if (!copilot.apiConfigured) {
-    const providerName = getProviderDisplayName(copilot.provider);
-    setCopilotStatus(`Add your ${providerName} API key in Options to use Copilot.`, true);
-    if (state.suggestionEl) state.suggestionEl.hidden = true;
-    if (state.ghostEl) state.ghostEl.hidden = true;
-    if (state.ghostTextEl) state.ghostTextEl.textContent = "";
-    if (state.mirrorEl) state.mirrorEl.textContent = value;
-    return;
-  }
-
   if (state.controller) {
     abortCopilotController(state.controller);
   }
@@ -6397,6 +6160,10 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
   const otherState = state.fieldId === "front" ? copilot.fields.get("back") : copilot.fields.get("front");
   const other = state.fieldId === "back" ? frontVal : (otherState?.textarea?.value || "");
   const notes = document.querySelector("#notes")?.value || "";
+  const isFrontFromBack = state.fieldId === "front" && !trimmed && !!other.trim();
+  // Resolve Cloze before considering a Basic X.../Y source split. A Cloze note must never be
+  // intercepted by the deterministic Basic-card path.
+  const clozeMode = state.fieldId === "front" && !isFrontFromBack && isClozeCopilotActive(existingForCopilot);
   const mode = await getSourceMode();
   const cleanupBeforeLlm = () => {
     clearTimeout(abortTimer);
@@ -6436,26 +6203,31 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     if (state.controller === controller) state.controller = null;
     return;
   }
-  if (!ensureAiSourceInputWithinLimit(sourceTextForLimit, { notify: "copilot" })) {
-    clearSuggestionUI(state, { mirrorValue: value });
-    state.suggestion = "";
-    clearTimeout(abortTimer);
-    if (state.workingEl) state.workingEl.hidden = true;
-    if (state.controller === controller) state.controller = null;
-    return;
-  }
-
   const protectedAnswer = state.fieldId === "front"
     ? getProtectedBackAnswerForFront({ existingText: existingForCopilot, backText: other, page })
     : "";
+  const sourceSplitBackOccupied = state.fieldId === "front" && [
+    otherState?.textarea?.value,
+    otherState?.suggestion,
+    otherState?.rejectedSuggestion,
+  ].some((candidate) => String(candidate || "").trim());
   const sourceStemCompletion = state.fieldId === "front"
-    ? inferSourceStemCompletion(getContextSourceText(page), existingForCopilot)
+    ? inferSourceStemCompletion(sourceTextForLimit, existingForCopilot, {
+        allowTypoCorrection: true,
+        cardType: clozeMode ? "cloze" : "basic",
+        existingBack: otherState?.textarea?.value || "",
+        pendingBack: otherState?.suggestion || "",
+        rejectedBack: otherState?.rejectedSuggestion || "",
+      })
     : null;
   const stemEcho = sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back
-    && !buildStemSplitPlan(existingForCopilot, sourceStemCompletion)
-    && stemCompletionEchoesTyped(existingForCopilot, sourceStemCompletion);
+    && !buildStemSplitPlan(sourceStemCompletion.correctedPrefix || existingForCopilot, sourceStemCompletion)
+    && stemCompletionEchoesTyped(sourceStemCompletion.correctedPrefix || existingForCopilot, sourceStemCompletion);
   if (sourceStemCompletion?.frontSuffix && sourceStemCompletion?.back && !stemEcho) {
-    const newPlan = buildStemSplitPlan(existingForCopilot, sourceStemCompletion);
+    const splitPrefix = sourceStemCompletion.correctedPrefix || existingForCopilot;
+    // If a compatible Back already exists, offer only the matching Front. Moving
+    // the blank would change the implied answer and desynchronize that protected Back.
+    const newPlan = sourceSplitBackOccupied ? null : buildStemSplitPlan(splitPrefix, sourceStemCompletion);
     let frontSuffix = sourceStemCompletion.frontSuffix;
     let back = sourceStemCompletion.back;
     let keptUserSplit = false;
@@ -6481,19 +6253,45 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       }
     }
     state._stemSplit = newPlan;
-    state._stemSplitExisting = existingForCopilot;
-    renderStemCompletion(state, frontSuffix, back, { userDriven: keptUserSplit });
-    clearTimeout(abortTimer);
-    if (state.workingEl) state.workingEl.hidden = true;
-    if (state.controller === controller) state.controller = null;
-    return;
+    state._stemSplitExisting = splitPrefix;
+    state._sourceSplitCorrection = sourceStemCompletion.correction || null;
+    state._sourceSplitOriginalText = value;
+    const renderedSourceSplit = renderStemCompletion(state, frontSuffix, back, {
+      userDriven: keptUserSplit,
+      preserveBack: sourceSplitBackOccupied,
+    });
+    if (renderedSourceSplit) {
+      clearTimeout(abortTimer);
+      if (state.workingEl) state.workingEl.hidden = true;
+      if (state.controller === controller) state.controller = null;
+      return;
+    }
   } else if (state.fieldId === "front") {
     // Also lands here when the parser's lead only repeats the typed words with nothing left to
     // slide (stemEcho) — rendering that would duplicate the user's text, so let the LLM try.
     clearStemSplitUI(state); // stale split state must not survive into an LLM suggestion
   }
-  const isFrontFromBack = state.fieldId === "front" && !trimmed && !!other.trim();
-  const clozeMode = state.fieldId === "front" && !isFrontFromBack && isClozeCopilotActive(existingForCopilot);
+
+  if (localOnly) {
+    setCopilotStatus("Copilot is off; no exact source split was found.");
+    clearSuggestionUI(state, { mirrorValue: value });
+    cleanupBeforeLlm();
+    return;
+  }
+
+  if (!copilot.apiConfigured) {
+    setCopilotStatus("Connect a provider or enable Chrome on-device AI in Settings to use Copilot autocomplete.", true);
+    clearSuggestionUI(state, { mirrorValue: value });
+    cleanupBeforeLlm();
+    return;
+  }
+  if (!ensureAiSourceInputWithinLimit(sourceTextForLimit, { notify: "copilot" })) {
+    clearSuggestionUI(state, { mirrorValue: value });
+    state.suggestion = "";
+    cleanupBeforeLlm();
+    return;
+  }
+
   const prompt = buildCopilotCompletionPrompt(state.fieldId, existingForCopilot, {
     other,
     protectedAnswer,
@@ -6528,13 +6326,15 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
       return metrics;
     });
     let suggestion = state.fieldId === "front"
-      ? await callFrontLLMWithLocalGuard(prompt, sys, controller, state, existingForCopilot, {
+      ? (clozeMode
+        ? await callClozeLLM(prompt, sys, controller, existingForCopilot)
+        : await callFrontLLMWithLocalGuard(prompt, sys, controller, state, existingForCopilot, {
           other,
           protectedAnswer,
           notes,
           page,
           sourceMode: mode,
-        })
+        }))
       : await callBackLLM(prompt, sys, controller, trimmed);
     if (!isCurrentCopilotRequest(state, controller)) return;
     if (controller.signal.aborted) {
@@ -6561,7 +6361,8 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
           if (normalizedSuffix && normalizedSuffix !== normalizedDisplayedBack) {
             suggestion = normalizedSuffix;
           } else {
-            const fitIssue = getBackAnswerFitIssue(frontForAnswer, displayedBack);
+            const fitIssue = getBackAnswerFitIssue(frontForAnswer, displayedBack)
+              || getBackSourceAlignmentIssue(frontForAnswer, displayedBack, sourceTextForLimit);
             if (fitIssue) {
               state._lastBackFitIssue = fitIssue;
               rememberRejectedCopilotDraft(state, { suggestion: displayedBack, reason: fitIssue });
@@ -6572,7 +6373,8 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
         }
       }
       if (suggestion) {
-        const fitIssue = getBackAnswerFitIssue(frontForAnswer, suggestion);
+        const fitIssue = getBackAnswerFitIssue(frontForAnswer, suggestion)
+          || getBackSourceAlignmentIssue(frontForAnswer, suggestion, sourceTextForLimit);
         if (fitIssue) {
           state._lastBackFitIssue = fitIssue;
           rememberRejectedCopilotDraft(state, { suggestion, reason: fitIssue });
@@ -6652,9 +6454,10 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
     updateShortcutCoach(state.fieldId);
     if (state.fieldId === "front") {
       const backIsBlank = !((document.querySelector("#back")?.value || "").trim());
-      if (protectedAnswer && backIsBlank && frontForBack && !getBackAnswerFitIssue(frontForBack, protectedAnswer)) {
-        setBackDraftSuggestionFromSourceStem(protectedAnswer, frontForBack);
-      } else if (withOther && backIsBlank && frontForBack) {
+      // Inferred answers protect the Front from leaking, but a rewritten Front can legitimately
+      // shift to another fact in the same source. Let the Back model answer the final visible cue;
+      // only the exact literal source-split path may install a deterministic paired Back.
+      if (withOther && backIsBlank && frontForBack) {
         copilot._skipRateLimit = true; // bypass local limiter for speed
         requestBackDraftFromFront(frontForBack, { force: true }); // already passes Front + Source + Notes
       } else {
@@ -6721,7 +6524,9 @@ async function requestCopilot(state, { force = false, withOther = false } = {}) 
 }
 
 function triggerCopilotNow({ pair = false } = {}) {
-  if (!copilot.enabled || !copilot.apiConfigured) return;
+  // The literal source split is local and free, so manual Suggest must reach
+  // requestCopilot even when AI is off or no hosted/BYOK provider is configured.
+  const localOnly = !copilot.enabled;
 
   const frontEl = document.querySelector("#front");
   const backEl  = document.querySelector("#back");
@@ -6756,7 +6561,7 @@ function triggerCopilotNow({ pair = false } = {}) {
   cancelCopilotRequests();
   copilot._skipRateLimit = true;
 
-  requestCopilot(targetState, { force: true, withOther });
+  requestCopilot(targetState, { force: true, withOther, localOnly });
 }
 
 function setupCopilotField(fieldId) {
@@ -6807,6 +6612,12 @@ function setupCopilotField(fieldId) {
     noCardEl,
     _stemSplit: null,
     _stemSplitExisting: "",
+    _sourceSplitCorrection: null,
+    _sourceSplitActive: false,
+    _sourceSplitOwnsBack: false,
+    _sourceSplitOwnedByFront: false,
+    _sourceSplitOriginalText: "",
+    _sourceSplitOfferedKey: "",
   };
   copilot.fields.set(fieldId, state);
   if (state.ghostEl) {
@@ -6820,7 +6631,7 @@ function setupCopilotField(fieldId) {
   if (state.ghostEl) state.ghostEl.hidden = true;
 
   textarea.addEventListener("input", () => {
-    if (!copilot.enabled) return;
+    if (!copilot.enabled && !state._sourceSplitActive) return;
     hideFrontNoCardNotice(state);
     if (state.suggestion && !copilot._suspendCrossClear) {
       rejectCopilotSuggestion(state);
@@ -6837,7 +6648,7 @@ function setupCopilotField(fieldId) {
       if (state.ghostTextEl) state.ghostTextEl.textContent = "";
     }
     const baseDelay = state.fieldId === "front" ? copilot.frontDebounceMs : copilot.backDebounceMs;
-    scheduleCopilot(state, { delay: baseDelay });
+    if (copilot.enabled) scheduleCopilot(state, { delay: baseDelay });
   });
   textarea.addEventListener("focus", () => {
     if (!copilot.enabled) return;
@@ -6856,22 +6667,11 @@ function setupCopilotField(fieldId) {
     state.ghostEl.style.transform = `translateY(${-textarea.scrollTop}px)`;
   });
   textarea.addEventListener("keydown", (e) => {
-    if (!copilot.enabled) return;
-    const takeoverOpen = state._stemSplit && !document.getElementById("stemSplitTakeover")?.hidden;
+    if (!copilot.enabled && !state._sourceSplitActive) return;
     if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (takeoverOpen) {
-        // Inside the takeover, Tab commits the full card (front AND back), same as "Use this card".
-        acceptStemSplitCard(state);
-        e.preventDefault();
-      } else if (applyCopilotSuggestion(state)) {
+      if (applyCopilotSuggestion(state)) {
         e.preventDefault();
       }
-    }
-    // Enter also commits while the takeover is up (it would only insert a newline the user
-    // can't see behind the modal).
-    if (takeoverOpen && e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      acceptStemSplitCard(state);
-      e.preventDefault();
     }
     // ⌥←/⌥→ slide the movable blank while a stem suggestion is live. Swallow the key even at
     // the bounds so the caret doesn't word-jump mid-gesture.
@@ -6886,7 +6686,7 @@ function setupCopilotField(fieldId) {
 
   if (acceptBtn) {
     acceptBtn.addEventListener("click", () => {
-      if (!copilot.enabled) return;
+      if (!copilot.enabled && !state._sourceSplitActive) return;
       applyCopilotSuggestion(state, { allowRejected: true });
     });
   }
@@ -6900,6 +6700,24 @@ function setupCopilotField(fieldId) {
   if (fieldId !== "back" && copilot.enabled && textarea.value.trim()) {
     scheduleCopilot(state, { delay: 400, force: true });
   }
+}
+
+async function configureCopilotModelBackend(opts = {}) {
+  const route = resolveModelBackend(opts);
+  copilot.provider = route.selectedProvider;
+  copilot.backendRoute = route;
+  let configured = route.backend !== "missing";
+  if (route.backend === "free-tier") {
+    try {
+      const freeTier = await getFreeTierState();
+      configured = freeTier.remaining > 0 && !!freeTier.installId;
+    } catch {
+      configured = false;
+    }
+  }
+  copilot.apiConfigured = configured;
+  setActiveModelBackend(configured ? route.backend : "missing");
+  return route;
 }
 
 async function initCopilot() {
@@ -6930,24 +6748,8 @@ async function initCopilot() {
     });
   }
   try {
-	    const opts = await getOptions();
-	    copilot.provider = inferProviderFromOptions(opts);
-    copilot.apiConfigured = hasProviderApiKey(opts, copilot.provider);
-    // Free-tier proxy only serves the OpenAI-compatible path (openai/ultimate).
-    // Gemini/Claude have no proxy fallback, so don't mark them configured without a key.
-    if (!copilot.apiConfigured && (copilot.provider === "openai" || copilot.provider === "ultimate")) {
-      try {
-        const ft = await chrome.storage.local.get("ghostwriter_free_tier");
-        const ftState = ft?.ghostwriter_free_tier || {};
-	        const today = new Date().toISOString().slice(0, 10);
-	        const dailyUsed = ftState.dailyDate === today ? (ftState.dailyUsed || 0) : 0;
-	        const remaining = Math.min(
-	          Math.max(0, FREE_TIER_LIMIT - (ftState.used || 0)),
-	          Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed)
-	        );
-        if (remaining > 0) copilot.apiConfigured = true;
-      } catch {}
-    }
+    const opts = await getOptions();
+    await configureCopilotModelBackend(opts);
     copilot.enabled = opts.autoCompleteAI !== false;
     copilot.autoFillBack = opts.autoFillBackAI !== false; // defaults to true if missing
     copilot.prompts = {
@@ -7000,24 +6802,8 @@ async function initCopilot() {
       if (areaName !== "sync") return;
       if (changes.quickflash_options) {
         const syncNext = changes.quickflash_options.newValue || {};
-        const next = { ...syncNext, ...(await getProviderSecrets()) };
-        copilot.provider = inferProviderFromOptions(next);
-        copilot.apiConfigured = hasProviderApiKey(next, copilot.provider);
-        // Free-tier proxy only serves openai/ultimate; keep gemini/claude gated on a real key.
-        if (!copilot.apiConfigured && (copilot.provider === "openai" || copilot.provider === "ultimate")) {
-          try {
-            chrome.storage.local.get("ghostwriter_free_tier").then((ft) => {
-              const ftState = ft?.ghostwriter_free_tier || {};
-              const today = new Date().toISOString().slice(0, 10);
-              const dailyUsed = ftState.dailyDate === today ? (ftState.dailyUsed || 0) : 0;
-              const remaining = Math.min(
-                Math.max(0, FREE_TIER_LIMIT - (ftState.used || 0)),
-                Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed)
-              );
-              if (remaining > 0) copilot.apiConfigured = true;
-            });
-          } catch {}
-        }
+        const next = { ...syncNext, ...(await getDeviceOptions()), ...(await getProviderSecrets()) };
+        await configureCopilotModelBackend(next);
         copilot.prompts = {
           front: basePromptDefaults.front || null,
           back: basePromptDefaults.back || null,
@@ -7394,6 +7180,35 @@ function updateOverlayQueueBadge() {
   badge.hidden = count <= 0;
 }
 
+function normalizeSourceDisplayMode(mode) {
+  return mode === "source" ? "source" : "rendered";
+}
+
+function setSourceDisplayMode(mode, { focusRaw = false } = {}) {
+  const normalized = normalizeSourceDisplayMode(mode);
+  const renderedView = document.getElementById("sourceRenderedView");
+  const rawView = document.getElementById("source");
+  const renderedButton = document.getElementById("sourceViewRendered");
+  const rawButton = document.getElementById("sourceViewRaw");
+  if (renderedView) renderedView.hidden = normalized !== "rendered";
+  if (rawView) rawView.hidden = normalized !== "source";
+  if (renderedButton) renderedButton.setAttribute("aria-pressed", String(normalized === "rendered"));
+  if (rawButton) rawButton.setAttribute("aria-pressed", String(normalized === "source"));
+  if (normalized === "source" && focusRaw && rawView) {
+    try { rawView.focus(); } catch {}
+  }
+  return normalized;
+}
+
+function initSourceDisplayToggle() {
+  const renderedButton = document.getElementById("sourceViewRendered");
+  const rawButton = document.getElementById("sourceViewRaw");
+  if (!renderedButton || !rawButton) return;
+  renderedButton.addEventListener("click", () => setSourceDisplayMode("rendered"));
+  rawButton.addEventListener("click", () => setSourceDisplayMode("source", { focusRaw: true }));
+  setSourceDisplayMode("rendered");
+}
+
 async function updateSourceRenderedPreview() {
   const frame = $("#previewSource");
   if (!frame) return;
@@ -7726,7 +7541,7 @@ function shortcutCoachMessageForField(fieldId) {
 
   if (copilot.enabled && copilot.apiConfigured) {
     const suggestionShortcut = formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut || "";
-    return suggestionShortcut ? `Use ${suggestionShortcut} for AI autocomplete.` : "";
+    return suggestionShortcut ? `Use ${suggestionShortcut} for Copilot autocomplete.` : "";
   }
 
   return "";
@@ -10051,14 +9866,6 @@ function initInlineMathPreview() {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
     if (isTriageActive()) return;
-    // Esc inside the split takeover backs out to the editor — never closes the whole overlay.
-    const stemTakeover = document.getElementById('stemSplitTakeover');
-    if (stemTakeover && !stemTakeover.hidden) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      dismissStemSplitTakeover(copilot.fields.get('front'));
-      return;
-    }
     if (rejectFocusedCopilotSuggestion(event.target)) {
       event.preventDefault();
       return;
@@ -10550,7 +10357,44 @@ async function restoreSavedState() {
   renderEditor({ persist: false });
 }
 
-// ------- Tagging with AI -------
+// ------- Metadata suggestions -------
+const METADATA_MODEL_TIMEOUT_MS = 12000;
+const CONTROLLED_TAG_DOMAINS = Object.freeze([
+  ...(window.GHOSTWRITER_METADATA_FALLBACK?.CONTROLLED_DOMAINS || []),
+]);
+const TAG_SUGGESTION_SCHEMA = Object.freeze({
+  type: "object",
+  properties: {
+    domain: { type: "string", enum: CONTROLLED_TAG_DOMAINS },
+    subdomains: { type: "array", items: { type: "string" }, maxItems: 3 },
+    extras: { type: "array", items: { type: "string" }, maxItems: 2 },
+  },
+  required: ["domain", "subdomains", "extras"],
+  additionalProperties: false,
+});
+const CONTEXT_SUGGESTION_SCHEMA = Object.freeze({
+  type: "object",
+  properties: { context: { type: "string" } },
+  required: ["context"],
+  additionalProperties: false,
+});
+
+async function runMetadataModelWithTimeout(task, timeoutMs = METADATA_MODEL_TIMEOUT_MS) {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort("ghostwriter-metadata-timeout");
+      reject(Object.assign(new Error("Metadata model request timed out."), { code: "metadata-timeout" }));
+    }, Math.max(1000, timeoutMs));
+  });
+  try {
+    return await Promise.race([Promise.resolve().then(() => task(controller.signal)), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function aiSuggestTags(front, back, url, title) {
   const hostname = (() => { try { return new URL(url).hostname; } catch { return ""; } })();
   const prompt = `Return ONLY valid JSON in this exact shape:
@@ -10571,26 +10415,24 @@ Front: ${front}
 Back: ${back}
 Page: title="${title}", url="${url}", host="${hostname}"`;
   try {
-    const obj = await ultimateChatJSON(prompt, /*model*/ null, /*parseArrayOrObject*/ true);
-    const norm = (s) => String(s || "").toLowerCase()
-      .replace(/&/g, " and ")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g,"")
-      .replace(/-{2,}/g,"-");
-    const domainMap = new Map([
-      ["cs","computer-science"],["comp-sci","computer-science"],["computer-sciences","computer-science"],
-      ["ml","ai"],["deep-learning","ai"],["nlp","ai"],["med","medicine"],["econ","economics"]
-    ]);
-    const pick = (v) => (Array.isArray(v) ? v : [v]).filter(Boolean).map(norm);
-    let domain = norm(obj?.domain || "");
-    if (domainMap.has(domain)) domain = domainMap.get(domain);
-    if (!domain) return [];
-    const sub = Array.from(new Set(pick(obj?.subdomains || []).filter((s) => s && s !== domain))).slice(0, 3);
-    const extras = Array.from(new Set(pick(obj?.extras || []))).filter((t) => t && t !== domain && !sub.includes(t)).slice(0, 2);
-    return [domain, ...sub, ...extras];
+    const obj = await runMetadataModelWithTimeout((signal) => ultimateChatJSON(prompt, {
+      parseArrayOrObject: true,
+      nativeTask: "tags",
+      nativeSchema: TAG_SUGGESTION_SCHEMA,
+      signal,
+    }));
+    const fallback = window.GHOSTWRITER_METADATA_FALLBACK;
+    const modelTags = fallback?.sanitizeAiSuggestedTags?.(obj) || [];
+    if (modelTags.length) return modelTags;
+    return fallback?.classifyDomainTags?.({ front, back, title, url }) || [];
   } catch (e) {
-    console.warn("AI tags failed:", e);
-    return []; // fall back: no AI tags
+    console.warn("Model tag suggestion failed; using deterministic fallback:", e);
+    return window.GHOSTWRITER_METADATA_FALLBACK?.classifyDomainTags?.({
+      front,
+      back,
+      title,
+      url,
+    }) || [];
   }
 }
 
@@ -10647,7 +10489,12 @@ Avoid echoing the front/back text; avoid generic paraphrases.`;
     '{ "context": "<string>" }',
   ].join("\n");
   try {
-    const result = await ultimateChatJSON(prompt, { system });
+    const result = await runMetadataModelWithTimeout((signal) => ultimateChatJSON(prompt, {
+      system,
+      nativeTask: "context",
+      nativeSchema: CONTEXT_SUGGESTION_SCHEMA,
+      signal,
+    }));
     let context = "";
     if (Array.isArray(result)) {
       context = (result[0] || "");
@@ -12558,7 +12405,7 @@ async function aiGenerate(templateId, ctx = {}) {
   const templateSelect = $("#editorTemplateSelect");
   const templates = getAiTemplateList();
   if (!templates.length) {
-    status("No AI suggestion modes configured. Add some in Options.");
+    status("No Copilot modes configured. Add some in Options.");
     return;
   }
 
@@ -12589,7 +12436,7 @@ async function aiGenerate(templateId, ctx = {}) {
         bumpMetric(metrics, "ai_suggestions_accepted");
         return metrics;
       });
-      status("Applied AI suggestion. Edit it, then Add to Anki.", true);
+      status("Applied Copilot suggestion. Edit it, then Add to Anki.", true);
       return;
     }
 
@@ -12624,7 +12471,7 @@ async function aiGenerate(templateId, ctx = {}) {
 
     const autoContextCheckbox = $("#manualAutoContext");
     const wantAutoContext = autoContextCheckbox ? !!autoContextCheckbox.checked : !!(manualPrefsCache?.autoContextManual);
-    const wantAiContextForAICards = wantAutoContext && wantAutoTag;
+    const wantAiContextForAICards = wantAutoContext;
 
     const fillSourceCheckbox = $("#fillSourceField");
     const wantFillSource = fillSourceCheckbox ? !!fillSourceCheckbox.checked : true;
@@ -12813,9 +12660,7 @@ async function initPanel() {
       if (!matchesShortcut(e, copilot.triggerShortcutSpec)) return;
       e.preventDefault();
       e.stopPropagation();
-      if (copilot.apiConfigured) {
-        triggerCopilotNow();
-      }
+      triggerCopilotNow();
     });
     const sendOutboxBtn = $("#sendOutbox");
     if (sendOutboxBtn) sendOutboxBtn.addEventListener("click", (e) => { e.preventDefault(); sendOutboxToAnki(); });
@@ -13099,9 +12944,6 @@ async function initPanel() {
         hideCopilotFactPicker();
       }
     }, true);
-    // Clicking inside the split takeover must not steal focus from the Front textarea — focus is
-    // what keeps Tab / ⌥←→ / typing-through working while the takeover covers the editor.
-    document.getElementById("stemSplitTakeover")?.addEventListener("mousedown", (e) => e.preventDefault());
     syncCardTypePill();
     const modelFieldWarning = $("#modelFieldWarning");
     const modelFieldWarningActions = $("#modelFieldWarningActions");
@@ -13157,6 +12999,7 @@ async function initPanel() {
     bindMarkdownPreviewInputs();
     initInlineMathPreview();
     initClozeNotice();
+    initSourceDisplayToggle();
     initLongSourceNotice();
     bindClipboardImagePaste();
     initDebugPanel();

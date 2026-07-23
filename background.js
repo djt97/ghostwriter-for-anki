@@ -3,61 +3,104 @@
 const supportsSidePanel = () => Boolean(chrome.sidePanel && (chrome.sidePanel.open || chrome.sidePanel.setOptions)); // keep
 const OPTIONS_KEY = "quickflash_options";
 
-// Free-tier proxy: subsidized first-run AI suggestions. The proxy must also
-// enforce these limits server-side; local state is only for UX/status.
-const FREE_TIER_PROXY_URL = "https://ghostwriter-proxy.djthornton97.workers.dev/v1";
-const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
+// Included-model usage state is only for UX/status. The proxy remains authoritative.
 const ULTIMATE_BASE_URL = "https://api.ultimateai.org/v1";
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const ULTIMATE_HOST_RE = /^https:\/\/(?:api|smart|chat)\.ultimateai\.org$/i;
-const ULTIMATE_DEFAULT_MODEL = "auto";
-const LOCAL_DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1";
-const LOCAL_DEFAULT_MODEL = "llama3.2";
-const FREE_TIER_LIMIT = 20;
-const FREE_TIER_DAILY_LIMIT = 10;
+const FREE_TIER_LIMIT = 100;
 const FREE_TIER_KEY = "ghostwriter_free_tier";
+let freeTierStateQueue = Promise.resolve();
 
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+function withFreeTierStateLock(task) {
+  const next = freeTierStateQueue.then(task, task);
+  freeTierStateQueue = next.catch(() => undefined);
+  return next;
+}
+
+function normalizeFreeTierUsed(value) {
+  const used = Number(value);
+  return Number.isFinite(used) && used > 0 ? Math.floor(used) : 0;
+}
+
+function normalizeFreeTierState(value, fallbackInstallId = "") {
+  const state = value && typeof value === "object" ? value : {};
+  const installId = typeof state.installId === "string" && state.installId.trim()
+    ? state.installId.trim()
+    : fallbackInstallId;
+  return { installId, used: normalizeFreeTierUsed(state.used) };
+}
+
+function readFreeTierQuotaHeader(headers, name) {
+  const raw = headers?.get?.(name);
+  if (raw === null || raw === undefined || String(raw).trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
+function parseFreeTierQuotaHeaders(headers) {
+  const limit = readFreeTierQuotaHeader(headers, "x-ghostwriter-quota-lifetime-limit");
+  const remaining = readFreeTierQuotaHeader(headers, "x-ghostwriter-quota-lifetime-remaining");
+  const explicitUsed = readFreeTierQuotaHeader(headers, "x-ghostwriter-quota-lifetime-used");
+  const derivedUsed = limit !== null && remaining !== null
+    ? Math.max(0, limit - remaining)
+    : null;
+  const used = explicitUsed === null
+    ? derivedUsed
+    : Math.max(explicitUsed, derivedUsed ?? 0);
+  const reason = String(headers?.get?.("x-ghostwriter-quota-reason") || "").trim().toLowerCase();
+  const retryAfterSeconds = readFreeTierQuotaHeader(headers, "retry-after");
+  return { used, limit, remaining, reason, retryAfterSeconds };
 }
 
 async function getFreeTierState() {
-  const got = await chrome.storage.local.get(FREE_TIER_KEY);
-  const state = got?.[FREE_TIER_KEY] || {};
-  if (!state.installId) {
-    state.installId = crypto.randomUUID();
-    state.used = state.used || 0;
-  }
-  const today = todayKey();
-  if (state.dailyDate !== today) {
-    state.dailyDate = today;
-    state.dailyUsed = 0;
-  }
-  await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
-  const lifetimeRemaining = Math.max(0, FREE_TIER_LIMIT - (state.used || 0));
-  const dailyRemaining = Math.max(0, FREE_TIER_DAILY_LIMIT - (state.dailyUsed || 0));
-  return {
-    ...state,
-    limit: FREE_TIER_LIMIT,
-    dailyLimit: FREE_TIER_DAILY_LIMIT,
-    remaining: Math.min(lifetimeRemaining, dailyRemaining),
-    lifetimeRemaining,
-    dailyRemaining,
-  };
+  return withFreeTierStateLock(async () => {
+    const got = await chrome.storage.local.get(FREE_TIER_KEY);
+    const stored = got?.[FREE_TIER_KEY] || {};
+    const state = normalizeFreeTierState(stored, crypto.randomUUID());
+    if (
+      stored.installId !== state.installId
+      || stored.used !== state.used
+      || Object.keys(stored).some((key) => key !== "installId" && key !== "used")
+    ) {
+      await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+    }
+    return {
+      ...state,
+      limit: FREE_TIER_LIMIT,
+      remaining: Math.max(0, FREE_TIER_LIMIT - state.used),
+    };
+  });
 }
 
-async function incrementFreeTierUsage() {
-  const got = await chrome.storage.local.get(FREE_TIER_KEY);
-  const state = got?.[FREE_TIER_KEY] || {};
-  const today = todayKey();
-  if (state.dailyDate !== today) {
-    state.dailyDate = today;
-    state.dailyUsed = 0;
-  }
-  state.used = (state.used || 0) + 1;
-  state.dailyUsed = (state.dailyUsed || 0) + 1;
-  await chrome.storage.local.set({ [FREE_TIER_KEY]: state });
+async function reconcileFreeTierUsage(headers, options = {}) {
+  const requestSucceeded = options.requestSucceeded === true;
+  const snapshotUsed = options.quotaSnapshot?.used;
+  const parsedSnapshotUsed = snapshotUsed === null || snapshotUsed === undefined
+    ? null
+    : Number(snapshotUsed);
+  const quota = options.quotaSnapshot && typeof options.quotaSnapshot === "object"
+    ? {
+        used: Number.isFinite(parsedSnapshotUsed) && parsedSnapshotUsed >= 0
+          ? Math.floor(parsedSnapshotUsed)
+          : null,
+      }
+    : parseFreeTierQuotaHeaders(headers);
+  return withFreeTierStateLock(async () => {
+    const got = await chrome.storage.local.get(FREE_TIER_KEY);
+    const stored = got?.[FREE_TIER_KEY] || {};
+    const state = normalizeFreeTierState(stored, crypto.randomUUID());
+    const nextUsed = quota.used === null
+      ? state.used + (requestSucceeded ? 1 : 0)
+      : Math.max(state.used, quota.used);
+    const next = { installId: state.installId, used: nextUsed };
+    await chrome.storage.local.set({ [FREE_TIER_KEY]: next });
+    return {
+      ...next,
+      limit: FREE_TIER_LIMIT,
+      remaining: Math.max(0, FREE_TIER_LIMIT - next.used),
+    };
+  });
 }
+
 const PANEL_PAGE_URL = chrome.runtime.getURL("panel.html");
 
 function normalizeProvider(value) {
@@ -94,129 +137,6 @@ function normalizeUltimateBaseUrl(value) {
   if (!raw) return ULTIMATE_BASE_URL;
   if (ULTIMATE_HOST_RE.test(raw)) return `${raw}/v1`;
   return raw;
-}
-
-function getOpenAIProviderConfig(opts, overrideProvider) {
-  const provider = overrideProvider ? normalizeProvider(overrideProvider) : inferProviderFromOptions(opts || {});
-  if (provider === "openai") {
-    return {
-      provider,
-      baseUrl: (opts.openaiBaseUrl || "https://api.openai.com/v1").replace(/\/+$/g, ""),
-      apiKey: opts.openaiKey || "",
-      model: opts.openaiModel || opts.ultimateModel || OPENAI_DEFAULT_MODEL,
-    };
-  }
-  if (provider === "openrouter") {
-    return {
-      provider,
-      baseUrl: (opts.openrouterBaseUrl || OPENROUTER_BASE_URL).replace(/\/+$/g, ""),
-      apiKey: opts.openrouterKey || "",
-      model: opts.openrouterModel || "openrouter/auto",
-    };
-  }
-  if (provider === "local") {
-    return {
-      provider: "local",
-      baseUrl: (opts.localBaseUrl || LOCAL_DEFAULT_BASE_URL).replace(/\/+$/g, ""),
-      apiKey: opts.localKey || "",
-      model: opts.localModel || LOCAL_DEFAULT_MODEL,
-    };
-  }
-
-  return {
-    provider: "ultimate",
-    baseUrl: normalizeUltimateBaseUrl(opts.ultimateBaseUrl),
-    apiKey: opts.ultimateKey || "",
-    model: opts.ultimateModel || ULTIMATE_DEFAULT_MODEL,
-  };
-}
-
-const AI_PROVIDER_HOST_PERMISSION_ORIGINS = new Set([
-  "https://api.openai.com/*",
-  "https://openrouter.ai/*",
-  "https://api.ultimateai.org/*",
-  "https://smart.ultimateai.org/*",
-  "https://chat.ultimateai.org/*",
-  "https://generativelanguage.googleapis.com/*",
-  "https://api.anthropic.com/*",
-]);
-
-function buildOpenAICompatibleHeaders(provider, apiKey, extra = {}) {
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-    ...extra,
-  };
-  if (provider === "openrouter") {
-    headers["HTTP-Referer"] = "https://github.com/djt97/ghostwriter-for-anki";
-    headers["X-OpenRouter-Title"] = "Ghostwriter for Anki";
-  }
-  return headers;
-}
-
-function getKnownAiHostPermissionOrigin(baseUrl) {
-  try {
-    const origin = `${new URL(String(baseUrl || "")).origin}/*`;
-    return AI_PROVIDER_HOST_PERMISSION_ORIGINS.has(origin) ? origin : "";
-  } catch {
-    return "";
-  }
-}
-
-async function assertAiHostPermission({ provider, baseUrl } = {}) {
-  if (!baseUrl || provider === "free-tier" || !chrome.permissions?.contains) return;
-  const origin = getKnownAiHostPermissionOrigin(baseUrl);
-  if (!origin) return;
-  let granted = false;
-  try {
-    granted = await chrome.permissions.contains({ origins: [origin] });
-  } catch {
-    granted = false;
-  }
-  if (!granted) {
-    if (chrome.permissions?.request) {
-      try {
-        granted = await chrome.permissions.request({ origins: [origin] });
-      } catch {}
-      if (granted) return;
-    }
-    throw new Error(
-      `Chrome has not granted Ghostwriter permission to contact ${origin}. ` +
-      `Open Ghostwriter Settings, click Save, and accept the AI provider permission prompt.`
-    );
-  }
-}
-
-function readChatMessageContent(message) {
-  const content = message?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => {
-      if (typeof part === "string") return part;
-      if (typeof part?.text === "string") return part.text;
-      if (typeof part?.content === "string") return part.content;
-      return "";
-    }).join("");
-  }
-  return "";
-}
-
-function getChatCompletionText(data, requestedModel) {
-  const choice = data?.choices?.[0] || {};
-  const message = choice.message || {};
-  const out = readChatMessageContent(message).trim();
-  if (out) return out;
-  const actualModel = data?.model || requestedModel || "unknown model";
-  const hasReasoning = !!(
-    message.reasoning_content ||
-    message.thinking ||
-    message.thinking_blocks ||
-    message.provider_specific_fields?.thinking_blocks
-  );
-  if (hasReasoning) {
-    throw new Error(`Provider returned reasoning only from ${actualModel}, with no card text.`);
-  }
-  throw new Error(`Provider returned no card text from ${actualModel}.`);
 }
 
 async function getQuickflashOptions() {
@@ -877,20 +797,20 @@ function migrateOptionsForFocusedV2(existingOptions = {}) {
 function buildUpdateNotice({ previousVersion = "", currentVersion = "", preservedCredentials = {} } = {}) {
   const preservedCount = Object.values(preservedCredentials || {}).filter(Boolean).length;
   return {
-    id: `focused-direct-${currentVersion || "unknown"}`,
-    kind: "focused-direct",
+    id: `model-choice-${currentVersion || "unknown"}`,
+    kind: "model-choice",
     previousVersion: previousVersion || null,
     currentVersion: currentVersion || null,
     createdAt: Date.now(),
     dismissed: false,
     title: `Ghostwriter updated to ${currentVersion || "the latest version"}`,
     message: preservedCount
-      ? "Your API keys and Anki settings were preserved. Ghostwriter now defaults to focused one-off card creation with direct Add to Anki."
-      : "Ghostwriter now defaults to focused one-off card creation with direct Add to Anki. Add an API key any time, or keep writing manually.",
+      ? "Your API keys and Anki settings were preserved. Copilot now makes its active model path visible."
+      : "Copilot now makes its active model path visible. You can also keep writing without model requests.",
     actions: [
-      "Add to Anki sends the current card directly through AnkiConnect.",
-      "Overlay is the default editor surface; side panel and tab views are still available in Settings.",
-      "Manual AI suggestions remain the default, with existing provider keys left untouched.",
+      "Each browser profile gets 100 included model requests for its lifetime, with no paid Ghostwriter plan.",
+      "Opt in to Chrome on-device AI for Copilot, tags, and context when your browser supports it.",
+      "Copilot shows whether a personal, local, on-device, or included hosted model handled the latest request.",
     ],
     preservedCredentials,
   };
@@ -1085,6 +1005,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message.type === "quickflash:test:ping") {
       sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "ghostwriter:getFreeTierState") {
+      try {
+        sendResponse({ ok: true, state: await getFreeTierState() });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+      return;
+    }
+
+    if (message.type === "ghostwriter:reconcileFreeTierUsage") {
+      try {
+        const state = await reconcileFreeTierUsage(null, {
+          requestSucceeded: message.requestSucceeded === true,
+          quotaSnapshot: message.quota,
+        });
+        sendResponse({ ok: true, state });
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
       return;
     }
 
@@ -1329,61 +1271,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "quickflash:ultimateChatJSON") {
-      const { prompt, model } = message;
-      try {
-        const opts = await getQuickflashOptions();
-        const { provider, baseUrl, apiKey, model: defaultModel } = getOpenAIProviderConfig(opts);
-        const mdl = model || defaultModel;
-
-        let effectiveBaseUrl = baseUrl;
-        let effectiveApiKey = apiKey;
-        let usingFreeTier = false;
-
-        if (!apiKey && provider !== "local") {
-          if (provider === "openrouter") {
-            throw new Error("OpenRouter API key missing. Add your OpenRouter key in Settings to use this provider.");
-          }
-          // Check free-tier quota
-          const ftState = await getFreeTierState();
-          if (ftState.remaining > 0) {
-            effectiveBaseUrl = FREE_TIER_PROXY_URL;
-            effectiveApiKey = `ft-${ftState.installId}`;
-            usingFreeTier = true;
-          } else {
-            throw new Error("Free suggestions used up. Add an API key in Settings for unlimited suggestions, or continue writing manually.");
-          }
-        }
-
-        await assertAiHostPermission({
-          provider: usingFreeTier ? "free-tier" : provider,
-          baseUrl: effectiveBaseUrl,
-        });
-        const r = await fetch(`${effectiveBaseUrl}/chat/completions`, {
-          method: "POST",
-          headers: buildOpenAICompatibleHeaders(provider, effectiveApiKey),
-          body: JSON.stringify({
-            model: mdl,
-            temperature: 0.2,
-            messages: [
-              { role: "system", content: "You are a precise assistant. Return ONLY valid JSON." },
-              { role: "user", content: prompt },
-            ],
-          }),
-        });
-        const data = await r.json();
-        const content = getChatCompletionText(data, mdl);
-
-        if (usingFreeTier) {
-          await incrementFreeTierUsage();
-        }
-
-        sendResponse({ ok: true, result: content, freeTier: usingFreeTier });
-      } catch (err) {
-        sendResponse({ ok: false, error: err?.message || String(err) });
-      }
-      return;
-    }
   })();
   return true;
 });

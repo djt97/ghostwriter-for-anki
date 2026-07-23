@@ -95,7 +95,7 @@ describe('rejected-draft ("Use anyway") visibility', () => {
     // so hanging the class/label restore on it covers every exit path.
     const reset = extractFunction(panelJs, 'resetRejectedCopilotDraft');
     assert.match(reset, /classList\?\.remove\?\.\("rejected-draft-mode"\)/);
-    assert.ok(reset.includes('metaEl.textContent = "AI suggestion"'));
+    assert.ok(reset.includes('metaEl.textContent = "Copilot suggestion"'));
   });
 
   it('suppresses the no-card notice when the blocked-draft card is the feedback', () => {

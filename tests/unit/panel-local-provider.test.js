@@ -59,10 +59,10 @@ describe('panel.js local provider', () => {
   });
 
   it('never diverts a keyless local provider to the hosted free-tier proxy', () => {
-    // The free-tier hijack must exclude local, or a keyless local server is silently unreachable.
+    assert.match(panelSource, /if \(provider === "local"\) return true;/);
     assert.match(
       panelSource,
-      /if \(!config\.apiKey && config\.provider !== "openrouter" && config\.provider !== "local"\)/
+      /if \(hasProviderApiKey\(opts, selectedProvider\)\) \{\s*return \{ backend: selectedProvider, selectedProvider, hostedFallback: false \}/
     );
   });
 

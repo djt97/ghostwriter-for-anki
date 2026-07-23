@@ -17,6 +17,10 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
   copilotMinIntervalMs: 1200,
   copilotTimeoutMs: 30000,
 
+  // Chrome on-device Prompt API (explicit opt-in)
+  nativeAiEnabled: false,
+  nativeAiHostedFallback: false,
+
   // Anki integration
   defaultDeck: "All Decks",
   ankiBaseUrl: "http://127.0.0.1:8765",

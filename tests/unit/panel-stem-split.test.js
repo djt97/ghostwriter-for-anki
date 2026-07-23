@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 
 const panelJs = fs.readFileSync(path.resolve(__dirname, '../../panel.js'), 'utf8');
-const panelHtml = fs.readFileSync(path.resolve(__dirname, '../../panel.html'), 'utf8');
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -25,14 +24,13 @@ function extractFunction(source, name) {
   throw new Error(`Could not extract function: ${name}`);
 }
 
-const { buildStemSplitPlan, buildStemSplitOutputs, stemCompletionEchoesTyped, stemSplitTokensKey } = new Function(
+const { buildStemSplitPlan, buildStemSplitOutputs, stemCompletionEchoesTyped } = new Function(
   `${extractFunction(panelJs, 'cleanSourceStemAnswer')}\n` +
   `${extractFunction(panelJs, 'normalizeStemToken')}\n` +
   `${extractFunction(panelJs, 'buildStemSplitPlan')}\n` +
   `${extractFunction(panelJs, 'buildStemSplitOutputs')}\n` +
   `${extractFunction(panelJs, 'stemCompletionEchoesTyped')}\n` +
-  `${extractFunction(panelJs, 'stemSplitTokensKey')}\n` +
-  'return { buildStemSplitPlan, buildStemSplitOutputs, stemCompletionEchoesTyped, stemSplitTokensKey };'
+  'return { buildStemSplitPlan, buildStemSplitOutputs, stemCompletionEchoesTyped };'
 )();
 
 // The maintainer's exact report: typed "Backpropagation" over this source, the parser split at
@@ -95,41 +93,14 @@ describe('movable-blank stem split', () => {
     assert.equal(buildStemSplitPlan('X', { kind: 'source-stem', frontSuffix: 'is...', back: '' }), null);
   });
 
-  it('takes over the panel like the fact picker, with clickable words and nudge buttons', () => {
-    assert.match(panelHtml, /id="stemSplitTakeover" class="modal-overlay copilot-fact-overlay"/);
-    assert.match(panelHtml, /id="stemSplitTakeoverBody"/);
-    assert.match(panelHtml, /\.sst-sentence\s*\{/);
-    assert.match(panelHtml, /\.stem-split-word\.blank\s*\{/);
-    const takeover = extractFunction(panelJs, 'renderStemSplitTakeover');
-    assert.ok(takeover.includes('Exact match to source text detected')); // the label, as a real header
-    assert.match(takeover, /setStemSplitIndex\(state, i\)/); // click a word → blank starts there
-    assert.match(takeover, /moveStemSplit\(state, -1\)/);
-    assert.ok(takeover.includes('Use this card'));
-    assert.ok(takeover.includes('Back to editor'));
-    assert.match(panelJs, /e\.code === "ArrowLeft" \? -1 : 1/); // ⌥←/⌥→
-    // A user-driven split must bypass the back fit guard so the previews never desync.
+  it('uses a secondary inline affordance instead of taking over the editor', () => {
+    const render = extractFunction(panelJs, 'renderStemCompletion');
+    assert.match(render, /Split from source/);
+    assert.match(render, /Option\+←\/→ moves the answer/);
+    assert.doesNotMatch(panelJs, /StemSplitTakeover/);
+    assert.match(panelJs, /e\.code === "ArrowLeft" \? -1 : 1/);
     assert.match(panelJs, /userDriven: true/);
     assert.match(extractFunction(panelJs, 'setBackDraftSuggestionFromSourceStem'), /force = false/);
-  });
-
-  it('keeps focus in the textarea so Tab/Enter commit the whole card and Esc backs out', () => {
-    assert.match(panelJs, /stemSplitTakeover"\)\?\.addEventListener\("mousedown", \(e\) => e\.preventDefault\(\)\)/);
-    assert.match(panelJs, /acceptStemSplitCard\(state\);/); // Tab-in-takeover parity with "Use this card"
-    // Enter is Tab's equal while the takeover is up — it must not type an invisible newline.
-    assert.match(panelJs, /takeoverOpen && e\.key === "Enter" && !e\.shiftKey && !e\.ctrlKey && !e\.altKey && !e\.metaKey/);
-    assert.match(panelJs, /Enter or Tab accepts/); // and the hint says so
-    const accept = extractFunction(panelJs, 'acceptStemSplitCard');
-    assert.match(accept, /applyCopilotSuggestion\(state\)/);
-    assert.match(accept, /applyCopilotSuggestion\(backState\)/); // both sides land
-    assert.match(panelJs, /dismissStemSplitTakeover\(copilot\.fields\.get\('front'\)\)/); // module-level Esc
-  });
-
-  it('remembers a dismissal so the takeover does not re-pop for the same sentence', () => {
-    const dismiss = extractFunction(panelJs, 'dismissStemSplitTakeover');
-    assert.match(dismiss, /_stemTakeoverDismissedKey = stemSplitTokensKey/);
-    const render = extractFunction(panelJs, 'renderStemCompletion');
-    assert.match(render, /_stemTakeoverDismissedKey/);
-    assert.match(render, /hideStemSplitTakeover\(\)/); // suppressed → plain ghost, no takeover
   });
 
   it('survives a refocus without losing the user-chosen split', () => {
@@ -160,23 +131,16 @@ describe('movable-blank stem split', () => {
     assert.match(panelJs, /stemEcho/); // the request path consults the guard
   });
 
-  it('keys dismissal on the full sentence so typing-through cannot re-pop the takeover', () => {
-    const before = buildStemSplitPlan('Backpropagation', BACKPROP);
-    const after = buildStemSplitPlan('Backpropagation is an', {
-      kind: 'source-stem',
-      split: 'copular-complement',
-      frontSuffix: 'Backpropagation is...',
-      back: 'an efficient application of the chain rule',
-    });
-    assert.ok(stemSplitTokensKey(before).length > 0);
-    assert.equal(stemSplitTokensKey(before), stemSplitTokensKey(after));
-  });
-
   it('drops split state on accept, reject, and clear', () => {
     assert.match(extractFunction(panelJs, 'applyCopilotSuggestion'), /clearStemSplitUI\(state\)/);
-    assert.match(extractFunction(panelJs, 'rejectCopilotSuggestion'), /clearStemSplitUI\(state\)/);
+    const rejectSource = extractFunction(panelJs, 'rejectCopilotSuggestion');
+    assert.match(rejectSource, /clearStemSplitUI\(state\)/);
+    assert.match(rejectSource, /rejectOwnedBack/);
+    assert.match(rejectSource, /rejectOwningFront/);
     assert.match(extractFunction(panelJs, 'clearSuggestionUI'), /clearStemSplitUI\(state\)/);
-    assert.match(extractFunction(panelJs, 'clearStemSplitUI'), /hideStemSplitTakeover\(\)/);
+    const clearSource = extractFunction(panelJs, 'clearStemSplitUI');
+    assert.match(clearSource, /_sourceSplitOwnsBack = false/);
+    assert.match(clearSource, /_sourceSplitOwnedByFront = false/);
     // and never survives into a non-stem (LLM) suggestion
     assert.match(panelJs, /clearStemSplitUI\(state\); \/\/ stale split state must not survive/);
   });

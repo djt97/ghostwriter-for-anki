@@ -14,7 +14,8 @@ If the completion would need an answer-bearing phrase such as "by defining", "us
 Prefer a direct question. For command prefixes like State/Define/Name/List, complete the object of the command; for a statement prefix, finish the sentence as a stem ending in "..." with the answer left out — never a mid-sentence "what", never a restarted question.
 Do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem.
 Keep the full Front <= {{frontWordCap}} words. Preserve the user's target; do not switch to easier source trivia.
-Anchor the cue on the ONE most specific fact the prefix points at — a name, number, date, or term from the Source — and ask for that single fact; if the Source states several facts, pick exactly one, never a summary spanning the passage.
+Anchor on the exact relation already expressed by the prefix (who, how long, what caused, when closed, etc.), then ask for its ONE most specific fact; never switch to another clause just because it appears earlier in the Source.
+Keep the Source's disambiguating qualifiers — "the term X", "the concept of X", a scoping community or condition — inside your continuation, never by restarting the sentence; dropping one changes the question.
 Ban vague umbrella cues built on filler like "important", "characteristics", "features", "role", "significance", or "aspects"; name the concrete thing instead.
 Example — Source: "Water boils at 100°C at sea level." Prefix: "At what temperature" -> complete to "does water boil at sea level?" and stop; keep "100°C" out of the Front.
   `.trim(),
@@ -47,7 +48,10 @@ Keep the full Front <= {{frontWordCap}} words. Cue the Back answer while leaving
 Autocomplete one Anki Cloze card's Text field.
 Output only the text to insert. No analysis, labels, quotes, markdown, or "The user".
 Continue after the user's prefix; do not repeat, correct, or restate text already typed.
-Produce a single, self-contained sentence containing ONE cloze deletion in exact Anki format: {{c1::answer}} — the single most salient fact (a name, number, date, or term). Add {{c2::...}}, {{c3::...}} only if the sentence genuinely tests several independent facts of equal importance.
+Produce a single, self-contained sentence containing exactly ONE new cloze deletion in exact Anki format: {{c1::answer}}. Put the one answer that fills the Prefix's first missing answer slot (a name, number, date, term, or defining property) inside it. If the answer is a coordinated list, keep the whole list inside that one deletion; never split its items across c1/c2.
+The deletion must complete the exact relation already expressed by the Prefix. A trailing "by" asks for an agent, "in" for a date/place, and "called" for a name; never blank a different fact from the same sentence.
+After the deletion, keep only grammar or context needed to identify that fact; do not append independent Source facts.
+For a definitional Prefix, hide its concise defining property or contrast, not an incidental final word. Compress the Source into the word limit instead of copying its sentence structure.
 Wrap only the key term(s) to be recalled inside the deletion(s); keep enough surrounding context that the sentence is unambiguous. Never wrap the whole sentence, and never return zero deletions.
 Keep each deletion atomic (one fact each) and grounded strictly in the Source, title, notes, or existing text; do not add outside facts.
 The sentence together with its deletion(s) IS the whole card: do not write a separate question or answer.
@@ -74,7 +78,7 @@ Keep the sentence <= {{frontWordCap}} words, not counting the cloze markup.
     const role = cloze ? "CLOZE TEXT" : fieldId === "back" ? "BACK" : "FRONT";
     const oppositeLabel = fieldId === "back" ? "Front" : "Back";
     const hasExisting = !!(existing && existing.trim());
-    const sourceCap = fieldId === "back" ? 360 : 280;
+    const sourceCap = fieldId === "back" ? 360 : 600;
     const frontCap = Number(caps?.frontWordCap) || 18;
     const backCap = Number(caps?.backWordCap) || 14;
     const pageSource = page?.sourceText || page?.selection || "";
@@ -104,11 +108,15 @@ Keep the sentence <= {{frontWordCap}} words, not counting the cloze markup.
       cloze
         ? "- Source-grounding: the sentence and every deletion must be answerable from the Source/title/notes only; do not introduce outside facts."
         : "- Source-grounding: Front and Back must be answerable from the Source/title/notes/card fields only; do not introduce outside definitions, fields, or related facts.",
-      cloze ? "- CLOZE: output ONE sentence with ONE deletion in {{c1::answer}} format on the single most salient fact (name/number/date/term); add {{c2::}}, {{c3::}} only for genuinely independent, equally-important facts; never zero deletions." : "",
+      cloze ? "- CLOZE: output ONE sentence with exactly ONE new deletion in {{c1::answer}} format around the one answer that fills Prefix's first missing answer slot (name/number/date/term/property); never zero deletions." : "",
+      cloze ? "- CLOZE: keep a coordinated answer or list inside that one deletion; never split its items across c1/c2." : "",
+      cloze ? "- CLOZE: the deletion must complete the exact relation expressed by Prefix (for example, trailing 'by' targets an agent, 'in' a date/place, and 'called' a name); never blank another fact from the same sentence." : "",
+      cloze ? "- CLOZE: after the deletion, keep only grammar or context needed to identify that fact; do not append independent Source facts." : "",
+      cloze ? "- CLOZE: for a definitional Prefix, delete its concise defining property or contrast, not an incidental last word; compress rather than copy Source wording." : "",
       cloze ? "- CLOZE: wrap only the key term(s) to recall and keep surrounding context; each deletion atomic and source-grounded." : "",
       cloze ? "- CLOZE: the sentence with its deletion(s) is the whole card; do not add a separate question/answer or copy the Source verbatim." : "",
       !cloze ? `- FRONT: one atomic cue, full Front <= ${frontCap} words, unambiguous, enough context, no answer leakage.` : "",
-      !cloze ? "- FRONT: anchor on the ONE most specific fact the Prefix points at (a name/number/date/term from Source); if Source has several facts, ask exactly one, never a passage-wide summary." : "",
+      !cloze ? "- FRONT: preserve the exact relation expressed by Prefix, then ask for its ONE specific fact; never switch to an earlier or easier Source clause." : "",
       !cloze ? "- FRONT: no vague umbrella cues ('important', 'characteristics', 'features', 'role', 'significance'); name the concrete thing." : "",
       !cloze ? "- FRONT: prefer a direct question; for command prefixes like State/Define/Name/List, complete the object of the command." : "",
       !cloze ? "- FRONT: do not copy, paraphrase, or continue the Source text unless the Prefix is already an exact source stem." : "",

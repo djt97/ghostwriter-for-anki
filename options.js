@@ -1,5 +1,5 @@
 
-// options.js (v0.4.0)
+// options.js (v0.4.1)
 const $ = (sel) => document.querySelector(sel);
 const DEFAULT_SHORTCUT = "Meta+Shift+A";
 const DEFAULT_COPILOT_SHORTCUT = "Cmd+Shift+X";
@@ -19,7 +19,7 @@ Complete the prefix into one durable retrieval cue: one target, unambiguous, eno
 Cue, don't disclose: identify the minimal Back answer, then leave that answer missing from the Front.
 If the completion would need an answer-bearing phrase such as "by defining", "using", "where", or "namely", stop before that phrase.
 Prefer a direct question. If the user started a source sentence, a short sentence-completion cue ending in "..." is allowed.
-Keep the full Front <= {{frontWordCap}} words. Preserve the user's target; do not switch to easier source trivia.
+Keep the full Front <= {{frontWordCap}} words. Preserve the exact relation expressed by the prefix; never switch to another Source clause.
 `.trim();
 const DEFAULT_COPILOT_BACK_PROMPT = `
 Autocomplete one Anki Back field.
@@ -177,9 +177,9 @@ const PROVIDER_MODEL_HELP = Object.freeze({
 const OPTIONS_KEY = "quickflash_options";
 const PROVIDER_SECRETS_KEY = "quickflash_provider_secrets_v1";
 const PROVIDER_KEY_FIELDS = Object.freeze(["openaiKey", "openrouterKey", "ultimateKey", "geminiKey", "claudeKey", "localKey"]);
-const FREE_TIER_KEY = "ghostwriter_free_tier";
-const FREE_TIER_LIMIT = 20;
-const FREE_TIER_DAILY_LIMIT = 10;
+const DEVICE_OPTIONS_KEY = "quickflash_device_options_v1";
+const DEVICE_OPTION_FIELDS = Object.freeze(["nativeAiEnabled", "nativeAiHostedFallback"]);
+const FREE_TIER_LIMIT = 100;
 const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v2";
 const SHORTCUT_COACH_KEY = "ghostwriter_onboarding_v1";
 const PERMISSION_JUSTIFICATIONS = {
@@ -194,7 +194,29 @@ let currentOptionsCache = null;
 function sanitizeOptionsForSync(options = {}) {
   const clean = { ...(options || {}) };
   for (const key of PROVIDER_KEY_FIELDS) delete clean[key];
+  for (const key of DEVICE_OPTION_FIELDS) delete clean[key];
   return clean;
+}
+
+async function getDeviceOptions() {
+  try {
+    const got = await chrome.storage.local.get(DEVICE_OPTIONS_KEY);
+    const raw = got?.[DEVICE_OPTIONS_KEY] || {};
+    const out = {};
+    for (const key of DEVICE_OPTION_FIELDS) {
+      if (typeof raw[key] === "boolean") out[key] = raw[key];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function setDeviceOptionsFromOptions(options = {}) {
+  const next = {};
+  for (const key of DEVICE_OPTION_FIELDS) next[key] = options[key] === true;
+  await chrome.storage.local.set({ [DEVICE_OPTIONS_KEY]: next });
+  return next;
 }
 
 async function restrictProviderSecretStorage() {
@@ -233,26 +255,29 @@ async function setProviderSecretsFromOptions(options = {}) {
 
 async function loadOptionsWithSecrets() {
   await restrictProviderSecretStorage();
-  const [{ [OPTIONS_KEY]: quickflash_options }, secrets] = await Promise.all([
+  const [{ [OPTIONS_KEY]: quickflash_options }, deviceOptions, secrets] = await Promise.all([
     chrome.storage.sync.get(OPTIONS_KEY),
+    getDeviceOptions(),
     getProviderSecrets(),
   ]);
-  return { ...(quickflash_options || {}), ...secrets };
+  return { ...(quickflash_options || {}), ...deviceOptions, ...secrets };
 }
 
 async function renderFreeTierStatus() {
   const el = document.querySelector("#freeTierStatus");
   if (!el) return;
   try {
-    const got = await chrome.storage.local.get(FREE_TIER_KEY);
-    const state = got?.[FREE_TIER_KEY] || {};
-    const today = new Date().toISOString().slice(0, 10);
-    const dailyUsed = state.dailyDate === today ? (state.dailyUsed || 0) : 0;
-    const lifetimeRemaining = Math.max(0, FREE_TIER_LIMIT - (state.used || 0));
-    const dailyRemaining = Math.max(0, FREE_TIER_DAILY_LIMIT - dailyUsed);
-    el.textContent = `Free suggestions remaining: ${Math.min(lifetimeRemaining, dailyRemaining)} today (${lifetimeRemaining} lifetime).`;
+    const response = await chrome.runtime.sendMessage({
+      type: "ghostwriter:getFreeTierState",
+    });
+    if (!response?.ok || !response.state) throw new Error("Included model request quota unavailable.");
+    const parsedRemaining = Number(response.state.remaining);
+    const remaining = Number.isFinite(parsedRemaining)
+      ? Math.max(0, Math.min(FREE_TIER_LIMIT, Math.floor(parsedRemaining)))
+      : 0;
+    el.textContent = `Included model requests remaining: ${remaining} of 100 — per browser profile`;
   } catch {
-    el.textContent = "Free suggestions: quota unavailable.";
+    el.textContent = "Included model request quota unavailable.";
   }
 }
 
@@ -933,6 +958,10 @@ async function save() {
 
   const D = window.GHOSTWRITER_DEFAULTS || {};
   const timeoutSec = num("#copilotTimeoutSec", Math.round((D.copilotTimeoutMs || 30000) / 1000));
+  const nativeAiPreferences = window.GHOSTWRITER_NATIVE_AI_OPTIONS?.readPreferences?.() || {
+    nativeAiEnabled: D.nativeAiEnabled ?? false,
+    nativeAiHostedFallback: D.nativeAiHostedFallback ?? false,
+  };
 
   const provider = normalizeProvider(
     document.querySelector("#providerPreset")?.value || "openai"
@@ -999,6 +1028,8 @@ async function save() {
     copilotBackMaxTokens: num("#copilotBackMaxTokens", D.copilotBackMaxTokens || 30),
     copilotMinIntervalMs: num("#copilotMinIntervalMs", D.copilotMinIntervalMs || 1200),
     copilotTimeoutMs: Math.max(1000, timeoutSec * 1000),
+    nativeAiEnabled: nativeAiPreferences.nativeAiEnabled,
+    nativeAiHostedFallback: nativeAiPreferences.nativeAiHostedFallback,
     showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "off"),
     showSourceModePill: !!$("#showSourceModePill")?.checked,
     showShortcutHints: document.querySelector("#showShortcutHints")?.checked !== false,
@@ -1044,8 +1075,9 @@ async function save() {
   data.manualAutoPreview = document.querySelector("#manualAutoPreview").value === "true";
 
   const providerSecrets = await setProviderSecretsFromOptions(data);
+  const deviceOptions = await setDeviceOptionsFromOptions(data);
   const syncData = sanitizeOptionsForSync(data);
-  currentOptionsCache = { ...syncData, ...providerSecrets };
+  currentOptionsCache = { ...syncData, ...deviceOptions, ...providerSecrets };
   await chrome.storage.sync.set({ [OPTIONS_KEY]: syncData });
   const permissionResult = await permissionResultPromise;
   if (data.showShortcutHints !== false) {
@@ -1103,6 +1135,10 @@ async function load() {
   document.querySelector("#copilotFrontFromBackSystemPrompt").value = frontFromBackPrompt;
   document.querySelector("#copilotAutoFillBack").checked = opts.autoFillBackAI !== false;
   const D = window.GHOSTWRITER_DEFAULTS || {};
+  window.GHOSTWRITER_NATIVE_AI_OPTIONS?.applyPreferences?.({
+    nativeAiEnabled: opts.nativeAiEnabled ?? D.nativeAiEnabled ?? false,
+    nativeAiHostedFallback: opts.nativeAiHostedFallback ?? D.nativeAiHostedFallback ?? false,
+  });
   document.querySelector("#copilotFrontWordCap").value = String(opts.copilotFrontWordCap ?? D.copilotFrontWordCap ?? 18);
   document.querySelector("#copilotBackWordCap").value = String(opts.copilotBackWordCap ?? D.copilotBackWordCap ?? 14);
   document.querySelector("#copilotFrontMaxTokens").value = String(opts.copilotFrontMaxTokens ?? D.copilotFrontMaxTokens ?? 40);
@@ -1603,6 +1639,7 @@ function initOptionsNavigation() {
 
 document.addEventListener("DOMContentLoaded", () => {
   initOptionsNavigation();
+  window.GHOSTWRITER_NATIVE_AI_OPTIONS?.init?.();
   renderUpdateNotice();
   const dismissNotice = document.querySelector("#dismissUpdateNotice");
   if (dismissNotice) dismissNotice.addEventListener("click", (e) => {

@@ -25,7 +25,11 @@ describe('prompts.js', () => {
       // ("One efficient application of what in deep learning?") and no restarted questions.
       assert.ok(/statement prefix.*stem ending in "\.\.\."/.test(PROMPTS.frontSystem));
       assert.ok(/never a mid-sentence "what", never a restarted question/.test(PROMPTS.frontSystem));
-      assert.ok(PROMPTS.frontSystem.length < 1750);
+      // Source qualifiers ("the term X") must survive into the cue (launch-video Dechter miss).
+      assert.ok(/disambiguating qualifiers/.test(PROMPTS.frontSystem));
+      // Budget raised 1750 -> 2000 on 2026-07-06 for the qualifier-preservation rule; the cap
+      // exists to force this conversation whenever the prompt grows.
+      assert.ok(PROMPTS.frontSystem.length < 2000);
     });
 
     it('keeps Back autocomplete minimal and answer-only', () => {
@@ -47,9 +51,12 @@ describe('prompts.js', () => {
       assert.equal(typeof PROMPTS.clozeSystem, 'string');
       assert.ok(PROMPTS.clozeSystem.includes('{{c1::answer}}'));
       // Defaults to ONE salient deletion (not "at least one"), but still never zero.
-      assert.ok(/containing ONE cloze deletion/i.test(PROMPTS.clozeSystem));
+      assert.ok(/containing exactly ONE new cloze deletion/i.test(PROMPTS.clozeSystem));
       assert.ok(/never return zero deletions/i.test(PROMPTS.clozeSystem));
       assert.ok(PROMPTS.clozeSystem.includes("Cloze card's Text field"));
+      assert.match(PROMPTS.clozeSystem, /first missing answer slot/i);
+      assert.doesNotMatch(PROMPTS.clozeSystem, /most salient/i);
+      assert.match(PROMPTS.clozeSystem, /do not append independent Source facts/i);
     });
   });
 
@@ -99,6 +106,8 @@ describe('prompts.js', () => {
       assert.ok(result.includes('Complete CLOZE TEXT'));
       assert.ok(result.includes('{{c1::answer}}'));
       assert.ok(/CLOZE:/.test(result));
+      assert.match(result, /first missing answer slot/i);
+      assert.doesNotMatch(result, /most salient/i);
       // Must NOT carry the basic-front "no answer leakage" rule, which fights cloze.
       assert.ok(!result.includes('no answer leakage'));
       assert.ok(!result.includes('one atomic cue'));

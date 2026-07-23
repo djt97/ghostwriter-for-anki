@@ -31,6 +31,11 @@ describe('defaults.js', () => {
     assert.ok('ankiBaseUrl' in DEFAULTS);
   });
 
+  it('has conservative Chrome on-device AI defaults', () => {
+    assert.equal(DEFAULTS.nativeAiEnabled, false);
+    assert.equal(DEFAULTS.nativeAiHostedFallback, false);
+  });
+
   it('has all expected tagging keys', () => {
     assert.ok('appendQuickflashTag' in DEFAULTS);
     assert.ok('quickflashTagName' in DEFAULTS);
