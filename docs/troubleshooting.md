@@ -19,7 +19,7 @@
 
 ### Symptom
 
-- No AI suggestions
+- No Copilot autocomplete
 - Provider errors
 - Timeouts
 
@@ -27,12 +27,20 @@
 
 1. Verify selected provider matches entered key/base URL.
 2. Confirm model name is valid for that provider.
-3. Check whether the free quota is exhausted.
+3. Check the active-backend label. If it shows the included hosted model, check whether this browser installation's 100 lifetime requests are exhausted or temporarily network-throttled.
 4. Try again with a shorter source highlight.
+
+### Chrome on-device AI is unavailable
+
+1. Use a supported Chrome desktop version and check Chrome's built-in AI device requirements.
+2. Open Options and press the explicit setup button; Chrome may need to download and prepare its model.
+3. The current Ghostwriter adapter supports English input and output only.
+4. Enable Chrome on-device AI and click Save after setup.
+5. Decide whether hosted fallback may send failed or unavailable on-device requests to Ghostwriter's included hosted model. Keep it disabled if the request must stay on the device.
 
 ---
 
-## Weak AI suggestions
+## Weak Copilot autocomplete
 
 ### Symptom
 

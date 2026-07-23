@@ -1,8 +1,8 @@
 # Ghostwriter for Anki (Chrome/Edge, Manifest V3)
 
-**Current Version:** `0.4.0`
+**Current Version:** `0.4.1`
 
-Ghostwriter for Anki helps you turn web highlights into Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional AI suggestions, then send the card straight to Anki.
+Ghostwriter for Anki helps you turn web highlights into Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional Copilot autocomplete, then send the card straight to Anki.
 
 Built and maintained by [DJ Thornton](https://djt97.github.io). It grew out of a simple conviction: LLMs are unreliable at *writing* flashcards, so the AI here assists your writing instead of doing it for you.
 
@@ -27,8 +27,10 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 1. [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/ghostwriter-for-anki/aldemiobejkammdkfgpfnmeppnegfaoc).
 2. Install AnkiConnect in desktop Anki (add-on ID `2055492159`).
 3. Highlight text on a page and open Ghostwriter from the extension icon, context menu, or shortcut.
-4. Write the card in the overlay; press the AI suggestion shortcut when useful.
+4. Write the card in the overlay; press the Copilot autocomplete shortcut when useful.
 5. Add the card directly to Anki.
+
+Ghostwriter includes 100 lifetime hosted-model requests per browser installation, with no per-install daily cap and no paid plan. Temporary network and service safety limits may still pause included requests. You can instead connect your own provider or local OpenAI-compatible model. Supported Chrome installations can also opt in to Chrome's on-device Prompt API (English only in the current adapter); setup is explicit because Chrome may need to download its model. Hosted fallback from the on-device model is separately controllable in Options.
 
 ## Build commands
 

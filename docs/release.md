@@ -21,10 +21,11 @@ npm run build:release
 
 ## Release checklist
 
-1. Bump extension version in `manifest.json` and `package.json`.
-2. Update changelog/release notes in `README.md` if needed.
-3. Run `npm run build:release`.
-4. Run `EXT_PATH=dist/ghostwriter npm run test:screenshots`.
-5. Smoke-test the `dist/ghostwriter/` unpacked build in Chrome.
-6. Verify `privacy.md`, `PRIVACY_POLICY.md`, `THIRD_PARTY_NOTICES.md`, `APACHE-2.0.txt`, and bundled library notices are included in the build.
-7. Publish `dist/ghostwriter.zip` to Chrome Web Store.
+1. Bump the extension version in `manifest.json` (source of truth), `package.json`, both root entries in `package-lock.json`, and the README current-version line.
+2. Run `node --test tests/unit/release-version.test.js`, then the full `npm test` suite.
+3. Update changelog/release notes in `README.md` if needed.
+4. Run `npm run build:release`.
+5. Run `EXT_PATH=dist/ghostwriter npm run test:screenshots`.
+6. Smoke-test the `dist/ghostwriter/` unpacked build in Chrome.
+7. Verify `privacy.md`, `PRIVACY_POLICY.md`, `THIRD_PARTY_NOTICES.md`, `APACHE-2.0.txt`, and bundled library notices are included in the build.
+8. Publish `dist/ghostwriter.zip` to Chrome Web Store.

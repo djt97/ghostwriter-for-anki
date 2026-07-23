@@ -11,8 +11,8 @@
 
 | Action | Shortcut |
 |---|---|
-| Accept AI autocomplete | `Tab` |
-| Request AI autocomplete | `Ctrl/Cmd + Shift + X` |
+| Accept Copilot autocomplete | `Tab` |
+| Request Copilot autocomplete | `Ctrl/Cmd + Shift + X` |
 | Add card to Anki | `Ctrl/Cmd + Shift + A` |
 | Close overlay | `Esc` |
 

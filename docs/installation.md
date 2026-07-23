@@ -49,8 +49,12 @@ You can load either the repository root (`manifest.json`) for iterative developm
 ## Post-install setup
 
 1. Open extension **Options**.
-2. Optional: add your own OpenAI API key for continued AI suggestions after the free quota.
-3. Verify AnkiConnect points to your Anki endpoint (default `http://127.0.0.1:8765`).
+2. Choose how Copilot and model-backed metadata helpers should run:
+   - Do nothing to use the 100 lifetime included hosted-model requests for this browser installation (no per-install daily cap and no paid plan; temporary service safety limits may still apply).
+   - Or add your own supported provider credentials or local OpenAI-compatible endpoint.
+   - Or, on a supported Chrome desktop installation, explicitly set up and enable Chrome on-device AI. The current adapter is English-only, and Chrome may download its model during setup.
+3. If you enable Chrome on-device AI, decide whether **hosted fallback** may send a failed or unavailable on-device request to Ghostwriter's included hosted model, then save Options.
+4. Verify AnkiConnect points to your Anki endpoint (default `http://127.0.0.1:8765`).
 
 ---
 
