@@ -767,3 +767,51 @@ x+y=5.
     assert.equal(core.isSourceGroundedFact('x∈A.', 'x∉A'), false);
   });
 });
+
+describe('copilot-core attribution qualifier repair', () => {
+  const source = 'The term deep learning was introduced to the machine learning community by Rina Dechter in 1986,';
+
+  it('splices a dropped qualifier back in before the subject', () => {
+    assert.equal(
+      core.repairFrontAttributionQualifier('Who introduced deep learning?', { sourceText: source }),
+      'Who introduced the term deep learning?'
+    );
+    assert.equal(
+      core.repairFrontAttributionQualifier(
+        'Who introduced deep learning to the machine learning community?',
+        { sourceText: source }
+      ),
+      'Who introduced the term deep learning to the machine learning community?'
+    );
+  });
+
+  it('replaces a wrong qualifier with the source one', () => {
+    assert.equal(
+      core.repairFrontAttributionQualifier('Who introduced the concept of deep learning?', { sourceText: source }),
+      'Who introduced the term deep learning?'
+    );
+    const conceptSource = 'The concept of emergence was introduced to systems theory by early cyberneticists.';
+    assert.equal(
+      core.repairFrontAttributionQualifier('Who introduced the term emergence?', { sourceText: conceptSource }),
+      'Who introduced the concept of emergence?'
+    );
+  });
+
+  it('declines when the repair does not apply', () => {
+    // already correct
+    assert.equal(core.repairFrontAttributionQualifier('Who introduced the term deep learning?', { sourceText: source }), '');
+    // subject not in the front
+    assert.equal(core.repairFrontAttributionQualifier('Who introduced backprop?', { sourceText: source }), '');
+    // source has no qualified attribution
+    assert.equal(core.repairFrontAttributionQualifier('Who introduced deep learning?', { sourceText: 'Deep learning uses many layers.' }), '');
+    assert.equal(core.repairFrontAttributionQualifier('', { sourceText: source }), '');
+  });
+
+  it('repaired output always passes the qualifier guard', () => {
+    for (const front of ['Who introduced deep learning?', 'Who introduced the concept of deep learning?']) {
+      const repaired = core.repairFrontAttributionQualifier(front, { sourceText: source });
+      assert.notEqual(repaired, '');
+      assert.equal(core.getAttributionQualifierIssue(repaired, { sourceText: source, existingText: 'Who introduced ' }), '');
+    }
+  });
+});

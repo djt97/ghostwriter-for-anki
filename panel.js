@@ -4576,7 +4576,9 @@ function buildFrontGuardRetryPrompt(basePrompt, rejectedDraft, reason) {
     reason ? `Reason: ${reason}.` : "",
     rejectedDraft ? `Rejected Front: ${clip(rejectedDraft)}` : "",
     "Rewrite once. Keep the user's target, but make the Front a stable cue with the answer missing.",
-    "Do not include the method, formula, definition, result, name, date, value, or example that belongs on the Back.",
+    /^Front (?:drops the source attribution qualifier|omits the scope or date|uses the scope or date)/u.test(String(reason || ""))
+      ? "Keep the Source's disambiguating qualifiers and its scope or date discriminators inside the question - they are part of the cue, not the answer."
+      : "Do not include the method, formula, definition, result, name, date, value, or example that belongs on the Back.",
     "If no clean cue is possible, output nothing.",
     "Output:"
   ].filter(Boolean).join("\n");
@@ -4608,6 +4610,22 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
       : String(state._lastFrontRawOutput || "").trim();
     console.debug("[Copilot] Rewriting blocked Front suggestion:", blockReason, fullDraft);
     state._lastFrontBlockReason = blockReason;
+    // A dropped attribution qualifier is deterministically repairable — the guard already knows
+    // the source's qualifier and subject — so splice it in instead of spending a model retry.
+    if (suggestion && /^Front drops the source attribution qualifier/u.test(blockReason)) {
+      const repairedFull = COPILOT_CORE?.repairFrontAttributionQualifier?.(fullDraft, {
+        sourceText: getContextSourceText(ctx.page),
+      }) || "";
+      const repairedSuggestion = repairedFull
+        ? stripExistingPrefixFromCompletion(repairedFull, existingText)
+        : "";
+      if (repairedSuggestion
+          && !getFrontSuggestionBlockReason(repairedSuggestion, existingText, ctx)) {
+        console.debug("[Copilot] Repaired Front qualifier locally:", repairedFull);
+        state._lastFrontBlockReason = "";
+        return repairedSuggestion;
+      }
+    }
     clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
     if (state.suggestionEl) {
       state.suggestionEl.hidden = false;
@@ -6416,7 +6434,10 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       if (state.fieldId === "front" && !isPartialFrontStub) {
         maybeRequestBackDraft(frontForBack);
       }
-      if (isPartialFrontStub) {
+      // "Several facts" is only true when nothing was generated at all. A guard suppression has a
+      // known reason — surface that instead, even on a short prefix.
+      const rejectionReason = state._lastFrontBlockReason || state._lastBackFitIssue || state._lastFrontLiveBlockReason || "";
+      if (isPartialFrontStub && !rejectionReason) {
         // The blocked-draft card is its own visible feedback; only show the notice without it.
         if (!showedRejected) showFrontNoCardNotice(state, "Several facts here — type a few more words to point at the one you want.");
         setCopilotStatus(
@@ -6427,7 +6448,6 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
         );
         return;
       }
-      const rejectionReason = state._lastFrontBlockReason || state._lastBackFitIssue || state._lastFrontLiveBlockReason || "";
       if (!showedRejected) showFrontNoCardNotice(state, "No usable card found for this text — try a shorter cue, or hit Suggest to retry.");
       setCopilotStatus(
         rejectionReason

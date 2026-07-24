@@ -1379,6 +1379,29 @@
     return "";
   }
 
+  // Deterministic counterpart to the qualifier guard above: the guard already knows the source's
+  // qualifier and subject, so a Front that merely dropped (or swapped) the qualifier can be
+  // repaired by splicing it back in — no model retry needed. Returns the repaired full Front,
+  // or "" when the repair doesn't apply cleanly; the caller must re-validate the result.
+  function repairFrontAttributionQualifier(frontText, { sourceText = "" } = {}) {
+    const front = String(frontText || "").replace(/\s+/gu, " ").trim();
+    const source = String(sourceText || "").replace(/\s+/gu, " ").trim();
+    if (!front || !source) return "";
+    const attribution = source.match(/\b(the\s+(?:term|phrase)|the\s+concept\s+of)\s+(.{1,100}?)\s+(?:was|were|is|are)\s+(?:introduced|coined|named|called)\b/iu);
+    if (!attribution) return "";
+    const qualifier = attribution[1].replace(/\s+/gu, " ").toLocaleLowerCase();
+    const subject = cleanSourcePiece(attribution[2]);
+    if (!subject || !containsTokenPhrase(front, subject)) return "";
+    if (containsTokenPhrase(front, qualifier)) return "";
+    const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const subjectPattern = subject.split(/\s+/u).map(escapeRe).join("\\s+");
+    const re = new RegExp(`\\b(?:the\\s+(?:term|phrase)\\s+|the\\s+concept\\s+of\\s+)?(${subjectPattern})\\b`, "iu");
+    const match = re.exec(front);
+    if (!match) return "";
+    const repaired = `${front.slice(0, match.index)}${qualifier} ${match[1]}${front.slice(match.index + match[0].length)}`;
+    return repaired === front ? "" : repaired;
+  }
+
   return {
     areGroundingFactsEquivalent,
     buildTextIndex,
@@ -1389,6 +1412,7 @@
     filterSourceGroundedFacts,
     firstSourceSentence,
     getAttributionQualifierIssue,
+    repairFrontAttributionQualifier,
     getCardSourceGroundingIssue,
     inferLiteralSourceSplit,
     isSourceGroundedFact,

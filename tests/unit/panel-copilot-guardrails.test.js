@@ -888,6 +888,30 @@ describe('panel.js Copilot guardrails', () => {
     assert.match(guardedCall, /&& !isHardFrontBlockReason\(finalReason\)/);
   });
 
+  it('repairs a dropped qualifier deterministically before spending a model retry', () => {
+    const guardedCall = extractFunction(panelSource, 'callFrontLLMWithLocalGuard');
+    const repairIdx = guardedCall.indexOf('repairFrontAttributionQualifier');
+    const retryIdx = guardedCall.indexOf('buildFrontGuardRetryPrompt');
+    assert.ok(repairIdx !== -1, 'repair must be wired into the guarded call');
+    assert.ok(repairIdx < retryIdx, 'repair must run before the model retry');
+    // the repaired suggestion must be re-validated before it is shown
+    assert.match(guardedCall, /getFrontSuggestionBlockReason\(repairedSuggestion/);
+  });
+
+  it('uses attribution-aware guidance in the guard retry prompt', () => {
+    const buildRetry = new Function(`return ${extractFunction(panelSource, 'buildFrontGuardRetryPrompt')}`)();
+    const attribution = buildRetry('Base prompt', 'Who introduced deep learning?', 'Front drops the source attribution qualifier "the term"');
+    assert.match(attribution, /disambiguating qualifiers/);
+    assert.doesNotMatch(attribution, /Do not include the method/);
+    const generic = buildRetry('Base prompt', 'What is X?', 'Front answer term leaks into the cue');
+    assert.match(generic, /Do not include the method/);
+    assert.doesNotMatch(generic, /disambiguating qualifiers/);
+  });
+
+  it('only claims "several facts" when no block reason was recorded', () => {
+    assert.match(panelSource, /isPartialFrontStub && !rejectionReason/);
+  });
+
   it('validates fact-picker cards through the same Front and Cloze guardrails', () => {
     const source = 'The term deep learning was introduced to the machine learning community by Rina Dechter in 1986, and to artificial neural networks by Igor Aizenberg in 2000.';
     assert.equal(
