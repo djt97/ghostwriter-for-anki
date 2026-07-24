@@ -103,3 +103,14 @@ describe('Source rendered/raw view toggle', () => {
     assert.equal(elements.source.focusCount, 1);
   });
 });
+
+describe('source drawer stays coherent after a direct add', () => {
+  it('resetManualFields refreshes the source chrome after clearing fields', () => {
+    // Without this, the collapsed summary preview and the rendered iframe diverge after a
+    // card is sent directly to Anki (the queue path gets the refresh via renderEditor()).
+    assert.match(
+      panelJs,
+      /await clearManualDraftStorage\(\);[\s\S]{0,300}updateOverlaySourceChrome\(\);\n  \};/
+    );
+  });
+});

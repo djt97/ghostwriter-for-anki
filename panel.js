@@ -6432,7 +6432,15 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       const isPartialFrontStub =
         state.fieldId === "front" && !protectedAnswer && getTypedWordCount(existingForCopilot) < 6;
       if (state.fieldId === "front" && !isPartialFrontStub) {
-        maybeRequestBackDraft(frontForBack);
+        const backBlank = !((document.querySelector("#back")?.value || "").trim());
+        if (withOther && backBlank && frontForBack) {
+          // An explicit pair request must still draft the Back when the Front completion
+          // comes back empty — never silently drop the user's intent behind cooldowns.
+          copilot._skipRateLimit = true;
+          requestBackDraftFromFront(frontForBack, { force: true });
+        } else {
+          maybeRequestBackDraft(frontForBack);
+        }
       }
       // "Several facts" is only true when nothing was generated at all. A guard suppression has a
       // known reason — surface that instead, even on a short prefix.
@@ -6569,6 +6577,13 @@ function triggerCopilotNow({ pair = false } = {}) {
   }
   
   if (!targetState?.textarea) { focusFrontAtEnd(); return; }
+
+  // "Fill in the Back": a manual Suggest with an accepted, completed Front and an empty Back
+  // should draft the answer — not try to re-complete the finished question.
+  if (targetState?.fieldId === "front" && frontVal && !backVal
+      && copilot.locks.frontAccepted && !isClozeCopilotActive(frontVal)) {
+    targetState = copilot.fields.get("back") || targetState;
+  }
 
   // Generate both when explicitly asked (pair) OR when editing a blank pair.
   const editing = targetState?.fieldId || copilot.lastFocusedField || "front";
@@ -11821,6 +11836,9 @@ async function addToAnki() {
     resetCopilotLocks();
     cancelCopilotRequests();
     await clearManualDraftStorage();
+    // Keep the source drawer coherent after the fields clear — the queue path gets this
+    // via renderEditor(); without it the summary preview and rendered iframe diverge.
+    updateOverlaySourceChrome();
   };
 
   try {

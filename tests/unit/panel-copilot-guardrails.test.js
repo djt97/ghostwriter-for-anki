@@ -1403,3 +1403,18 @@ describe('panel.js shortcut coaching', () => {
     assert.ok(panelSource.includes('data-field-coach'));
   });
 });
+
+describe('manual Suggest fills an empty Back', () => {
+  it('retargets a manual Suggest from an accepted Front to the empty Back', () => {
+    const trigger = extractFunction(panelSource, 'triggerCopilotNow');
+    assert.match(trigger, /copilot\.locks\.frontAccepted && !isClozeCopilotActive\(frontVal\)/);
+    assert.match(trigger, /targetState = copilot\.fields\.get\("back"\) \|\| targetState;/);
+  });
+
+  it('an explicit pair request force-drafts the Back even when the Front completion is empty', () => {
+    // Both the success path and the empty-result dead end must use the forced call,
+    // never the cooldown/manualOnly-gated maybeRequestBackDraft alone.
+    const forced = (panelSource.match(/requestBackDraftFromFront\(frontForBack, \{ force: true \}\)/g) || []).length;
+    assert.ok(forced >= 2, `expected forced back-draft in success and dead-end paths, found ${forced}`);
+  });
+});
