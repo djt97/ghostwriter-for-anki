@@ -33,7 +33,7 @@ const CARD = `
   <div style="width:420px;background:#fffefb;border-radius:16px;box-shadow:0 30px 60px -20px #0008;overflow:hidden;font-size:14px">
     <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #efede6;color:#26251f;font-weight:600">
       <img src="${ICON}" style="width:18px;height:18px;border-radius:4px"> Ghostwriter for Anki
-      <span style="margin-left:auto;color:#9d9a8d;font-weight:500;font-size:12px">v0.4.1</span>
+      <span style="margin-left:auto;color:#9d9a8d;font-weight:500;font-size:12px">v0.5.0</span>
     </div>
     <div style="margin:14px 16px 0;background:#efede6;border-radius:10px;padding:10px 12px;color:#4b4a42;font-size:12.5px;line-height:1.4">
       <b style="color:#6e6b60;letter-spacing:.04em;font-size:11px">SOURCE</b> &nbsp;The spacing effect: information is remembered better when study is spread over time than crammed into one session…</div>

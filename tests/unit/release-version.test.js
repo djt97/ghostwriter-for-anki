@@ -10,8 +10,8 @@ function readJson(relativePath) {
 }
 
 describe('release version metadata', () => {
-  it('keeps the 0.4.1 manifest, package metadata, lockfile, and README in sync', () => {
-    const expectedVersion = '0.4.1';
+  it('keeps the 0.5.0 manifest, package metadata, lockfile, and README in sync', () => {
+    const expectedVersion = '0.5.0';
     const manifest = readJson('manifest.json');
     const packageJson = readJson('package.json');
     const packageLock = readJson('package-lock.json');

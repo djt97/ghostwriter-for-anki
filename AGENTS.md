@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## What this is
 
-Ghostwriter for Anki — a Chrome/Edge Manifest V3 extension (v0.4.1) for AI-assisted Anki flashcard creation. Integrates with AnkiConnect (add-on 2055492159) running in desktop Anki. Supports Google Gemini, OpenAI, and UltimateAI as LLM providers.
+Ghostwriter for Anki — a Chrome/Edge Manifest V3 extension (v0.5.0) for AI-assisted Anki flashcard creation. Integrates with AnkiConnect (add-on 2055492159) running in desktop Anki. Supports Google Gemini, OpenAI, and UltimateAI as LLM providers.
 
 ## Build and test commands
 
