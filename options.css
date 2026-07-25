@@ -12,7 +12,7 @@
   --danger: #e0938d;
   --radius: 8px;
   --shadow: 0 10px 24px rgba(0,0,0,.4);
-  --input-bg: #0f172a;
+  --input-bg: #201f1a;
 }
 
 /* Automatic light theme when following OS preference */
@@ -31,7 +31,7 @@
     --danger: #a3352c;
     --radius: 8px;
     --shadow: 0 18px 40px rgba(15,23,42,.12);
-    --input-bg: #ffffff;
+    --input-bg: #fffefb;
   }
 }
 
@@ -50,7 +50,7 @@
   --danger: #e0938d;
   --radius: 8px;
   --shadow: 0 10px 24px rgba(0,0,0,.4);
-  --input-bg: #0f172a;
+  --input-bg: #201f1a;
 }
 
 :root[data-theme="light"] {
@@ -67,7 +67,7 @@
   --danger: #a3352c;
   --radius: 8px;
   --shadow: 0 18px 40px rgba(15,23,42,.12);
-  --input-bg: #ffffff;
+  --input-bg: #fffefb;
 }
 
 html {

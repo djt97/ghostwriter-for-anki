@@ -1725,13 +1725,6 @@ $("#copyExtOrigin").addEventListener("click", async () => {
       root.removeAttribute('data-theme');
     }
 
-    const badgeText = document.getElementById('themeBadgeText');
-    if (badgeText) {
-      let label = 'Theme: System';
-      if (mode === 'light') label = 'Theme: Light';
-      if (mode === 'dark') label = 'Theme: Dark';
-      badgeText.textContent = label;
-    }
   }
 
   function initThemeControls() {
@@ -1769,6 +1762,19 @@ $("#copyExtOrigin").addEventListener("click", async () => {
       const mode = stored || defaultMode;
       select.value = mode;
       applyThemeMode(mode);
+    }
+
+    // Follow changes made from the editor-header toggle while this page is open
+    if (hasChromeStorage) {
+      try {
+        chrome.storage.onChanged.addListener((changes, areaName) => {
+          if (areaName === 'sync' && THEME_KEY in changes) {
+            const mode = changes[THEME_KEY]?.newValue || defaultMode;
+            select.value = mode;
+            applyThemeMode(mode);
+          }
+        });
+      } catch {}
     }
 
     // Persist and apply on change

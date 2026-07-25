@@ -7333,6 +7333,47 @@ function applyContentFontPreference(opts) {
   document.documentElement.dataset.contentFont = opts?.contentFont === "sans" ? "sans" : "serif";
 }
 
+// Theme (shared with the options page via the sync key qfThemeMode): "system" defers to the
+// OS scheme; "light"/"dark" stamp data-theme so the explicit token overrides win.
+const THEME_MODE_KEY = "qfThemeMode";
+const THEME_MODES = ["system", "light", "dark"];
+const THEME_GLYPHS = { system: "◐", light: "☀", dark: "☾" };
+let currentThemeMode = "system";
+
+function applyThemeMode(mode) {
+  currentThemeMode = THEME_MODES.includes(mode) ? mode : "system";
+  const root = document.documentElement;
+  if (currentThemeMode === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", currentThemeMode);
+  const btn = $("#themeToggle");
+  if (btn) {
+    btn.textContent = THEME_GLYPHS[currentThemeMode];
+    const label = currentThemeMode[0].toUpperCase() + currentThemeMode.slice(1);
+    btn.title = `Theme: ${label} — click to change`;
+    btn.setAttribute("aria-label", `Theme: ${label}`);
+  }
+}
+
+function setupThemeControls() {
+  try {
+    chrome.storage.sync.get({ [THEME_MODE_KEY]: "system" }, (items) => {
+      applyThemeMode(items?.[THEME_MODE_KEY] || "system");
+    });
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === "sync" && THEME_MODE_KEY in changes) {
+        applyThemeMode(changes[THEME_MODE_KEY]?.newValue || "system");
+      }
+    });
+  } catch {
+    applyThemeMode("system");
+  }
+  $("#themeToggle")?.addEventListener("click", () => {
+    const next = THEME_MODES[(THEME_MODES.indexOf(currentThemeMode) + 1) % THEME_MODES.length];
+    applyThemeMode(next);
+    try { chrome.storage.sync.set({ [THEME_MODE_KEY]: next }); } catch {}
+  });
+}
+
 function applySurfaceModeClass() {
   const surface = getEditorSurface();
   document.documentElement.dataset.editorSurface = surface;
@@ -13116,6 +13157,7 @@ async function applyEditorViewModeFromOptions() {
 
 applySurfaceModeClass();
 getOptions().then(applyContentFontPreference).catch(() => {});
+setupThemeControls();
 window.addEventListener("hashchange", applySurfaceModeClass);
 
 // Initialise once, then on resize

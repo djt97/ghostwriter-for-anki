@@ -52,6 +52,38 @@
         --shadow-md:    0 10px 24px rgba(0,0,0,.65), 0 2px 8px rgba(0,0,0,.5);
       }
     }
+    /* Explicit theme choice (qfThemeMode via data-theme on <html>) beats the OS scheme
+       in BOTH directions; without data-theme the media query above decides. */
+    :root[data-theme="dark"] {
+      --bg:           #1b1a16;
+      --surface:      #232219;
+      --surface-2:    #2a2920;
+      --border:       #38362c;
+      --text:         #eae7dd;
+      --muted:        #9d9a8d;
+      --accent:       #8fb89b;
+      --accent-ink:   #1b1a16;
+      --ring:         color-mix(in oklab, var(--accent) 30%, black);
+      --input-bg:     #232219;
+      --input-border: #3d3b30;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,.6), 0 1px 1px rgba(0,0,0,.5);
+      --shadow-md:    0 10px 24px rgba(0,0,0,.65), 0 2px 8px rgba(0,0,0,.5);
+    }
+    :root[data-theme="light"] {
+      --bg:           #f7f6f2;
+      --surface:      #fffefb;
+      --surface-2:    #efede6;
+      --border:       #e2dfd5;
+      --text:         #26251f;
+      --muted:        #6e6b60;
+      --accent:       #42604a;
+      --accent-ink:   #f4f6f2;
+      --ring:         color-mix(in oklab, var(--accent) 30%, white);
+      --input-bg:     #fffefb;
+      --input-border: var(--border);
+      --shadow-sm:    0 1px 2px rgba(38,37,31,.06), 0 1px 1px rgba(38,37,31,.04);
+      --shadow-md:    0 10px 24px rgba(38,37,31,.12), 0 2px 8px rgba(38,37,31,.08);
+    }
 
     /* ---------- Base ---------- */
     * { box-sizing: border-box; }
@@ -91,6 +123,19 @@
     .header-review-btn {
       display: none;
     }
+    .header-theme-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .header-theme-btn:hover { color: var(--text); border-color: var(--muted); }
     .queue-badge {
       min-width: 18px;
       height: 18px;
@@ -1619,6 +1664,7 @@
       <button type="button" id="overlayReviewQueue" class="header-review-btn">
         Review Queue <span id="overlayReviewBadge" class="queue-badge">0</span>
       </button>
+      <button type="button" id="themeToggle" class="header-theme-btn" title="Theme: System — click to change">◐</button>
       <a href="options.html" target="_blank" class="header-settings-link">Settings</a>
     </div>
   </header>

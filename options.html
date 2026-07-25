@@ -21,6 +21,7 @@
       <a href="#connection" data-options-nav="connection" aria-current="page">Connection</a>
       <a href="#copilot" data-options-nav="copilot">Copilot</a>
       <a href="#defaults" data-options-nav="defaults">Defaults</a>
+      <a href="#style" data-options-nav="style">Style</a>
       <a href="#setup" data-options-nav="setup">Setup</a>
       <a href="#help" data-options-nav="help">Help</a>
       <a href="#privacy" data-options-nav="privacy">Privacy</a>
@@ -48,14 +49,6 @@
                 Use 100 included model requests per browser profile, or choose your own provider.
               </p>
             </div>
-            <span class="badge theme-badge">
-              <span id="themeBadgeText" class="small">Theme: System</span>
-              <select id="themeMode" aria-label="Theme">
-                <option value="system">System</option>
-                <option value="dark">Dark</option>
-                <option value="light">Light</option>
-              </select>
-            </span>
           </div>
         </summary>
         <div class="accordion-body">
@@ -243,14 +236,6 @@
                 <p class="small">Used when you trigger Ghostwriter from highlighted text. Overlay is the focused default.</p>
               </div>
               <div class="field">
-                <label for="contentFont">Card text font</label>
-                <select id="contentFont">
-                  <option value="serif" selected>Bookish serif (Iowan Old Style)</option>
-                  <option value="sans">Humanist sans (Avenir Next)</option>
-                </select>
-                <p class="small">The face used for the card fields you write in. The surrounding controls keep the interface font either way.</p>
-              </div>
-              <div class="field">
                 <label for="editorViewMode">Editor layout (panel &amp; overlay)</label>
                 <select id="editorViewMode">
                   <option value="auto" selected>Auto (desktop / mobile)</option>
@@ -359,6 +344,33 @@
           </div>
         </div>
       </details>
+    </section>
+
+    <section class="card options-pane" id="style" data-options-pane="style" hidden>
+      <div class="accordion-body">
+        <p class="eyebrow">Appearance</p>
+        <h2>Style</h2>
+        <p class="description">Theme and typography, shared by the overlay, side panel, and this page.</p>
+        <div class="grid two">
+          <div class="field">
+            <label for="themeMode">Theme</label>
+            <select id="themeMode">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <p class="small">Also togglable from the editor header (◐). "System" follows your OS setting.</p>
+          </div>
+          <div class="field">
+            <label for="contentFont">Card text font</label>
+            <select id="contentFont">
+              <option value="serif" selected>Bookish serif (Iowan Old Style)</option>
+              <option value="sans">Humanist sans (Avenir Next)</option>
+            </select>
+            <p class="small">The face used for the card fields you write in. The surrounding controls keep the interface font either way.</p>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="card options-pane" id="setup" data-options-pane="setup" hidden>
