@@ -15,14 +15,15 @@
         -webkit-font-smoothing: antialiased;
       }
 
-      /* 🔹 Give the iframe a sensible text color for light & dark mode */
+      /* Fallback text colors (warm ink, matching the panel palette); the panel sends its
+         resolved themed color with each preview-update and that inline style wins. */
       body {
-        color: #020617; /* slate-950-ish for light mode */
+        color: #26251f;
       }
 
       @media (prefers-color-scheme: dark) {
         body {
-          color: #e5e7eb; /* slate-200-ish for dark mode */
+          color: #eae7dd;
         }
       }
 

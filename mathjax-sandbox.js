@@ -143,7 +143,19 @@
       });
   }
 
+  function applyPreviewColor(color) {
+    // The panel resolves its themed text color (data-theme aware) and sends it along;
+    // without this the iframe's fallback colors track the OS scheme, which goes
+    // unreadable whenever the user forces the opposite theme.
+    if (typeof color !== 'string' || !color) return;
+    try {
+      if (window.CSS && CSS.supports && !CSS.supports('color', color)) return;
+    } catch {}
+    document.body.style.color = color;
+  }
+
   function handlePreviewPayload(data) {
+    applyPreviewColor(data.color);
     // Newer protocol: HTML is pre-rendered in the panel.
     if (typeof data.html === 'string') {
       runMathJax(data.html);
