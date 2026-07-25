@@ -6857,6 +6857,7 @@ async function initCopilot() {
         copilot.timeoutMs      = Number.isFinite(+next.copilotTimeoutMs) ? +next.copilotTimeoutMs : copilot.timeoutMs;
         shortcutCoach.enabled = next.showShortcutHints !== false;
         setCopilotEnabled(next.autoCompleteAI !== false);
+        applyContentFontPreference(next);
         updateShortcutCoach();
         updateShortcutHelpText();
       }
@@ -7325,6 +7326,11 @@ function updateOverlaySourceChrome() {
   updateSourceRenderedPreview().catch((err) => {
     console.warn("Source preview update failed", err);
   });
+}
+
+// Card content face (serif "Iowan Old Style" vs sans "Avenir Next") — CSS reads this off <html>.
+function applyContentFontPreference(opts) {
+  document.documentElement.dataset.contentFont = opts?.contentFont === "sans" ? "sans" : "serif";
 }
 
 function applySurfaceModeClass() {
@@ -13109,6 +13115,7 @@ async function applyEditorViewModeFromOptions() {
 }
 
 applySurfaceModeClass();
+getOptions().then(applyContentFontPreference).catch(() => {});
 window.addEventListener("hashchange", applySurfaceModeClass);
 
 // Initialise once, then on resize

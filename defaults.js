@@ -41,6 +41,7 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
   showNotesField: false,
 
   // Editor
+  contentFont: "serif",
   editorViewMode: "auto",
   defaultEditorSurface: "overlay",
   closeOverlayAfterQueue: false,

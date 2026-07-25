@@ -1033,6 +1033,7 @@ async function save() {
     showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "off"),
     showSourceModePill: !!$("#showSourceModePill")?.checked,
     showShortcutHints: document.querySelector("#showShortcutHints")?.checked !== false,
+    contentFont: document.querySelector("#contentFont")?.value === "sans" ? "sans" : "serif",
     editorViewMode: document.querySelector("#editorViewMode")?.value || base.editorViewMode || "auto",
     defaultEditorSurface: normalizeEditorSurface(document.querySelector("#defaultEditorSurface")?.value || base.defaultEditorSurface),
     closeOverlayAfterQueue: !!document.querySelector("#closeOverlayAfterQueue")?.checked,
@@ -1152,6 +1153,8 @@ async function load() {
   if (pill) pill.checked = opts.showSourceModePill !== false;
   const shortcutHints = document.querySelector("#showShortcutHints");
   if (shortcutHints) shortcutHints.checked = opts.showShortcutHints ?? D.showShortcutHints ?? true;
+  const contentFontSelect = document.querySelector("#contentFont");
+  if (contentFontSelect) contentFontSelect.value = opts.contentFont === "sans" ? "sans" : "serif";
   const viewSelect = document.querySelector("#editorViewMode");
   if (viewSelect) {
     viewSelect.value = opts.editorViewMode || "auto";

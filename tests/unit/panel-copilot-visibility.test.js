@@ -29,9 +29,15 @@ describe('ghost text alignment', () => {
   it('pins the textarea and the ghost overlay to one explicit font', () => {
     // Without this, the textarea uses the browser's default (monospace ~13.3px) while the
     // ghost inherits the body sans font — the suggestion renders at the wrong size/position.
-    assert.match(panelHtml, /\.qf-ghost-wrap\s*\{[^}]*font-family:\s*ui-monospace/);
+    // The pinned stack is the user's card-content face (serif/sans via data-content-font);
+    // what matters for alignment is that wrap, textarea, and ghost share it.
+    assert.match(panelHtml, /\.qf-ghost-wrap\s*\{[^}]*font-family:\s*var\(--content-font\)/);
     assert.match(panelHtml, /\.qf-ghost-wrap\s*\{[^}]*line-height:\s*1\.5/);
     assert.match(panelHtml, /\.qf-ghost-wrap textarea\s*\{\s*font:\s*inherit/);
+    // both faces resolve to explicit stacks, and the sans override exists
+    assert.match(panelHtml, /--content-font-serif:\s*"Iowan Old Style"/);
+    assert.match(panelHtml, /--content-font-sans:\s*"Avenir Next"/);
+    assert.match(panelHtml, /:root\[data-content-font="sans"\]\s*\{\s*--content-font:\s*var\(--content-font-sans\)/);
   });
 
   it('mirrors the textarea box: 1px border offset and identical wrapping rules', () => {

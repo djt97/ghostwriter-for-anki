@@ -9,39 +9,45 @@
   />
   <title>Ghostwriter for Anki</title>
   <style>
-    /* ---------- Design tokens (light) ---------- */
+    /* ---------- Design tokens (light) — "Reading Room" ---------- */
     :root {
-      --bg:            #f8fafc;  /* slate-50 */
-      --surface:       #ffffff;  /* card surface */
-      --surface-2:     #f1f5f9;  /* subtle panels */
-      --border:        #e2e8f0;  /* soft strokes */
-      --text:          #0f172a;  /* slate-900 */
-      --muted:         #475569;  /* slate-600 */
-      --accent:        #2563eb;  /* blue-600 (AA on white) */
-      --accent-ink:    #ffffff;
+      --bg:            #f7f6f2;  /* warm paper-grey */
+      --surface:       #fffefb;  /* card surface */
+      --surface-2:     #efede6;  /* subtle panels */
+      --border:        #e2dfd5;  /* soft warm strokes */
+      --text:          #26251f;  /* warm near-black */
+      --muted:         #6e6b60;  /* warm grey */
+      --accent:        #42604a;  /* laurel green (AA on paper) */
+      --accent-ink:    #f4f6f2;
       --ring:          color-mix(in oklab, var(--accent) 30%, white);
       --radius:        12px;
       --radii-sm:      8px;
-      --shadow-sm:     0 1px 2px rgba(15,23,42,.06), 0 1px 1px rgba(15,23,42,.04);
-      --shadow-md:     0 10px 24px rgba(15,23,42,.12), 0 2px 8px rgba(15,23,42,.08);
-      --input-bg:      #ffffff;
+      --shadow-sm:     0 1px 2px rgba(38,37,31,.06), 0 1px 1px rgba(38,37,31,.04);
+      --shadow-md:     0 10px 24px rgba(38,37,31,.12), 0 2px 8px rgba(38,37,31,.08);
+      --input-bg:      #fffefb;
       --input-border:  var(--border);
       --focus-outline: 3px;
+      /* Card content faces. The user picks serif or sans in Settings; panel.js stamps
+         data-content-font on <html>. Fallbacks cover Windows (Palatino Linotype, Segoe UI). */
+      --content-font-serif: "Iowan Old Style", Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      --content-font-sans:  "Avenir Next", Avenir, Seravek, "Segoe UI", system-ui, sans-serif;
+      --content-font:       var(--content-font-serif);
     }
-    /* ---------- Design tokens (dark) ---------- */
+    :root[data-content-font="sans"] { --content-font: var(--content-font-sans); }
+    /* ---------- Design tokens (dark) — warm study, not slate ---------- */
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg:           #0b1220;  /* near-slate-950 */
-        --surface:      #0f172a;  /* slate-900 */
-        --surface-2:    #111827;  /* slightly lighter than surface */
-        --border:       #1f2937;  /* slate-800 */
-        --text:         #e5e7eb;  /* slate-200 */
-        --muted:        #94a3b8;  /* slate-400 */
-        --accent:       #60a5fa;  /* blue-400 (AA on slate-900) */
-        --accent-ink:   #0b1220;
+        --bg:           #1b1a16;  /* warm dark ground */
+        --surface:      #232219;  /* lamplit surface */
+        --surface-2:    #2a2920;
+        --border:       #38362c;
+        --text:         #eae7dd;  /* warm paper ink */
+        --muted:        #9d9a8d;
+        --accent:       #8fb89b;  /* lighter laurel (AA on dark) */
+        --accent-ink:   #1b1a16;
         --ring:         color-mix(in oklab, var(--accent) 30%, black);
-        --input-bg:     #0f172a;
-        --input-border: #273548;
+        --input-bg:     #232219;
+        --input-border: #3d3b30;
         --shadow-sm:    0 1px 2px rgba(0,0,0,.6), 0 1px 1px rgba(0,0,0,.5);
         --shadow-md:    0 10px 24px rgba(0,0,0,.65), 0 2px 8px rgba(0,0,0,.5);
       }
@@ -58,7 +64,7 @@
     }
     body {
       margin: 0;
-      font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font: 14px/1.45 Seravek, "Gill Sans", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       text-rendering: optimizeLegibility;
@@ -192,11 +198,12 @@
 
     /* The ghost overlay only aligns if the textarea and the overlay share EXACT font metrics.
        Textareas otherwise fall back to the browser's default (monospace, ~13.3px) while the
-       overlay inherits the body font — pin both to one explicit stack on the wrap. */
+       overlay inherits the body font — pin both to one explicit stack on the wrap. Any single
+       face works; the card content face is the user's Settings choice (serif or sans). */
     .qf-ghost-wrap {
       position: relative;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      font-size: 13px;
+      font-family: var(--content-font);
+      font-size: 15px;
       line-height: 1.5;
     }
     .qf-ghost-wrap textarea { font: inherit; line-height: inherit; }
