@@ -815,3 +815,65 @@ describe('copilot-core attribution qualifier repair', () => {
     }
   });
 });
+
+describe('math delimiter guard (ensureMathDelimiters)', () => {
+  const SOURCE = String.raw`Because \(f\) is monotone,
+\[
+f(X^{i\leftarrow1})-f(X^{i\leftarrow0})
+=
+\mathbf 1_{\{i\text{ pivotal}\}}.
+\]`;
+
+  it('wraps a bare-TeX Back answer, using display when the source typeset it as display', () => {
+    assert.equal(
+      core.ensureMathDelimiters(String.raw`\mathbf 1_{\{i\text{ pivotal}\}}`, { source: SOURCE }),
+      String.raw`\[ \mathbf 1_{\{i\text{ pivotal}\}} \]`
+    );
+  });
+
+  it('wraps bare TeX inline when the source has no matching display block', () => {
+    assert.equal(
+      core.ensureMathDelimiters(String.raw`\alpha + \beta`, { source: 'no math here' }),
+      String.raw`\(\alpha + \beta\)`
+    );
+  });
+
+  it('wraps only the math run inside surrounding prose and leaves punctuation outside', () => {
+    assert.equal(
+      core.ensureMathDelimiters(String.raw`does f(X^{i\leftarrow1}) - f(X^{i\leftarrow0}) equal?`, { source: SOURCE }),
+      String.raw`does \(f(X^{i\leftarrow1}) - f(X^{i\leftarrow0})\) equal?`
+    );
+  });
+
+  it('leaves already-delimited math untouched', () => {
+    const ok = String.raw`the value \(f(X^{i\leftarrow1})\) is pivotal`;
+    assert.equal(core.ensureMathDelimiters(ok, { source: SOURCE }), ok);
+  });
+
+  it('does not touch plain prose or subscript-free text', () => {
+    const prose = 'Study spread over time beats cramming.';
+    assert.equal(core.ensureMathDelimiters(prose, { source: SOURCE }), prose);
+    assert.equal(core.ensureMathDelimiters('', { source: SOURCE }), '');
+  });
+
+  it('fails safe when the typed prefix leaves a delimiter open', () => {
+    const suffix = String.raw`- f(X^{i\leftarrow0}) = ?\)`;
+    assert.equal(
+      core.ensureMathDelimiters(suffix, { source: SOURCE, precedingText: String.raw`\(f(X^{i\leftarrow1})` }),
+      suffix
+    );
+  });
+
+  it('fails safe on malformed delimiters in the suggestion itself', () => {
+    const broken = String.raw`\(\mathbf 1_{\{i\}}`;
+    assert.equal(core.ensureMathDelimiters(broken, { source: SOURCE }), broken);
+  });
+
+  it('uses display for multi-line TeX even without a source match', () => {
+    const rows = String.raw`x = 1 \\ y = 2 \\ \dots`;
+    assert.equal(
+      core.ensureMathDelimiters(rows, { source: '' }),
+      String.raw`\[ x = 1 \\ y = 2 \\ \dots \]`
+    );
+  });
+});

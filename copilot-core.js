@@ -1402,9 +1402,117 @@
     return repaired === front ? "" : repaired;
   }
 
+  // ---- Math delimiter guard ----
+  // Models sometimes emit raw TeX (e.g. "\mathbf 1_{\{i\text{ pivotal}\}}") with no
+  // \(...\)/\[...\] delimiters, which reaches Anki as literal backslash soup. General
+  // repair: leave already-delimited segments untouched, locate bare TeX runs in the
+  // remaining text (a run needs hard evidence — a \command or a sub/superscript brace —
+  // and extends across adjacent math-shaped tokens), then wrap each run. Display form is
+  // used when the source typeset the same content in display math or the run itself needs
+  // multiple lines; inline otherwise. Fails safe: stray/unbalanced delimiters => no change.
+  const TEX_EVIDENCE_RE = /\\[a-zA-Z]+|[_^]\{/;
+
+  function hasStrayMathDelimiters(value) {
+    MATH_SEGMENT_RE.lastIndex = 0;
+    const stripped = String(value || "").replace(MATH_SEGMENT_RE, "");
+    return /\\\(|\\\)|\\\[|\\\]|\$\$/.test(stripped);
+  }
+
+  function isMathContinuationToken(token) {
+    if (!token) return false;
+    if (TEX_EVIDENCE_RE.test(token)) return true;
+    if (/[{}\\]/.test(token)) return true;
+    if (/^[-+*/=<>≤≥≠±·~]+$/.test(token)) return true;
+    if (/^[A-Za-z](['?.,:;!)]*)?$/.test(token) && token.length <= 3) return true;
+    if (/^\(?-?[0-9]+([.,][0-9]+)?\)?[.,;:?!]*$/.test(token)) return true;
+    if (/^[A-Za-z0-9(),'|.]*[=^_][A-Za-z0-9(),'|.]*$/.test(token)) return true;
+    return false;
+  }
+
+  function normalizeMathWhitespace(value) {
+    return String(value || "").replace(/\s+/g, "");
+  }
+
+  function sourceUsesDisplayMathFor(source, run) {
+    const needle = normalizeMathWhitespace(run);
+    if (!needle) return false;
+    const text = String(source || "");
+    const blocks = [];
+    for (const match of text.matchAll(/\\\[([\s\S]*?)\\\]/g)) blocks.push(match[1]);
+    for (const match of text.matchAll(/\$\$([\s\S]*?)\$\$/g)) blocks.push(match[1]);
+    for (const match of text.matchAll(/\\begin\{[a-z]+\*?\}([\s\S]*?)\\end\{[a-z]+\*?\}/g)) blocks.push(match[1]);
+    return blocks.some((block) => normalizeMathWhitespace(block).includes(needle));
+  }
+
+  function wrapBareMathRuns(chunk, source, { allowDisplayPromotion = false } = {}) {
+    if (!TEX_EVIDENCE_RE.test(chunk)) return chunk;
+    const parts = chunk.split(/(\s+)/);
+    const isToken = (i) => i % 2 === 0 && parts[i] !== "";
+    const runs = [];
+    for (let i = 0; i < parts.length; i += 2) {
+      if (!isToken(i) || !TEX_EVIDENCE_RE.test(parts[i])) continue;
+      let start = i;
+      let end = i;
+      while (start - 2 >= 0 && isToken(start - 2) && isMathContinuationToken(parts[start - 2])) start -= 2;
+      while (end + 2 < parts.length && isToken(end + 2) && isMathContinuationToken(parts[end + 2])) end += 2;
+      const prev = runs[runs.length - 1];
+      if (prev && start <= prev.end + 2) prev.end = Math.max(prev.end, end);
+      else runs.push({ start, end });
+      i = Math.max(i, end);
+    }
+    if (!runs.length) return chunk;
+    let out = "";
+    let cursor = 0;
+    for (const run of runs) {
+      out += parts.slice(cursor, run.start).join("");
+      let runText = parts.slice(run.start, run.end + 1).join("");
+      // sentence punctuation belongs to the prose, not the formula
+      const trailing = runText.match(/[.?!,;:]+$/)?.[0] || "";
+      if (trailing) runText = runText.slice(0, -trailing.length);
+      // Display math is a block: only promote to \[...\] when the formula IS the whole
+      // suggestion (a standalone answer); math inside a sentence stays inline even if the
+      // source typeset the same content as display.
+      const standalone = allowDisplayPromotion
+        && runs.length === 1
+        && !parts.slice(0, run.start).join("").trim()
+        && !parts.slice(run.end + 1).join("").replace(/^[.?!,;:\s]+/, "").trim();
+      const display = /\\\\|\\begin\{/.test(runText)
+        || (standalone && sourceUsesDisplayMathFor(source, runText));
+      out += display ? `\\[ ${runText} \\]` : `\\(${runText}\\)`;
+      out += trailing;
+      cursor = run.end + 1;
+    }
+    out += parts.slice(cursor).join("");
+    return out;
+  }
+
+  function ensureMathDelimiters(text, { source = "", precedingText = "" } = {}) {
+    const value = String(text || "");
+    if (!value || !TEX_EVIDENCE_RE.test(value)) return value;
+    // An open delimiter in the prefix (or a malformed one here) means we cannot know the
+    // math boundaries — do nothing rather than double-wrap.
+    if (hasStrayMathDelimiters(value) || hasStrayMathDelimiters(precedingText)) return value;
+    MATH_SEGMENT_RE.lastIndex = 0;
+    const hasDelimitedSegments = MATH_SEGMENT_RE.test(value);
+    MATH_SEGMENT_RE.lastIndex = 0;
+    const wrapOpts = { allowDisplayPromotion: !hasDelimitedSegments };
+    let out = "";
+    let cursor = 0;
+    let match;
+    while ((match = MATH_SEGMENT_RE.exec(value))) {
+      out += wrapBareMathRuns(value.slice(cursor, match.index), source, wrapOpts);
+      out += match[0];
+      cursor = MATH_SEGMENT_RE.lastIndex;
+    }
+    out += wrapBareMathRuns(value.slice(cursor), source, wrapOpts);
+    return out;
+  }
+
   return {
     areGroundingFactsEquivalent,
     buildTextIndex,
+    ensureMathDelimiters,
+    hasStrayMathDelimiters,
     buildClozeGuardRetryPrompt,
     classifyFrontCompletion,
     cleanClozeCompletionText,

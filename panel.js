@@ -3603,10 +3603,22 @@ function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWord
   const configuredCap = typeof maxWords === "number"
     ? maxWords
     : (role === "front" ? copilot.frontWordCap : copilot.backWordCap);
+  // Bare-TeX repair (see COPILOT_CORE.ensureMathDelimiters): wraps undelimited math,
+  // consulting the source field for inline vs display; no-op when the typed prefix has an
+  // open delimiter the suggestion may be continuing. ($ is absent in the test harness.)
+  const wrapBareMath = (value) => {
+    if (!value) return value;
+    const sourceText = (typeof $ === "function" && $("#source")?.value) || "";
+    return COPILOT_CORE?.ensureMathDelimiters?.(value, {
+      source: sourceText,
+      precedingText: existingText || "",
+    }) ?? value;
+  };
+
   if (role === "front") {
-    return COPILOT_CORE?.normalizeFrontSuffix?.(existingText, text, {
+    return wrapBareMath(COPILOT_CORE?.normalizeFrontSuffix?.(existingText, text, {
       maxFrontWords: configuredCap,
-    }) || "";
+    }) || "");
   }
 
   text = stripExistingPrefixFromCompletion(text, existingText);
@@ -3616,7 +3628,7 @@ function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWord
   text = truncateCopilotSuggestionWords(text, cap, role);
 
   // IMPORTANT: do NOT drop suffix matches; streaming models often send suffix-sized deltas first.
-  return text;
+  return wrapBareMath(text);
 }
 
 function cleanClozeCompletionText(raw) {
