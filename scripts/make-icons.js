@@ -10,31 +10,35 @@ const LAUREL = '#42604a';
 const PAPER = '#f7f6f2';
 const LINE = '#e2dfd5';
 
-// Writing lines clutter the mark below ~32px; the scalloped silhouette carries it alone.
-function markSvg(lines) {
+// Every size carries both writing lines so the mark is identical across toolbar, menu,
+// and management page; small sizes thicken the lines so they survive rasterisation.
+function markSvg(thick) {
+  const h = thick ? 8 : 5;
+  const y1 = thick ? 31 : 34;
+  const y2 = thick ? 46 : 47;
   return `<svg viewBox="18 12 66 66" xmlns="http://www.w3.org/2000/svg">
     <path d="M20 18 h56 a6 6 0 0 1 6 6 v44 q-4.5 8 -9.3 0 q-4.7 -8 -9.4 0 q-4.6 8 -9.3 0 q-4.7 -8 -9.4 0 q-4.6 8 -9.3 0 q-4.7 -8 -9.3 0 q-4.8 8 -6 2 v-46 a6 6 0 0 1 6 -6 z" fill="${LAUREL}"/>
-    ${lines >= 1 ? `<rect x="30" y="34" width="36" height="${lines === 1 ? 6 : 5}" rx="2.5" fill="${PAPER}"/>` : ''}
-    ${lines >= 2 ? `<rect x="30" y="47" width="24" height="5" rx="2.5" fill="${PAPER}" opacity=".65"/>` : ''}
+    <rect x="30" y="${y1}" width="36" height="${h}" rx="${h / 2}" fill="${PAPER}"/>
+    <rect x="30" y="${y2}" width="24" height="${h}" rx="${h / 2}" fill="${PAPER}" opacity=".75"/>
   </svg>`;
 }
 
 const SIZES = [
-  { file: 'icon16.png', px: 16, lines: 0 },
-  { file: 'icon19.png', px: 19, lines: 0 },
-  { file: 'icon32.png', px: 32, lines: 1 },
-  { file: 'icon38.png', px: 38, lines: 1 },
-  { file: 'icon48.png', px: 48, lines: 2 },
-  { file: 'icon128.png', px: 128, lines: 2 },
+  { file: 'icon16.png', px: 16 },
+  { file: 'icon19.png', px: 19 },
+  { file: 'icon32.png', px: 32 },
+  { file: 'icon38.png', px: 38 },
+  { file: 'icon48.png', px: 48 },
+  { file: 'icon128.png', px: 128 },
 ];
 
-function tileHtml({ px, lines }) {
+function tileHtml({ px }) {
   const radius = Math.round(px * 0.22);
   const mark = Math.round(px * 0.82);
   return `<meta charset=utf-8><style>*{margin:0}body{background:transparent}</style>
     <div style="width:${px}px;height:${px}px;border-radius:${radius}px;background:${PAPER};
                 box-shadow:inset 0 0 0 1px ${LINE};display:grid;place-items:center">
-      <div style="width:${mark}px;height:${mark}px">${markSvg(lines)}</div>
+      <div style="width:${mark}px;height:${mark}px">${markSvg(px < 40)}</div>
     </div>`;
 }
 
