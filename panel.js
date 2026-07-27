@@ -7391,6 +7391,14 @@ function applyThemeMode(mode) {
   const root = document.documentElement;
   if (currentThemeMode === "system") root.removeAttribute("data-theme");
   else root.setAttribute("data-theme", currentThemeMode);
+  // Re-ink any live math previews: their sandbox iframes cannot see data-theme.
+  try {
+    document.querySelectorAll("iframe").forEach((frame) => {
+      if (frame.dataset.previewChannel) {
+        postPreviewFrameMessage(frame, { type: "quickflash:previewColor" });
+      }
+    });
+  } catch {}
   const btn = $("#themeToggle");
   if (btn) {
     btn.textContent = THEME_GLYPHS[currentThemeMode];
@@ -9218,19 +9226,26 @@ async function inlinePreviewImages(text) {
 }
 
 function getPreviewTextColor(sourceEl) {
+  // A textarea in inline-preview mode has color:transparent (the iframe shows instead) —
+  // that must never become the preview's ink. Fall through to the themed document color,
+  // which resolves var(--text) with any data-theme override applied.
+  const isInvisible = (value) => !value
+    || value === "transparent"
+    || /^rgba\([^)]*,\s*0\)$/.test(value);
   let textColor = "";
   try {
     if (sourceEl) {
       textColor = getComputedStyle(sourceEl).color || "";
     }
-    if (!textColor) {
-      textColor = getComputedStyle(document.documentElement).color || "";
+    if (isInvisible(textColor)) {
+      // body carries color: var(--text); documentElement computes to default black
+      textColor = getComputedStyle(document.body || document.documentElement).color || "";
     }
   } catch (err) {
     console.warn("[QuickFlash] Failed to read preview text color:", err);
     textColor = "";
   }
-  return textColor;
+  return isInvisible(textColor) ? "" : textColor;
 }
 
 function getExtensionMessageOrigin() {
@@ -9289,8 +9304,12 @@ function setPreviewFrameSrc(frame) {
 
 function postPreviewFrameMessage(frame, payload) {
   const channel = ensurePreviewFrameChannel(frame);
+  // Every preview payload carries the panel's resolved text color: the sandbox iframe only
+  // sees the OS scheme, so without this a forced light/dark theme renders math in the
+  // opposite scheme's ink (invisible in the worst case).
+  const color = payload?.color || getPreviewTextColor(null);
   frame.contentWindow?.postMessage(
-    { ...payload, channel },
+    { ...payload, color, channel },
     SANDBOX_TARGET_ORIGIN
   );
 }

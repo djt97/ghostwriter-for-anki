@@ -185,6 +185,12 @@
       return;
     }
 
+    // Color-only refresh (theme toggled in the panel; content unchanged)
+    if (type === 'quickflash:previewColor') {
+      applyPreviewColor(data.color);
+      return;
+    }
+
     // New protocol
     if (type === 'quickflash:previewUpdate') {
       handlePreviewPayload(data);

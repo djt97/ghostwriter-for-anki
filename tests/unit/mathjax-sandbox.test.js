@@ -45,7 +45,7 @@ describe('MathJax sandbox messaging', () => {
     assert.ok(panelSource.includes('postPreviewFrameMessage(frame, queued)'));
     assert.ok(panelSource.includes('url.searchParams.set("parentOrigin", parentOrigin)'));
     assert.ok(panelSource.includes('url.searchParams.set("channel", channel)'));
-    assert.ok(panelSource.includes('{ ...payload, channel }'));
+    assert.ok(panelSource.includes('{ ...payload, color, channel }'));
     assert.ok(panelSource.includes('SANDBOX_TARGET_ORIGIN'));
   });
 
