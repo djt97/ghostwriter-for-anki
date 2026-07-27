@@ -1418,3 +1418,47 @@ describe('manual Suggest fills an empty Back', () => {
     assert.ok(forced >= 2, `expected forced back-draft in success and dead-end paths, found ${forced}`);
   });
 });
+
+describe('definition parse survives parenthetical asides and embedded clauses', () => {
+  const ATOMIC = 'the atomic hypothesis (or the atomic fact, or whatever you wish to call it) that all things are made of atoms';
+
+  it('does not fabricate a definition when the copular verb sits in an embedded clause', () => {
+    // Regression: the parser captured "atomic hypothesis (…) that all things" as one
+    // garbage mega-term and then rejected every legitimate Front for this source.
+    assert.equal(copilotFns.inferExplicitDefinitionFromSource(ATOMIC), null);
+  });
+
+  it('allows "What is the atomic hypothesis?" against the Feynman sentence', () => {
+    assert.equal(
+      copilotFns.getFrontSuggestionBlockReason('atomic hypothesis?', 'What is the', {
+        page: { sourceText: ATOMIC, selection: ATOMIC },
+      }),
+      ''
+    );
+  });
+
+  it('harvests parenthetical alias lists for genuine definitions', () => {
+    const def = copilotFns.inferExplicitDefinitionFromSource(
+      'The atomic hypothesis (or the atomic fact) is the idea that all things are made of atoms.'
+    );
+    assert.ok(def, 'copular sentence with alias aside still parses');
+    assert.ok(def.aliases.includes('atomic hypothesis'));
+    assert.ok(def.aliases.includes('atomic fact'));
+    // either alias satisfies the drift guard
+    assert.equal(
+      copilotFns.getFrontSuggestionBlockReason('atomic fact?', 'What is the', {
+        page: { sourceText: 'The atomic hypothesis (or the atomic fact) is the idea that all things are made of atoms.' },
+      }),
+      ''
+    );
+  });
+
+  it('still blocks a Front that substitutes a term the source never defined', () => {
+    assert.match(
+      copilotFns.getFrontSuggestionBlockReason('energy organelle?', 'What is the', {
+        page: { sourceText: 'The mitochondrion is the powerhouse of the cell.' },
+      }),
+      /substitutes a related term/
+    );
+  });
+});

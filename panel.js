@@ -3936,10 +3936,31 @@ function normalizeDefinedTermAlias(value) {
 }
 
 function inferExplicitDefinitionFromSource(sourceText) {
-  const sentence = String(sourceText || "")
+  const rawSentence = String(sourceText || "")
     .trim()
     .split(/(?:[.!?]\s+|\n)/)[0]
     ?.trim() || "";
+  if (!rawSentence) return null;
+
+  // Parenthetical asides break the copular parse (their commas and clauses get swallowed
+  // into the captured term). Lift them out before matching — and when the aside is an
+  // alias list ("(or the atomic fact, or whatever you wish to call it)"), keep each chunk
+  // as an alias candidate for the defined term.
+  const parentheticalAliases = [];
+  const sentence = rawSentence
+    .replace(/\(([^()]*)\)/g, (whole, inner) => {
+      const aliasLead = inner.match(
+        /^\s*(?:or|also\s+(?:called|known\s+as|termed)|a\.?k\.?a\.?|sometimes\s+called|i\.?e\.?)\b[,:]?\s*(.*)$/i
+      );
+      if (aliasLead?.[1]) {
+        for (const chunk of aliasLead[1].split(/,\s*(?:or\s+)?|\s+or\s+/)) {
+          if (chunk.trim()) parentheticalAliases.push(chunk.trim());
+        }
+      }
+      return " ";
+    })
+    .replace(/\s{2,}/g, " ")
+    .trim();
   if (!sentence) return null;
 
   const patterns = [
@@ -3965,9 +3986,17 @@ function inferExplicitDefinitionFromSource(sourceText) {
     if (/^(?:also\s+)?an?\s+(?:example|instance)\s+of\b/i.test(answer)) {
       continue;
     }
+    // A defined term is a noun phrase. If the capture ran into an embedded clause
+    // ("the atomic hypothesis THAT all things are..."), the copular verb belongs to that
+    // clause, not to a definition — better no parse than a garbage mega-term that later
+    // rejects every legitimate Front.
+    if (/\b(?:that|which|who|whose|whom|where|when|because)\b/i.test(rawTerm)) {
+      continue;
+    }
     const aliases = [
       normalizeDefinedTermAlias(rawTerm),
       normalizeDefinedTermAlias(abbreviation),
+      ...parentheticalAliases.map((alias) => normalizeDefinedTermAlias(alias)),
     ];
     const quoted = String(rawTerm || "").match(/["“”']([^"“”']+)["“”']/);
     if (quoted?.[1]) aliases.push(normalizeDefinedTermAlias(quoted[1]));
