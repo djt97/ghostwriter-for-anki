@@ -2323,6 +2323,9 @@ const SOURCE_MODE_KEY = 'quickflash_source_mode_v1'; // 'auto' | 'clipboard' | '
 const clipboardReadState = {
   lastPermissionError: "",
   lastReadError: "",
+  // Whether the most recent read attempt came from an explicit user action
+  // (clipboard button, source-mode control) vs. a silent automatic fallback.
+  lastReadUserInitiated: false,
 };
 
 function normalizeSourceMode(mode) {
@@ -2486,8 +2489,9 @@ function readClipboardWithPasteCommandFallback() {
   }
 }
 
-async function readClipboardSafe({ requestPermission = false } = {}) {
+async function readClipboardSafe({ requestPermission = false, userInitiated = false } = {}) {
   clipboardReadState.lastReadError = "";
+  clipboardReadState.lastReadUserInitiated = !!userInitiated;
   if (requestPermission && !(await ensureClipboardReadPermission())) return "";
   try {
     const text = (await withTimeout(navigator.clipboard.readText(), "", 800))?.trim() || "";
@@ -2516,7 +2520,7 @@ function getClipboardFallbackIssue() {
   if (clipboardReadState.lastPermissionError) {
     return "Clipboard Source is enabled, but Chrome has not granted clipboard access. Reload the extension and accept the clipboard permission prompt.";
   }
-  if (clipboardReadState.lastReadError) {
+  if (clipboardReadState.lastReadError && clipboardReadState.lastReadUserInitiated) {
     return "Clipboard Source is enabled, but Chrome blocked reading the clipboard. Copy the source again, then click Generate or use Clipboard Source mode.";
   }
   return "";
@@ -2556,12 +2560,12 @@ function hasVisibleSourceModeControl() {
 }
 
 // If there is no selection (or mode demands), fill pageCtx.selection from clipboard.
-async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, force = false, requestPermission = false } = {}) {
+async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, force = false, requestPermission = false, userInitiated = false } = {}) {
   if (!force) {
     const opts = await getOptions();
     if (!isClipboardFallbackEnabled(opts)) return false;
   }
-  const clip = await readClipboardSafe({ requestPermission });
+  const clip = await readClipboardSafe({ requestPermission, userInitiated });
   const hasClip = !!clip;
   if (!hasClip && !allowEmpty) return false;
   window.copilot = window.copilot || {};
@@ -2703,10 +2707,10 @@ function renderSourceMode(mode) {
   }
 }
 
-async function ensureSourceFromMode(mode, { wantPaste = false, requestPermission = false } = {}) {
+async function ensureSourceFromMode(mode, { wantPaste = false, requestPermission = false, userInitiated = false } = {}) {
   const normalized = normalizeSourceMode(mode);
   if (normalized === 'clipboard') {
-    await applyClipboardFallback({ wantPaste, allowEmpty: true, force: true, requestPermission });
+    await applyClipboardFallback({ wantPaste, allowEmpty: true, force: true, requestPermission, userInitiated });
     return normalized;
   }
   if (normalized === 'page') {
@@ -2751,7 +2755,8 @@ async function toggleSourceMode({ wantPaste = false, requestPermission = false }
   const next = nextSourceMode(current);
   const saved = await setSourceMode(next);
   renderSourceMode(saved);
-  await ensureSourceFromMode(saved, { wantPaste, requestPermission });
+  // Only ever invoked from explicit source-mode controls.
+  await ensureSourceFromMode(saved, { wantPaste, requestPermission, userInitiated: true });
   return saved;
 }
 
@@ -2881,7 +2886,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const mode = normalizeSourceMode(message.mode);
       await setSourceMode(mode);
       renderSourceMode(mode);
-      await ensureSourceFromMode(mode, { wantPaste: true, requestPermission: mode === 'clipboard' });
+      await ensureSourceFromMode(mode, { wantPaste: true, requestPermission: mode === 'clipboard', userInitiated: true });
       sendResponse?.({ ok: true, mode });
       return;
     }
@@ -6774,7 +6779,7 @@ async function initCopilot() {
   if (useClipboardBtn && !useClipboardBtn.dataset.boundClipboardShortcut) {
     useClipboardBtn.dataset.boundClipboardShortcut = '1';
     useClipboardBtn.addEventListener('click', async () => {
-      await applyClipboardFallback({ wantPaste: true, force: true, requestPermission: true });
+      await applyClipboardFallback({ wantPaste: true, force: true, requestPermission: true, userInitiated: true });
     });
   }
   const sourceModeSelect = document.querySelector('#sourceMode');
@@ -6784,7 +6789,7 @@ async function initCopilot() {
       const value = normalizeSourceMode(e.target?.value);
       const saved = await setSourceMode(value);
       renderSourceMode(saved);
-      await ensureSourceFromMode(saved, { wantPaste: true, requestPermission: saved === 'clipboard' });
+      await ensureSourceFromMode(saved, { wantPaste: true, requestPermission: saved === 'clipboard', userInitiated: true });
     });
   }
   const sourceModeBtn = document.querySelector('#sourceModeToggle');

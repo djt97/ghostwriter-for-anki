@@ -225,7 +225,7 @@ describe('panel.js page source context', () => {
 
     assert.match(
       ensureSourceFromMode[0],
-      /normalized === 'clipboard'[\s\S]*applyClipboardFallback\(\{ wantPaste, allowEmpty: true, force: true, requestPermission \}\)/
+      /normalized === 'clipboard'[\s\S]*applyClipboardFallback\(\{ wantPaste, allowEmpty: true, force: true, requestPermission, userInitiated \}\)/
     );
     assert.match(
       ensureSourceFromMode[0],
@@ -240,7 +240,7 @@ describe('panel.js page source context', () => {
   it('requests clipboard permission only from explicit clipboard controls', () => {
     assert.match(
       panelSource,
-      /useClipboardBtn[\s\S]*applyClipboardFallback\(\{ wantPaste: true, force: true, requestPermission: true \}\)/
+      /useClipboardBtn[\s\S]*applyClipboardFallback\(\{ wantPaste: true, force: true, requestPermission: true, userInitiated: true \}\)/
     );
     assert.match(
       panelSource,
@@ -248,7 +248,7 @@ describe('panel.js page source context', () => {
     );
     assert.match(
       panelSource,
-      /async function applyClipboardFallback\(\{ wantPaste = false, allowEmpty = false, force = false, requestPermission = false \}/
+      /async function applyClipboardFallback\(\{ wantPaste = false, allowEmpty = false, force = false, requestPermission = false, userInitiated = false \}/
     );
   });
 
@@ -281,6 +281,12 @@ describe('panel.js page source context', () => {
     assert.match(ensureSourceFromMode[0], /setSourceMode\("auto"\)/);
   });
 
+  it('keeps overlay-open clipboard fallbacks automatic (not user-initiated)', () => {
+    const messageListener = panelSource.match(/window\.addEventListener\("message"[\s\S]*?chrome\.runtime\.onMessage/);
+    assert.ok(messageListener, 'Could not find panel message listener');
+    assert.doesNotMatch(messageListener[0], /userInitiated: true/);
+  });
+
   it('refreshes overlay source from extension storage while keeping queueing same-origin only', () => {
     const messageListener = panelSource.match(/window\.addEventListener\("message"[\s\S]*?chrome\.runtime\.onMessage/);
     assert.ok(messageListener, 'Could not find panel message listener');
@@ -296,6 +302,64 @@ describe('panel.js page source context', () => {
     assert.match(
       messageListener[0],
       /if \(type === "quickflash:queueCurrentCard"\)[\s\S]*if \(!sameOriginMessage\) return;[\s\S]*await addToAnki\(\)/
+    );
+  });
+});
+
+describe('panel.js clipboard fallback issue surfacing', () => {
+  const stateLiteral = panelSource.match(/const clipboardReadState = \{[\s\S]*?\};/);
+  assert.ok(stateLiteral, 'Could not find clipboardReadState declaration');
+
+  function makeClipboardSandbox() {
+    return new Function(`
+      ${stateLiteral[0]}
+      const document = {};
+      const navigator = { clipboard: { readText: async () => { throw new Error('Read permission denied.'); } } };
+      async function withTimeout(promise) { return promise; }
+      async function ensureClipboardReadPermission() { return true; }
+      ${extractFunction(panelSource, 'readClipboardWithPasteCommandFallback')}
+      async ${extractFunction(panelSource, 'readClipboardSafe')}
+      ${extractFunction(panelSource, 'getClipboardFallbackIssue')}
+      return { clipboardReadState, readClipboardSafe, getClipboardFallbackIssue };
+    `)();
+  }
+
+  it('does not surface read failures from automatic fallback reads', async () => {
+    const sandbox = makeClipboardSandbox();
+    const text = await sandbox.readClipboardSafe();
+    assert.equal(text, '');
+    assert.ok(sandbox.clipboardReadState.lastReadError, 'read error should still be recorded');
+    assert.equal(sandbox.getClipboardFallbackIssue(), '');
+  });
+
+  it('surfaces read failures from user-initiated clipboard reads', async () => {
+    const sandbox = makeClipboardSandbox();
+    await sandbox.readClipboardSafe({ userInitiated: true });
+    assert.match(sandbox.getClipboardFallbackIssue(), /Chrome blocked reading the clipboard/);
+  });
+
+  it('drops a stale user-initiated error once a later automatic read runs', async () => {
+    const sandbox = makeClipboardSandbox();
+    await sandbox.readClipboardSafe({ userInitiated: true });
+    assert.ok(sandbox.getClipboardFallbackIssue());
+    await sandbox.readClipboardSafe();
+    assert.equal(sandbox.getClipboardFallbackIssue(), '');
+  });
+
+  it('keeps surfacing permission errors regardless of read attempts', () => {
+    const sandbox = makeClipboardSandbox();
+    sandbox.clipboardReadState.lastPermissionError = 'Chrome did not grant clipboard permission.';
+    assert.match(sandbox.getClipboardFallbackIssue(), /has not granted clipboard access/);
+  });
+
+  it('tags explicit source-mode controls as user-initiated', () => {
+    assert.match(
+      panelSource,
+      /sourceModeSelect[\s\S]{0,600}ensureSourceFromMode\(saved, \{ wantPaste: true, requestPermission: saved === 'clipboard', userInitiated: true \}\)/
+    );
+    assert.match(
+      panelSource,
+      /async function toggleSourceMode[\s\S]{0,400}ensureSourceFromMode\(saved, \{ wantPaste, requestPermission, userInitiated: true \}\)/
     );
   });
 });
