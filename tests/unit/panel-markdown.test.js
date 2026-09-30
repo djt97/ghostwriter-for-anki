@@ -75,14 +75,15 @@ describe('panel-markdown.js', () => {
   describe('extractMathSegments / restoreMathSegments', () => {
     it('extracts \\[...\\] block math', () => {
       const { text, segments } = extractMathSegments('before \\[x^2\\] after');
-      assert.ok(text.includes('@@QF_MATH_BLOCK_0@@'));
+      assert.ok(!text.includes('x^2'));
+      assert.ok(text.includes('\uE000'));
       assert.equal(segments[0].kind, 'block');
       assert.equal(segments[0].body, 'x^2');
     });
 
     it('extracts \\(...\\) inline math', () => {
       const { text, segments } = extractMathSegments('before \\(y+1\\) after');
-      assert.ok(text.includes('@@QF_MATH_INLINE_0@@'));
+      assert.ok(!text.includes('y+1'));
       assert.equal(segments[0].kind, 'inline');
       assert.equal(segments[0].body, 'y+1');
     });
@@ -98,6 +99,13 @@ describe('panel-markdown.js', () => {
       const { text, segments } = extractMathSegments(original);
       const restored = restoreMathSegments(text, segments);
       assert.equal(restored, original);
+    });
+
+    it('ignores placeholders it did not create', () => {
+      const { text, segments } = extractMathSegments('see \\(x\\)');
+      const forged = '\uE000guess:inline:0\uE001 and @@QF_MATH_INLINE_0@@';
+      assert.equal(restoreMathSegments(forged, segments), forged);
+      assert.equal(restoreMathSegments(text, segments), 'see \\(x\\)');
     });
 
     it('escapes HTML inside restored math segments', () => {

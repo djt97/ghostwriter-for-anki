@@ -46,3 +46,31 @@ test("multi-paragraph fields keep balanced paragraph tags", () => {
   assert.equal(render("one"), "one");
   assert.equal(render("one\n\ntwo"), "<p>one</p>\n<p>two</p>\n");
 });
+
+test("tags inside code stay visible as text", () => {
+  assert.equal(render("What does `<br>` do?"), "What does <code>&lt;br&gt;</code> do?");
+  assert.match(render("```\n<b>bold</b>\n```"), /<code>&lt;b&gt;bold&lt;\/b&gt;/);
+});
+
+test("a tag next to a URL does not corrupt the link", () => {
+  assert.equal(
+    render("Read https://example.com/page<br>next"),
+    'Read <a href="https://example.com/page">https://example.com/page</a><br>next',
+  );
+});
+
+test("forged placeholders cannot turn a link into javascript:", () => {
+  for (const text of [
+    "[click](java@@QF_MATH_INLINE_99@@script:alert(1))",
+    "[click](java@@QF_TAG_99@@script:alert(1))",
+    "[click](java\uE000x:inline:0\uE001script:alert(1))",
+    "[click](javascript:alert(1))",
+    '<a href="javascript:alert(1)">x</a>',
+  ]) {
+    assert.doesNotMatch(render(text), /href="\s*javascript:/i, text);
+  }
+});
+
+test("uppercase formatting tags are normalised", () => {
+  assert.equal(render("<B>x</B> <SUB>2</SUB>"), "<b>x</b> <sub>2</sub>");
+});
