@@ -57,6 +57,9 @@ if (window.__QUICKFLASH_INJECTED__) {
     lastOpenFailureReason: '',
     queueShortcut: null,
   };
+  // Text Chrome passed to the right-click menu. Chrome's PDF viewer keeps its selection away
+  // from page scripts, so this is the only way to see what the reader highlighted there.
+  let menuSelectionHint = '';
   let lastImageSelectionTarget = null;
   let lastImageSelectionAt = 0;
 
@@ -407,6 +410,7 @@ if (window.__QUICKFLASH_INJECTED__) {
   }
 
   function closePopover() {
+    menuSelectionHint = '';
     hideOverlay();
   }
 
@@ -795,13 +799,20 @@ if (window.__QUICKFLASH_INJECTED__) {
     });
   }
 
+  function isPdfDocument() {
+    return document.contentType === 'application/pdf';
+  }
+
   function gatherPageContext() {
     const selectionObj = window.getSelection?.();
-    const selection = selectionObj?.toString() || '';
+    const liveSelection = selectionObj?.toString() || '';
+    // Kept while this overlay is open: the panel asks for the context more than once.
+    const selection = liveSelection || menuSelectionHint;
     const rawUrl = getCanonicalUrl();
     const headingText = getNearestHeadingForSelection();
     const sourceLabel = headingText || document.title || (rawUrl ? new URL(rawUrl).hostname : "");
-    const sourceUrl = buildTextFragmentUrl(rawUrl, selection, headingText);
+    // Text fragments don't work inside Chrome's PDF viewer; link to the document itself.
+    const sourceUrl = isPdfDocument() ? rawUrl : buildTextFragmentUrl(rawUrl, selection, headingText);
     const selectedImage = !selection.trim()
       ? captureImageMetadata(findSelectedImageElement(selectionObj), rawUrl)
       : null;
@@ -813,6 +824,7 @@ if (window.__QUICKFLASH_INJECTED__) {
         selectedImages: selectedImage ? [selectedImage] : [],
         url: rawUrl,
         title: document.title || '',
+        isPdf: isPdfDocument(),
         meta: qf_scrapePageMeta(),
         sourceUrl,
         sourceLabel: selectedImage?.caption || selectedImage?.alt || selectedImage?.title || selectedImage?.nearestHeading || sourceLabel,
@@ -846,6 +858,7 @@ if (window.__QUICKFLASH_INJECTED__) {
     }
 
     try {
+      menuSelectionHint = String(options?.selectionHint || '');
       const { selectionObj, context } = gatherPageContext();
       await localSetSafe({ quickflash_lastDraft: context });
       frame?.contentWindow?.postMessage(

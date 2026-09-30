@@ -447,11 +447,12 @@ async function ensureContentScript(tabId) {
   }
 }
 
-function buildTabPanelUrl({ forceMobileHint = false } = {}) {
+function buildTabPanelUrl({ forceMobileHint = false, notice = "" } = {}) {
   const url = new URL(chrome.runtime.getURL("panel.html"));
   if (forceMobileHint) {
     url.searchParams.set("view", "mobile");
   }
+  if (notice) url.searchParams.set("notice", notice);
   return url.href;
 }
 
@@ -469,7 +470,7 @@ function openOrActivatePanelTab() {
   });
 }
 
-async function showOverlay({ tabId, windowId, pasteSelection, skipCapturePopover = true } = {}) {
+async function showOverlay({ tabId, windowId, pasteSelection, skipCapturePopover = true, selectionHint = "" } = {}) {
   const id = await resolveActiveTabId({ tabId, windowId });
   if (typeof id !== "number") return false;
 
@@ -493,7 +494,7 @@ async function showOverlay({ tabId, windowId, pasteSelection, skipCapturePopover
   try {
     const res = await chrome.tabs.sendMessage(id, {
       type: "quickflash:showOverlay",
-      options: { pasteSelection: !!pasteSelection, skipCapturePopover: !!skipCapturePopover },
+      options: { pasteSelection: !!pasteSelection, skipCapturePopover: !!skipCapturePopover, selectionHint: String(selectionHint || "") },
     });
     if (!res?.ok) {
       const reason = res?.reason || "unknown";
@@ -517,13 +518,21 @@ async function requestPageContext(tabId) {
   }
 }
 
-async function openPanelTabFallback(activeId, windowId, reason = "fallback") {
+async function openPanelTabFallback(activeId, windowId, reason = "fallback", { selectionHint = "" } = {}) {
   console.info("openPanel fallback: tab", { reason });
+  let pageReadable = false;
   try {
     if (typeof activeId === "number") {
       const ctx = await requestPageContext(activeId);
+      pageReadable = !!ctx;
+      if (ctx && !ctx.selection && selectionHint) ctx.selection = selectionHint;
       if (ctx && (ctx.selection || ctx.url)) {
         await chrome.storage.local.set({ quickflash_lastDraft: ctx });
+      } else if (selectionHint) {
+        const tab = await chrome.tabs.get(activeId).catch(() => null);
+        await chrome.storage.local.set({
+          quickflash_lastDraft: { selection: selectionHint, url: tab?.url || "", title: tab?.title || "" },
+        });
       }
     }
   } catch (err) {
@@ -533,7 +542,10 @@ async function openPanelTabFallback(activeId, windowId, reason = "fallback") {
   await new Promise((resolve) => {
     chrome.tabs.create(
       {
-        url: buildTabPanelUrl({ forceMobileHint: true }),
+        url: buildTabPanelUrl({
+          forceMobileHint: !!globalThis.navigator?.userAgentData?.mobile,
+          notice: pageReadable || selectionHint ? "" : "restricted",
+        }),
         windowId,
       },
       () => resolve(),
@@ -541,10 +553,11 @@ async function openPanelTabFallback(activeId, windowId, reason = "fallback") {
   });
 }
 
-async function seedLastDraftFromTab(activeId) {
+async function seedLastDraftFromTab(activeId, { selectionHint = "" } = {}) {
   if (typeof activeId !== "number") return null;
   try {
     const ctx = await requestPageContext(activeId);
+    if (ctx && !ctx.selection && selectionHint) ctx.selection = selectionHint;
     if (ctx && (ctx.selection || ctx.url)) {
       await chrome.storage.local.set({ quickflash_lastDraft: ctx });
       return ctx;
@@ -566,7 +579,7 @@ async function openOverlayCommand({ tabId, windowId } = {}) {
   await openPanelTabFallback(activeId, windowId, "overlay-command-failed");
 }
 
-async function openPanel({ tabId, windowId, pasteSelection = false, preferredSurface } = {}) {
+async function openPanel({ tabId, windowId, pasteSelection = false, preferredSurface, selectionHint = "" } = {}) {
   const activeId = await resolveActiveTabId({ tabId, windowId });
   const opts = await getQuickflashOptions();
   const surface = normalizeEditorSurface(preferredSurface || opts.defaultEditorSurface);
@@ -575,7 +588,7 @@ async function openPanel({ tabId, windowId, pasteSelection = false, preferredSur
     try {
       clearLastDraftContext();
       await openSidePanelForTab(activeId);
-      seedLastDraftFromTab(activeId).catch(() => {});
+      seedLastDraftFromTab(activeId, { selectionHint }).catch(() => {});
       return;
     } catch (err) {
       console.warn("Preferred side panel failed; trying overlay:", err?.message || err);
@@ -583,12 +596,12 @@ async function openPanel({ tabId, windowId, pasteSelection = false, preferredSur
   }
 
   if (surface === "tab") {
-    await seedLastDraftFromTab(activeId);
-    await openPanelTabFallback(activeId, windowId, "preferred-tab");
+    await seedLastDraftFromTab(activeId, { selectionHint });
+    await openPanelTabFallback(activeId, windowId, "preferred-tab", { selectionHint });
     return;
   }
 
-  if (await showOverlay({ tabId: activeId, windowId, pasteSelection, skipCapturePopover: true })) return;
+  if (await showOverlay({ tabId: activeId, windowId, pasteSelection, skipCapturePopover: true, selectionHint })) return;
 
   try {
     clearLastDraftContext();
@@ -599,7 +612,7 @@ async function openPanel({ tabId, windowId, pasteSelection = false, preferredSur
     console.warn("openPanel side panel fallback failed:", err?.message || err);
   }
 
-  await openPanelTabFallback(activeId, windowId, "overlay-failed");
+  await openPanelTabFallback(activeId, windowId, "overlay-failed", { selectionHint });
 }
 
 async function handleActionClick(tab) {
@@ -963,13 +976,11 @@ try {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab) return;
-  if (info.menuItemId === "quickflash-open") {
-    await openPanel({ tabId: tab.id, windowId: tab.windowId });
-    return;
-  }
-  if (info.menuItemId === "quickflash-write-card") {
-    await openPanel({ tabId: tab.id, windowId: tab.windowId });
-    return;
+  // Chrome hands the menu the selected text even in its PDF viewer, where the page script
+  // cannot see a selection. Use it as the Source when the page offers nothing better.
+  const selectionHint = typeof info.selectionText === "string" ? info.selectionText : "";
+  if (info.menuItemId === "quickflash-open" || info.menuItemId === "quickflash-write-card") {
+    await openPanel({ tabId: tab.id, windowId: tab.windowId, selectionHint });
   }
 });
 

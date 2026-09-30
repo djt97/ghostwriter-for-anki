@@ -1655,6 +1655,14 @@
       /* Status line: theme colours so messages stay readable in dark mode */
     #status { color: var(--text); }
     #status.status-ok { color: var(--accent); }
+      .page-notice {
+      margin: 0 0 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radii-sm);
+      background: var(--surface-2);
+      color: var(--text);
+    }
   </style>
 </head>
 <body>
@@ -1777,6 +1785,7 @@
           </div>
         </div>
 
+        <p id="pageNotice" class="page-notice small" role="status" hidden></p>
         <details id="sourceContextDetails" class="card metadata-drawer source-drawer" open>
           <summary>
             <span class="source-summary-label">Source</span>

@@ -2790,6 +2790,7 @@ window.addEventListener("message", async (event) => {
 
     copilot.pageCtx = incomingCtx || copilot.pageCtx; // latest overlay context
     applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
+    showPdfSelectionHint(incomingCtx, incomingSelection);
     resetCopilotLocks();
     refreshDebugSource();
 
@@ -13137,6 +13138,33 @@ async function initPanel() {
 
   markPanelReady();
 }
+
+// The background opens a tab with ?notice=restricted when Chrome would not let it read the
+// page (chrome:// pages, the Web Store). Say so instead of leaving an empty Source unexplained.
+// Chrome's PDF viewer hides the selection from the page script; only the right-click menu
+// receives it. Tell the reader how to get their highlight in.
+function showPdfSelectionHint(ctx, selection) {
+  const el = document.getElementById("pageNotice");
+  if (!el) return;
+  if (ctx?.isPdf && !selection) {
+    el.textContent = "In a PDF, highlight the text, then right-click it and choose "
+      + "\u201cCreate Anki card with Ghostwriter\u201d to use it as the Source.";
+    el.hidden = false;
+  } else if (el.dataset.kind !== "restricted") {
+    el.hidden = true;
+  }
+}
+
+function showPageNoticeFromUrl() {
+  const notice = new URLSearchParams(location.search || "").get("notice");
+  const el = document.getElementById("pageNotice");
+  if (!el || notice !== "restricted") return;
+  el.dataset.kind = "restricted";
+  el.textContent = "Chrome doesn't let extensions read that page, so there's no source text. "
+    + "Copy the passage you want and paste it into the editor, or write the card directly.";
+  el.hidden = false;
+}
+showPageNoticeFromUrl();
 
 async function applyEditorViewModeFromOptions() {
   const html = document.documentElement;
