@@ -67,6 +67,7 @@
         "defaults.js",
         "shortcuts.js",
         "anki-connect.js",
+        "anki-note.js",
         "prompts.js",
         "native-ai.js",
         "metadata-fallback.js",

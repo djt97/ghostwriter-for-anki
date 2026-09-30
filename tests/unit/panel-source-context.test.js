@@ -197,14 +197,12 @@ describe('panel.js page source context', () => {
         url: 'chrome-extension://abc/panel.html',
         title: 'Ghostwriter for Anki',
       }),
-      {
-        selection: '',
-        url: 'chrome-extension://abc/panel.html',
-        title: 'Ghostwriter for Anki',
-        meta: {},
-        sourceUrl: 'chrome-extension://abc/panel.html',
-        sourceLabel: 'Ghostwriter for Anki',
-      }
+      // The editor's own page is never saved as a card's source link.
+      { selection: '', url: '', title: '', meta: {}, sourceUrl: '', sourceLabel: '' }
+    );
+    assert.equal(
+      sourceFns.emptyPageContextFromTab({ id: 14, url: 'https://example.test/article', title: 'Article' }).url,
+      'https://example.test/article'
     );
   });
 

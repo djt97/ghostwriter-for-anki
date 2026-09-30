@@ -402,6 +402,11 @@ function emptyPageContextFromTab(tab = null) {
   const url = tab?.url || "";
   const localFileUrl = extractLocalFileUrl(url);
   const resolvedUrl = localFileUrl || url;
+  // The editor's own tab and browser pages (chrome://, the Web Store's internals) are not a
+  // source worth linking from an Anki card.
+  if (!/^(?:https?:|file:)/i.test(resolvedUrl)) {
+    return { selection: "", url: "", title: "", meta: {}, sourceUrl: "", sourceLabel: "" };
+  }
   return {
     selection: "",
     url: resolvedUrl,
@@ -10930,14 +10935,23 @@ async function updateModelFieldWarning() {
     if (requestId !== modelFieldWarningRequest) return;
     const hasContext = fieldNames.includes("Context");
     const hasSource = fieldNames.includes("Source");
-    if (hasContext && hasSource) {
+    const fieldMap = window.GHOSTWRITER_ANKI_NOTE.resolveNoteFields(fieldNames);
+    const remapNote = !isClozeModelName(modelName) && fieldMap.remapped
+      ? (fieldMap.back
+        ? `It has no Front/Back fields, so Ghostwriter will put the question in “${fieldMap.front}” and the answer in “${fieldMap.back}”.`
+        : `It has only one field for the card (“${fieldMap.front}”), so the Back will not be saved.`)
+      : "";
+    if (hasContext && hasSource && !remapNote) {
       hideWarning();
       return;
     }
     const missing = [];
     if (!hasContext) missing.push("Context");
     if (!hasSource) missing.push("Source");
-    const message = `Your selected note type has no ${missing.join("/")} field. Consider using the Basic or Cloze Ghostwriter note types, or adding Context/Source fields to your preferred type in Anki to store those values.`;
+    const missingNote = missing.length
+      ? `Your selected note type has no ${missing.join("/")} field. Consider using the Basic or Cloze Ghostwriter note types, or adding Context/Source fields to your preferred type in Anki to store those values.`
+      : "";
+    const message = [missingNote, remapNote].filter(Boolean).join(" ");
     warningTextEl.textContent = message;
     if (!message.trim()) {
       hideWarning();
@@ -11426,6 +11440,7 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
   }
   const fieldNames = await getModelFields(effectiveModel);
   const fields = Object.fromEntries(fieldNames.map((n) => [n, ""]));
+  const fieldMap = window.GHOSTWRITER_ANKI_NOTE.resolveNoteFields(fieldNames);
 
   const tags = Array.isArray(card.tags) ? card.tags.map((t) => (t || "").trim()).filter(Boolean) : [];
   const uniqueTags = [...new Set(tags)];
@@ -11483,15 +11498,16 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
       fields.Notes = sourceExcerpt;
     }
   } else if (cardType === "cloze") {
-    if ("Text" in fields) fields.Text = front;
+    if (fieldMap.text) fields[fieldMap.text] = front;
     if ("Context" in fields && contextValue) fields.Context = contextValue;
-    if ("Extra" in fields) {
+    // "Extra" on Ghostwriter's cloze type, "Back Extra" on Anki's stock Cloze.
+    if (fieldMap.extra) {
       const parts = [];
       if (extraValue) parts.push(extraValue);
       // Cloze cards: do not dump the raw source onto the back. The deletion stands on its own;
       // the source (when enabled) goes to the dedicated Source field below.
       if (backLink) parts.push(backLink);
-      fields.Extra = parts.join("\n\n");
+      fields[fieldMap.extra] = parts.join("\n\n");
     }
     if ("Notes" in fields && sourceExcerpt) fields.Notes = sourceExcerpt;
     // Keep the source with the note (Source field is not shown on the back), so the excerpt the
@@ -11510,22 +11526,23 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
           : `Context: ${contextValue}`;
       }
     }
-    if ("Front" in fields) fields.Front = frontValue;
+    // Front/Back, or the note type's first two content fields when it has neither.
+    if (fieldMap.front) fields[fieldMap.front] = frontValue;
 
     let backValue = back;
-    if (backLink && "Back" in fields) backValue = backValue ? `${backValue}\n\n${backLink}` : backLink;
-    if ("Back" in fields) {
-      fields.Back = backValue;
+    if (backLink && fieldMap.back) backValue = backValue ? `${backValue}\n\n${backLink}` : backLink;
+    if (fieldMap.back) {
+      fields[fieldMap.back] = backValue;
     }
 
-    if ("Extra" in fields) {
+    if (fieldMap.extra) {
       const extraSegments = [];
       if (extraValue) extraSegments.push(extraValue);
       if (!("Notes" in fields) && sourceExcerpt) extraSegments.push(sourceExcerpt);
-      if (!("Back" in fields) && backLink) extraSegments.push(backLink);
-      fields.Extra = extraSegments.join("\n\n");
-    } else if (!("Back" in fields) && backLink && "Front" in fields) {
-      fields.Front = fields.Front ? `${fields.Front}\n\n${backLink}` : backLink;
+      if (!fieldMap.back && backLink) extraSegments.push(backLink);
+      fields[fieldMap.extra] = extraSegments.join("\n\n");
+    } else if (!fieldMap.back && backLink && fieldMap.front) {
+      fields[fieldMap.front] = fields[fieldMap.front] ? `${fields[fieldMap.front]}\n\n${backLink}` : backLink;
     }
 
     if ("Notes" in fields && sourceExcerpt) fields.Notes = sourceExcerpt;
