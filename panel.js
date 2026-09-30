@@ -5363,6 +5363,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   }
   const controller = new AbortController();
   backState.controller = controller;
+  const editSeqAtRequest = backState.userEditSeq || 0;
 
   // Keep page/clipboard handling consistent with main Copilot path.
   await ensureSourceFromMode(mode, { wantPaste: false });
@@ -5494,6 +5495,10 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       return;
     }
 
+    if ((backState.userEditSeq || 0) !== editSeqAtRequest) {
+      dropSuggestionAfterUserEdit(backState);
+      return;
+    }
     backState.suggestion = suggestion;
     if (backState.suggestionEl) {
       backState.suggestionEl.hidden = false;
@@ -6118,6 +6123,14 @@ function scheduleCopilot(state, { delay = 600, force = false } = {}) {
   }, ms);
 }
 
+// A suggestion that arrives after the user kept typing was written for older text: showing it
+// would let Tab insert a completion that no longer fits.
+function dropSuggestionAfterUserEdit(state) {
+  state.suggestion = "";
+  clearSuggestionUI(state, { removeClasses: true, mirrorValue: state.textarea?.value || "" });
+  setCopilotStatus("You kept typing, so the suggestion was dropped. Ask again when you're ready.", false);
+}
+
 async function requestCopilot(state, { force = false, withOther = false, localOnly = false } = {}) {
   if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   if (copilot.manualOnly && !force) return;
@@ -6163,6 +6176,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
   }
   const controller = new AbortController();
   state.controller = controller;
+  const editSeqAtRequest = state.userEditSeq || 0;
 
   if (state.workingEl) {
     state.workingEl.textContent = "Copilot working…";
@@ -6475,6 +6489,10 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       );
       return;
     }
+    if ((state.userEditSeq || 0) !== editSeqAtRequest) {
+      dropSuggestionAfterUserEdit(state);
+      return;
+    }
     state.suggestion = suggestion;
     hideCopilotFactPicker(); // a real suggestion arrived — clear any fact picker
     hideFrontNoCardNotice(state);
@@ -6675,7 +6693,9 @@ function setupCopilotField(fieldId) {
   if (state.mirrorEl) state.mirrorEl.textContent = textarea.value;
   if (state.ghostEl) state.ghostEl.hidden = true;
 
-  textarea.addEventListener("input", () => {
+  textarea.addEventListener("input", (event) => {
+    // Real typing only; programmatic updates (accepting a suggestion) dispatch untrusted events.
+    if (event.isTrusted) state.userEditSeq = (state.userEditSeq || 0) + 1;
     if (!copilot.enabled && !state._sourceSplitActive) return;
     hideFrontNoCardNotice(state);
     if (state.suggestion && !copilot._suspendCrossClear) {
@@ -6713,7 +6733,7 @@ function setupCopilotField(fieldId) {
   });
   textarea.addEventListener("keydown", (e) => {
     if (!copilot.enabled && !state._sourceSplitActive) return;
-    if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (e.key === "Tab" && !e.isComposing && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
       if (applyCopilotSuggestion(state)) {
         e.preventDefault();
       }
