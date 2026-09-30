@@ -889,6 +889,21 @@ function serializeShortcut(shortcut) {
   return window.GHOSTWRITER_SHORTCUTS.serializeShortcutSpec(shortcut);
 }
 
+// Show a stored shortcut in this platform's words, remembering the stored form so that saving
+// without editing the field writes back exactly what was there.
+function showStoredShortcut(input, stored) {
+  if (!input) return;
+  input.value = stored === "" ? "" : displayShortcut(stored);
+  input.dataset.stored = stored;
+  input.dataset.shown = input.value;
+}
+
+function readShortcutInput(input) {
+  const value = (input?.value || "").trim();
+  if (input && value === input.dataset.shown && typeof input.dataset.stored === "string") return input.dataset.stored;
+  return value;
+}
+
 function normalizeShortcutInput(raw) {
   const parsed = parseShortcut(raw);
   if (!parsed) return null;
@@ -927,7 +942,8 @@ function isDefaultEditorFieldConfig(cfg) {
 }
 
 async function save() {
-  const shortcutInput = $("#addShortcut").value.trim();
+  delete $("#msg").dataset.sticky;
+  const shortcutInput = readShortcutInput($("#addShortcut"));
   let shortcut = null;
   if (shortcutInput) shortcut = normalizeShortcutInput(shortcutInput);
   if (!shortcut && shortcutInput) {
@@ -935,7 +951,9 @@ async function save() {
     $("#msg").className = "err";
     shortcut = parseShortcut(DEFAULT_SHORTCUT);
   }
-  const shortcutValue = shortcut ? serializeShortcut(shortcut) : "";
+  const shortcutValue = shortcut
+    ? (shortcutInput === $("#addShortcut").dataset.stored ? shortcutInput : serializeShortcut(shortcut))
+    : "";
 
   const D = window.GHOSTWRITER_DEFAULTS || {};
   const timeoutSec = num("#copilotTimeoutSec", Math.round((D.copilotTimeoutMs || 30000) / 1000));
@@ -998,7 +1016,10 @@ async function save() {
     autoCompleteAI: $("#autoCompleteAI").value === "true",
     autoMagicGenerate: $("#autoMagicGenerate").checked,
     manualCopilotOnly: $("#manualCopilotOnly").checked,
-    copilotShortcut: serializeShortcut(parseShortcut($("#copilotShortcut").value.trim())) || DEFAULT_COPILOT_SHORTCUT,
+    copilotShortcut: (() => {
+      const raw = readShortcutInput($("#copilotShortcut"));
+      return raw === $("#copilotShortcut").dataset.stored ? raw : (serializeShortcut(parseShortcut(raw)) || DEFAULT_COPILOT_SHORTCUT);
+    })(),
     copilotFrontSystemPrompt: $("#copilotFrontSystemPrompt")?.value.trim() || DEFAULT_COPILOT_FRONT_PROMPT,
     copilotBackSystemPrompt: $("#copilotBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_BACK_PROMPT,
     copilotFrontFromBackSystemPrompt: $("#copilotFrontFromBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_FRONT_FROM_BACK_PROMPT,
@@ -1088,8 +1109,19 @@ async function save() {
       $("#msg").className = "ok";
     }
   }
-  setTimeout(() => { $("#msg").textContent=""; $("#msg").className=""; }, permissionResult.granted === false ? 7000 : 1600);
-  if (shortcut) $("#addShortcut").value = displayShortcut(serializeShortcut(shortcut));
+  setTimeout(() => {
+    if ($("#msg").dataset.sticky) return; // a warning the user needs to read stays put
+    $("#msg").textContent=""; $("#msg").className="";
+  }, permissionResult.granted === false ? 7000 : 1600);
+  if (shortcut) showStoredShortcut($("#addShortcut"), shortcutValue);
+  showStoredShortcut($("#copilotShortcut"), data.copilotShortcut);
+  const addSpec = parseShortcut(shortcutValue);
+  const copilotSpec = parseShortcut(data.copilotShortcut);
+  if (addSpec && copilotSpec && window.GHOSTWRITER_SHORTCUTS.sameKeystroke(addSpec, copilotSpec)) {
+    $("#msg").textContent = "Saved, but the Add and Suggestion shortcuts are the same keys on this computer. Suggestion will win; pick a different Add shortcut.";
+    $("#msg").className = "err";
+    $("#msg").dataset.sticky = "1";
+  }
 }
 
 async function load() {
@@ -1107,7 +1139,7 @@ async function load() {
   document.querySelector("#autoCompleteAI").value = String(opts.autoCompleteAI !== false);
   document.querySelector("#autoMagicGenerate").checked = !!opts.autoMagicGenerate;
   document.querySelector("#manualCopilotOnly").checked = opts.manualCopilotOnly !== false;
-  document.querySelector("#copilotShortcut").value = displayShortcut(opts.copilotShortcut || DEFAULT_COPILOT_SHORTCUT);
+  showStoredShortcut(document.querySelector("#copilotShortcut"), opts.copilotShortcut || DEFAULT_COPILOT_SHORTCUT);
   document.querySelector("#copilotShortcut").placeholder = displayShortcut(DEFAULT_COPILOT_SHORTCUT);
   document.querySelector("#addShortcut").placeholder = displayShortcut(DEFAULT_SHORTCUT);
   const defaults = getDefaultCopilotPrompts();
@@ -1222,7 +1254,7 @@ async function load() {
     typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_SHORTCUT
   );
   const parsedShortcut = parseShortcut(rawShortcut);
-  document.querySelector("#addShortcut").value = rawShortcut === "" ? "" : (parsedShortcut ? displayShortcut(serializeShortcut(parsedShortcut)) : "");
+  showStoredShortcut(document.querySelector("#addShortcut"), rawShortcut === "" ? "" : (parsedShortcut ? rawShortcut : ""));
 }
 
 function escapeHtml(str) {

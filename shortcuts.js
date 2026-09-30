@@ -7,7 +7,9 @@
 // works on every platform. "Ctrl" always means the literal Control key.
 (function (root) {
   const PRIMARY_TOKENS = ["cmd", "command", "meta", "⌘", "mod"];
-  const KEY_LABELS = { enter: "Enter", return: "Enter", escape: "Esc", esc: "Esc", space: "Space" };
+  const KEY_LABELS = { enter: "Enter", escape: "Esc", " ": "Space" };
+  // Names people type for keys whose KeyboardEvent.key differs.
+  const KEY_ALIASES = { esc: "escape", return: "enter", space: " ", spacebar: " " };
 
   function isMacPlatform(nav) {
     const n = nav || (typeof navigator !== "undefined" ? navigator : null);
@@ -26,7 +28,7 @@
       else if (["alt", "option"].includes(token)) spec.alt = true;
       else if (token === "shift") spec.shift = true;
       else if (PRIMARY_TOKENS.includes(token)) spec.meta = true;
-      else if (!spec.key) spec.key = token;
+      else if (!spec.key) spec.key = KEY_ALIASES[token] || token;
       else return null;
     }
     return spec.key ? spec : null;
@@ -38,9 +40,12 @@
     return { ctrl: !!spec.ctrl, meta: !!spec.meta };
   }
 
-  function keyMatches(event, expected) {
+  function keyMatches(event, expected, mac) {
     const key = String(event?.key || "").toLowerCase();
     if (key === expected) return true;
+    // AltGr (reported as Ctrl+Alt on Windows) types characters such as € and @; those
+    // keystrokes are text, never a shortcut.
+    if (event?.getModifierState?.("AltGraph") || (!mac && event?.ctrlKey && event?.altKey)) return false;
     // Non-Latin layouts and macOS Option combinations change event.key; fall back to
     // the physical key for letters and digits.
     const code = String(event?.code || "");
@@ -51,7 +56,7 @@
 
   function matchesShortcut(event, spec, { mac = isMacPlatform() } = {}) {
     if (!spec || !spec.key) return false;
-    if (!keyMatches(event, String(spec.key).toLowerCase())) return false;
+    if (!keyMatches(event, String(spec.key).toLowerCase(), mac)) return false;
     const want = resolveModifiers(spec, mac);
     if (!!event.ctrlKey !== want.ctrl) return false;
     if (!!event.metaKey !== want.meta) return false;
@@ -92,7 +97,17 @@
     return parts.join("+");
   }
 
-  const api = { isMacPlatform, parseShortcutSpec, matchesShortcut, formatShortcutSpec, serializeShortcutSpec };
+  // True when two stored shortcuts are the same keystroke on this platform (e.g. a Mac "Ctrl+Shift+X"
+  // and the default "Cmd+Shift+X" both become Ctrl+Shift+X on Windows).
+  function sameKeystroke(a, b, { mac = isMacPlatform() } = {}) {
+    if (!a?.key || !b?.key) return false;
+    const ra = resolveModifiers(a, mac);
+    const rb = resolveModifiers(b, mac);
+    return String(a.key).toLowerCase() === String(b.key).toLowerCase()
+      && ra.ctrl === rb.ctrl && ra.meta === rb.meta && !!a.alt === !!b.alt && !!a.shift === !!b.shift;
+  }
+
+  const api = { isMacPlatform, parseShortcutSpec, matchesShortcut, formatShortcutSpec, serializeShortcutSpec, sameKeystroke };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.GHOSTWRITER_SHORTCUTS = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

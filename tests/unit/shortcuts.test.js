@@ -59,3 +59,29 @@ test("extra or missing modifiers do not match", () => {
   assert.equal(S.parseShortcutSpec("Shift+A+B"), null);
   assert.equal(S.parseShortcutSpec(""), null);
 });
+
+test("Esc, Enter and Space shortcuts survive a save round trip", () => {
+  for (const raw of ["Ctrl+Escape", "Ctrl+Esc", "Mod+Enter", "Mod+Return", "Ctrl+Shift+Space"]) {
+    const spec = S.parseShortcutSpec(raw);
+    const round = S.parseShortcutSpec(S.serializeShortcutSpec(spec, { mac: false }));
+    assert.deepEqual(round.key, spec.key, raw);
+  }
+  const esc = S.parseShortcutSpec(S.serializeShortcutSpec(S.parseShortcutSpec("Ctrl+Escape"), { mac: false }));
+  assert.equal(S.matchesShortcut({ key: "Escape", code: "Escape", ctrlKey: true }, esc, { mac: false }), true);
+  const space = S.parseShortcutSpec("Ctrl+Shift+Space");
+  assert.equal(S.matchesShortcut({ key: " ", code: "Space", ctrlKey: true, shiftKey: true }, space, { mac: false }), true);
+  assert.equal(S.formatShortcutSpec(space, { mac: false }), "Ctrl + Shift + Space");
+});
+
+test("AltGr characters never trigger a Ctrl+Alt shortcut", () => {
+  const spec = S.parseShortcutSpec("Mod+Alt+E");
+  assert.equal(S.matchesShortcut({ key: "€", code: "KeyE", ctrlKey: true, altKey: true }, spec, { mac: false }), false);
+  assert.equal(S.matchesShortcut({ key: "e", code: "KeyE", ctrlKey: true, altKey: true }, spec, { mac: false }), true);
+});
+
+test("detects when two shortcuts are the same keystroke on this platform", () => {
+  const macCtrl = S.parseShortcutSpec("Ctrl+Shift+X");
+  const copilot = S.parseShortcutSpec("Cmd+Shift+X");
+  assert.equal(S.sameKeystroke(macCtrl, copilot, { mac: false }), true);
+  assert.equal(S.sameKeystroke(macCtrl, copilot, { mac: true }), false);
+});

@@ -12415,6 +12415,9 @@ function handleQueueShortcut(event) {
   if (!addShortcutConfig) return;
   if (event.repeat) return;
   if (!matchesShortcut(event, addShortcutConfig)) return;
+  // Same keystroke as Suggest on this computer: Suggest wins, since Add would send a
+  // half-written card.
+  if (copilot.triggerShortcutSpec && matchesShortcut(event, copilot.triggerShortcutSpec)) return;
   event.preventDefault();
   event.stopPropagation();
   try {
