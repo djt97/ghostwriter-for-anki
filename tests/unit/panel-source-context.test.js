@@ -46,6 +46,7 @@ const sourceFns = new Function(`
   ${extractFunction(panelSource, 'normalizePageContext')}
   ${extractFunction(panelSource, 'normalizeContextPageUrl')}
   ${extractFunction(panelSource, 'extractLocalFileUrl')}
+  ${extractFunction(panelSource, 'unwrapViewerUrl')}
   ${extractFunction(panelSource, 'emptyPageContextFromTab')}
   ${extractFunction(panelSource, 'canRequestTabPageContext')}
   ${extractFunction(panelSource, 'getContextPageUrl')}
@@ -203,6 +204,18 @@ describe('panel.js page source context', () => {
     assert.equal(
       sourceFns.emptyPageContextFromTab({ id: 14, url: 'https://example.test/article', title: 'Article' }).url,
       'https://example.test/article'
+    );
+    // Another extension's PDF viewer: link the document, keep its title.
+    const acrobat = sourceFns.emptyPageContextFromTab({
+      id: 15,
+      url: 'chrome-extension://efaidnbmnnnibpcajpcglclefindmkaj/https://arxiv.org/pdf/1706.03762.pdf',
+      title: 'Attention Is All You Need.pdf',
+    });
+    assert.equal(acrobat.url, 'https://arxiv.org/pdf/1706.03762.pdf');
+    assert.equal(acrobat.title, 'Attention Is All You Need.pdf');
+    assert.equal(
+      sourceFns.emptyPageContextFromTab({ id: 16, url: 'chrome-extension://pdfjs/viewer.html?file=https%3A%2F%2Farxiv.org%2Fpdf%2F1.pdf', title: 'x' }).url,
+      'https://arxiv.org/pdf/1.pdf'
     );
   });
 

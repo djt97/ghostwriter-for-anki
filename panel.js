@@ -403,10 +403,26 @@ function extractLocalFileUrl(rawUrl) {
   return "";
 }
 
+// Other extensions' PDF viewers wrap the document's address, as chrome-extension://<id>/https://…
+// (Acrobat) or …/viewer.html?file=https%3A… (PDF.js). Link the card to the document itself.
+function unwrapViewerUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "chrome-extension:") return url;
+    const embedded = decodeURI(parsed.pathname.replace(/^\/+/, ""));
+    if (/^(?:https?|file):\/\//i.test(embedded)) return embedded + parsed.search + parsed.hash;
+    for (const key of ["file", "src", "url"]) {
+      const value = parsed.searchParams.get(key);
+      if (value && /^(?:https?|file):/i.test(value)) return value;
+    }
+  } catch {}
+  return url;
+}
+
 function emptyPageContextFromTab(tab = null) {
   const url = tab?.url || "";
   const localFileUrl = extractLocalFileUrl(url);
-  const resolvedUrl = localFileUrl || url;
+  const resolvedUrl = localFileUrl || unwrapViewerUrl(url);
   // The editor's own tab and browser pages (chrome://, the Web Store's internals) are not a
   // source worth linking from an Anki card.
   if (!/^(?:https?:|file:)/i.test(resolvedUrl)) {

@@ -518,6 +518,13 @@ async function requestPageContext(tabId) {
   }
 }
 
+// A draft built from the right-click selection alone, for tabs the content script can't read
+// (Chrome's PDF viewer when injection fails, other extensions' viewers).
+async function draftFromSelectionHint(activeId, selectionHint) {
+  const tab = await chrome.tabs.get(activeId).catch(() => null);
+  return { selection: selectionHint, url: tab?.url || "", title: tab?.title || "" };
+}
+
 async function openPanelTabFallback(activeId, windowId, reason = "fallback", { selectionHint = "" } = {}) {
   console.info("openPanel fallback: tab", { reason });
   let pageReadable = false;
@@ -529,10 +536,7 @@ async function openPanelTabFallback(activeId, windowId, reason = "fallback", { s
       if (ctx && (ctx.selection || ctx.url)) {
         await chrome.storage.local.set({ quickflash_lastDraft: ctx });
       } else if (selectionHint) {
-        const tab = await chrome.tabs.get(activeId).catch(() => null);
-        await chrome.storage.local.set({
-          quickflash_lastDraft: { selection: selectionHint, url: tab?.url || "", title: tab?.title || "" },
-        });
+        await chrome.storage.local.set({ quickflash_lastDraft: await draftFromSelectionHint(activeId, selectionHint) });
       }
     }
   } catch (err) {
@@ -556,8 +560,9 @@ async function openPanelTabFallback(activeId, windowId, reason = "fallback", { s
 async function seedLastDraftFromTab(activeId, { selectionHint = "" } = {}) {
   if (typeof activeId !== "number") return null;
   try {
-    const ctx = await requestPageContext(activeId);
+    let ctx = await requestPageContext(activeId);
     if (ctx && !ctx.selection && selectionHint) ctx.selection = selectionHint;
+    if (!ctx && selectionHint) ctx = await draftFromSelectionHint(activeId, selectionHint);
     if (ctx && (ctx.selection || ctx.url)) {
       await chrome.storage.local.set({ quickflash_lastDraft: ctx });
       return ctx;
@@ -606,6 +611,7 @@ async function openPanel({ tabId, windowId, pasteSelection = false, preferredSur
   try {
     clearLastDraftContext();
     await openSidePanelForTab(activeId);
+    seedLastDraftFromTab(activeId, { selectionHint }).catch(() => {});
     console.info("openPanel fallback: side-panel", { reason: "overlay-failed" });
     return;
   } catch (err) {
