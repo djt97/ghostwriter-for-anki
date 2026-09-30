@@ -3,8 +3,11 @@
 //
 // Errors carry a `kind`:
 //   "anki"        AnkiConnect answered and refused the request (duplicate, missing deck, ...)
-//   "unreachable" nothing answered at any candidate address
+//   "unreachable" nothing answered at any candidate address, or something that isn't AnkiConnect did
+//   "refused"     AnkiConnect answered 401/403: this extension's origin isn't allowed yet
 //   "timeout"     the request was sent but Anki did not answer in time
+// Only a failed connection is retried on the other loopback name; once anything answers, the
+// request may have reached Anki, and retrying could add a card twice.
 // Error messages are written for the user; the raw AnkiConnect text is kept on `raw`.
 (function (root) {
   const DEFAULT_BASE_URL = "http://127.0.0.1:8765";
@@ -50,11 +53,28 @@
     return `Anki says: ${text || "unknown error"}`;
   }
 
+  const ANDROID_HINT = 'On Android, open AnkiconnectAndroid, tap "Start Service", and set "CORS host" to the extension origin shown in Options.';
+
+  function isAndroid() {
+    return /Android/i.test(String(root.navigator?.userAgent || ""));
+  }
+
   function unreachableMessage(baseUrl) {
-    if (isLocalAnkiUrl(baseUrl)) {
-      return "Can't reach Anki. Open Anki on this computer and check that the AnkiConnect add-on (code 2055492159) is installed.";
+    if (isAndroid() || !isLocalAnkiUrl(baseUrl)) {
+      return `Can't reach AnkiConnect at ${normalizeBaseUrl(baseUrl)}. ${ANDROID_HINT}`;
     }
-    return `Can't reach AnkiConnect at ${normalizeBaseUrl(baseUrl)}. On Android, open AnkiconnectAndroid and tap "Start Service", then set "CORS host" to the extension origin shown in Options.`;
+    return "Can't reach Anki. Open Anki on this computer and check that the AnkiConnect add-on (code 2055492159) is installed.";
+  }
+
+  function refusedMessage(status) {
+    const android = isAndroid() ? ` ${ANDROID_HINT}` : "";
+    return `Anki refused the connection (HTTP ${status}). In Anki, allow Ghostwriter when AnkiConnect asks, or add this extension to AnkiConnect's webCorsOriginList.${android}`;
+  }
+
+  function timeoutError(err, tried) {
+    return makeError("Anki didn't respond in time. If Anki is showing a dialog, close it and try again.", {
+      kind: "timeout", raw: err?.message || "", tried,
+    });
   }
 
   function makeError(message, fields) {
@@ -88,23 +108,31 @@
           signal: AbortSignal.timeout(limit),
         });
       } catch (err) {
-        if (isTimeout(err)) {
-          // The request may have reached Anki; retrying elsewhere could add the card twice.
-          throw makeError("Anki didn't respond in time. If Anki is showing a dialog, close it and try again.", {
-            kind: "timeout", raw: err?.message || "", tried,
-          });
-        }
+        // The request may have reached Anki; retrying elsewhere could add the card twice.
+        if (isTimeout(err)) throw timeoutError(err, tried);
         lastDetail = err?.message || String(err);
-        continue;
+        continue; // nothing answered here: try the other loopback name
       }
-      const data = await res.json().catch(() => null);
+
+      // Something answered. From here on, never retry on another address.
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (err) {
+        if (isTimeout(err)) throw timeoutError(err, tried);
+      }
       if (data && typeof data === "object" && "error" in data) {
         if (data.error) {
           throw makeError(describeAnkiRefusal(data.error), { kind: "anki", raw: String(data.error), tried });
         }
         return data.result;
       }
-      lastDetail = `HTTP ${res.status}${data ? "" : " (not an AnkiConnect response)"}`;
+      if (res.status === 401 || res.status === 403) {
+        throw makeError(refusedMessage(res.status), { kind: "refused", raw: `HTTP ${res.status}`, tried });
+      }
+      throw makeError(`${unreachableMessage(baseUrl)} (Something else answered at ${url}: HTTP ${res.status}.)`, {
+        kind: "unreachable", raw: `HTTP ${res.status} (not an AnkiConnect response)`, tried,
+      });
     }
 
     throw makeError(unreachableMessage(baseUrl), { kind: "unreachable", raw: lastDetail, tried });

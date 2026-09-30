@@ -360,8 +360,13 @@ async function anki(action, params = {}) {
     if (invalidatesAnkiSetupCache(action)) clearAnkiSessionCache({ keepPermission: true });
     return result;
   } catch (err) {
-    // A refusal (duplicate, missing deck) says nothing about the connection.
-    if (err?.kind !== "anki") clearAnkiSessionCache();
+    if (err?.kind !== "anki") {
+      clearAnkiSessionCache();
+    } else if (action === "addNote" || action === "addNotes" || action === "canAddNotes") {
+      // A refused add may mean the note type or deck changed in Anki: refetch fields and decks
+      // next time, but keep the permission (the connection itself is fine).
+      clearAnkiSessionCache({ keepPermission: true });
+    }
     throw err;
   }
 }

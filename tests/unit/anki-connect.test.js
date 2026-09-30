@@ -40,6 +40,20 @@ test("when nothing answers on this computer the message is about desktop Anki, n
   );
 });
 
+test("on Android the hint is about AnkiconnectAndroid even for localhost", async () => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Mozilla/5.0 (Linux; Android 14)" }, configurable: true });
+  try {
+    const f = fakeFetch([new TypeError("x"), new TypeError("x")]);
+    await assert.rejects(
+      A.request("version", {}, { baseUrl: "http://localhost:8765", fetchImpl: f.impl }),
+      (err) => /AnkiconnectAndroid/.test(err.message),
+    );
+  } finally {
+    if (saved) Object.defineProperty(globalThis, "navigator", saved); else delete globalThis.navigator;
+  }
+});
+
 test("a non-local AnkiConnect address gets the Android hint", async () => {
   const f = fakeFetch([new TypeError("Failed to fetch")]);
   await assert.rejects(
@@ -59,11 +73,30 @@ test("a timeout is not retried on the other host", async () => {
   assert.equal(f.calls.length, 1);
 });
 
-test("a server that isn't AnkiConnect counts as unreachable", async () => {
-  const f = fakeFetch([{ status: 404, json: async () => { throw new Error("not json"); } }, new TypeError("x")]);
+test("a server that isn't AnkiConnect counts as unreachable and is not retried elsewhere", async () => {
+  const f = fakeFetch([{ status: 404, json: async () => { throw new Error("not json"); } }, json({ result: 1, error: null })]);
+  await assert.rejects(
+    A.request("addNote", {}, { fetchImpl: f.impl }),
+    (err) => err.kind === "unreachable" && /HTTP 404/.test(err.message),
+  );
+  assert.equal(f.calls.length, 1);
+});
+
+test("a timeout while reading the reply is not retried (the note may already be added)", async () => {
+  const timeout = Object.assign(new Error("signal timed out"), { name: "TimeoutError" });
+  const f = fakeFetch([{ status: 200, json: async () => { throw timeout; } }, json({ result: 1, error: null })]);
+  await assert.rejects(
+    A.request("addNote", {}, { baseUrl: "http://127.0.0.1:8765", fetchImpl: f.impl }),
+    (err) => err.kind === "timeout",
+  );
+  assert.equal(f.calls.length, 1);
+});
+
+test("HTTP 403 says Anki refused the connection", async () => {
+  const f = fakeFetch([{ status: 403, json: async () => { throw new Error("not json"); } }]);
   await assert.rejects(
     A.request("version", {}, { fetchImpl: f.impl }),
-    (err) => err.kind === "unreachable",
+    (err) => err.kind === "refused" && /refused the connection \(HTTP 403\)/.test(err.message),
   );
 });
 
