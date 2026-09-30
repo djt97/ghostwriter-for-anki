@@ -33,8 +33,9 @@ function extractFunction(source, name) {
 }
 
 const selectRelevantSource = new Function(
+  'COPILOT_CORE',
   `${extractFunction(panelSource, 'selectRelevantSource')}\nreturn selectRelevantSource;`
-)();
+)(require('../../copilot-core.js'));
 
 // The maintainer's exact highlight from supermemo.com/articles/20rules.htm
 const DEAD_SEA =
@@ -124,5 +125,19 @@ describe('copilot source targeting (selectRelevantSource)', () => {
     );
     assert.match(called, /called Script X/, 'the selected context supplies the named answer');
     assert.ok(!/three years/.test(called), 'the context window stays bounded to one adjacent sentence');
+  });
+});
+
+describe('source sentence focus keeps numbers, initialisms and referents intact', () => {
+  const SRC = 'Pure water boils at 99.97 °C at a pressure of 1 atm. The U.S. Senate has 100 members. Dr. Smith chairs it.';
+  it('does not cut a decimal', () => {
+    assert.equal(selectRelevantSource(SRC, 'Pure water boils at', ''), 'Pure water boils at 99.97 °C at a pressure of 1 atm.');
+  });
+  it('does not cut an initialism', () => {
+    assert.equal(selectRelevantSource(SRC, 'How many members does the Senate', ''), 'The U.S. Senate has 100 members.');
+  });
+  it('keeps the sentence a pronoun refers back to', () => {
+    const dead = 'The Dead Sea is very salty. Swimmers often visit. Its density keeps swimmers afloat.';
+    assert.equal(selectRelevantSource(dead, 'What does its density', ''), 'Swimmers often visit. Its density keeps swimmers afloat.');
   });
 });

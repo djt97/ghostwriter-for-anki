@@ -217,6 +217,12 @@
     return candidates.length === 1 ? candidates[0] : null;
   }
 
+  const INITIALISM_SENTENCE_OPENERS = new Set([
+    "a", "an", "the", "it", "its", "this", "these", "that", "those", "they", "their", "he", "she", "his", "her",
+    "we", "i", "in", "on", "at", "by", "for", "but", "and", "so", "yet", "however", "when", "after", "before",
+    "there", "here", "then", "thus", "meanwhile", "today", "since", "while", "although", "as", "if",
+  ]);
+
   function firstSourceSentence(value) {
     const text = String(value || "").replace(/^\s+/u, "");
     if (!text) return "";
@@ -239,6 +245,12 @@
       if (ch === "." && PREFIX_TITLE_ABBREVIATIONS.has(token) && /^\s+\p{Lu}/u.test(afterPeriod)) continue;
       if (ch === "." && NUMBER_PREFIX_ABBREVIATIONS.has(token) && /^\s+\p{N}/u.test(afterPeriod)) continue;
       if (ch === "." && token === "vs" && /^\s+\p{L}/u.test(afterPeriod)) continue;
+      // "The U.S. Senate": a dotted initialism before a capitalised name is not a sentence
+      // end; before a typical sentence opener ("... in the U.S. The company ...") it is.
+      if (ch === "." && /^(?:\p{L}\.)+\p{L}$/u.test(token)) {
+        const nextWord = afterPeriod.match(/^\s+(\p{Lu}[\p{L}']*)/u)?.[1] || "";
+        if (nextWord && !INITIALISM_SENTENCE_OPENERS.has(nextWord.toLocaleLowerCase())) continue;
+      }
       if (ch === "." && /^(?:e\.g|i\.e|etc)$/u.test(token) && /^\s*[,;:]/u.test(afterPeriod)) continue;
       if (ch === "." && /^[a-z]$/u.test(token)) {
         const beforeInitial = before.slice(0, Math.max(0, before.length - token.length)).trimEnd();
@@ -675,6 +687,38 @@
       remaining = next;
     }
     return sentences;
+  }
+
+  // Sentences exactly as they appear in the source, terminal punctuation included.
+  // Decimals (99.97), initialisms (U.S., e.g.) and titles (Dr.) do not end a sentence.
+  function splitSourceSentencesVerbatim(value) {
+    let remaining = String(value || "").trim();
+    const sentences = [];
+    for (let guard = 0; remaining && guard < 500; guard += 1) {
+      const core = firstSourceSentence(remaining);
+      if (!core) break;
+      const at = remaining.indexOf(core);
+      let end = (at < 0 ? 0 : at) + core.length;
+      const closing = remaining.slice(end).match(/^\s*[.!?]+/u);
+      if (closing) end += closing[0].length;
+      const sentence = remaining.slice(0, end).trim();
+      if (sentence) sentences.push(sentence);
+      const next = remaining.slice(end).replace(/^\s+/u, "");
+      if (!next || next.length >= remaining.length) break;
+      remaining = next;
+    }
+    return sentences;
+  }
+
+  // A sentence that opens with a pronoun or demonstrative ("Its density ...") needs the
+  // previous sentence to say what it refers to.
+  const REFERENT_OPENERS = new Set([
+    "it", "its", "this", "these", "that", "those", "they", "their", "them", "he", "his", "she", "her", "such",
+  ]);
+
+  function startsWithReferent(sentence) {
+    const first = String(sentence || "").trim().match(/^[\p{L}']+/u)?.[0]?.toLocaleLowerCase() || "";
+    return REFERENT_OPENERS.has(first);
   }
 
   const DISPLAY_MATH_BLOCK_RE = /\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\\begin\{(equation\*?|align\*?|aligned|gather\*?|multline\*?)\}[\s\S]*?\\end\{\1\}/gu;
@@ -1519,6 +1563,8 @@
     containsTokenPhrase,
     filterSourceGroundedFacts,
     firstSourceSentence,
+    splitSourceSentencesVerbatim,
+    startsWithReferent,
     getAttributionQualifierIssue,
     repairFrontAttributionQualifier,
     getCardSourceGroundingIssue,

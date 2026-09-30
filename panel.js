@@ -5119,7 +5119,7 @@ function selectRelevantSource(
 ) {
   const src = String(sourceText || "").trim();
   if (!src) return src;
-  const sentences = (src.match(/[^.!?]+[.!?]*/g) || [src]).map((s) => s.trim()).filter(Boolean);
+  const sentences = COPILOT_CORE.splitSourceSentencesVerbatim(src);
   if (sentences.length <= 1) return src;
   const STOP = new Set(
     "the a an of to in on at by for and or nor but is are was were be been being am it its this that these those with as from into onto over under which who whom whose what where when why how do does did can could would should will shall may might must not no than then so such very more most also only".split(/\s+/)
@@ -5173,7 +5173,9 @@ function selectRelevantSource(
   // A tie is weak evidence, not permission to pick whichever fact appeared first.
   // Keep the full Source so the prompt can use the exact relation in the typed prefix.
   if (bestScore <= 0 || bestIdx < 0 || bestCount !== 1) return src;
-  if (!before && !after) return sentences[bestIdx];
+  // "Its density keeps swimmers afloat." is ungrounded without the sentence naming "it".
+  const referentBack = bestIdx > 0 && COPILOT_CORE.startsWithReferent(sentences[bestIdx]) ? 1 : 0;
+  if (!before && !after) return sentences.slice(bestIdx - referentBack, bestIdx + 1).join(" ");
   let effectiveAfter = after;
   if (expandOnlyIfTailMissing && effectiveAfter > 0 && lastTerms.length) {
     const bestTerms = new Set(stemGroups(sentences[bestIdx]).flat());
@@ -5182,7 +5184,7 @@ function selectRelevantSource(
   // Widen to a small window (used for the Back) so an answer that sits one clause away — e.g.
   // "...produced one, called Script X" following "...create a multimedia programming language" — is
   // available. The Front stays single-sentence to keep the cue focused and leak-free.
-  const start = Math.max(0, bestIdx - before);
+  const start = Math.max(0, bestIdx - Math.max(before, referentBack));
   const end = Math.min(sentences.length, bestIdx + effectiveAfter + 1);
   return sentences.slice(start, end).join(" ");
 }
