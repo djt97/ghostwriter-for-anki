@@ -11709,7 +11709,9 @@ async function addCurrentCardToAnki() {
     front: $("#front").value || "",
     back: $("#back").value || "",
     notes: $("#notes").value || "",
+    source: $("#source")?.value || "",
   };
+  let contextAfterAdd = $("#context")?.value || ""; // updated when auto-context fills it
   let deckName = $("#deck").value || "All Decks";
   const modelName = $("#model").value || "Basic";
   const front = ($("#front").value || "").trim();
@@ -11876,6 +11878,8 @@ async function addCurrentCardToAnki() {
     }
   }
 
+  contextAfterAdd = $("#context")?.value || "";
+
   if (stickyActive) {
     finalStickyValue = (card.context || stickyBase || "").trim();
     await persistStickyContext(finalStickyValue).catch(() => {});
@@ -11908,16 +11912,22 @@ async function addCurrentCardToAnki() {
   const resetManualFields = async () => {
     const tagsEl = document.querySelector("#tags");
     if (tagsEl) tagsEl.value = ""; // ← important: prevent tag accumulation
-    const typedSince = ["front", "back", "notes"].some((id) => ($(`#${id}`)?.value || "") !== typedAtStart[id]);
-    if (typedSince) return; // the user has started the next card; leave it alone
-    $("#front").value = "";
-    $("#back").value  = "";
-    $("#notes").value = "";
+    // Clear each field that still holds what was just sent. A field the user changed during
+    // the add belongs to the next card and is kept.
+    const kept = [];
+    for (const id of ["front", "back", "notes"]) {
+      const el = $(`#${id}`);
+      if (!el) continue;
+      if ((el.value || "") === typedAtStart[id]) el.value = "";
+      else kept.push(id);
+    }
     const contextEl = document.querySelector("#context");
-    if (contextEl) contextEl.value = stickyActive ? (finalStickyValue || stickyBase || "") : "";
+    if (contextEl && (contextEl.value || "") === contextAfterAdd) {
+      contextEl.value = stickyActive ? (finalStickyValue || stickyBase || "") : "";
+    }
     if (stickyActive) stickyContextState.value = contextEl?.value || finalStickyValue || "";
     const sourceEl = document.querySelector("#source");
-    if (sourceEl) {
+    if (sourceEl && (sourceEl.value || "") === typedAtStart.source) {
       sourceEl.value = "";
       delete sourceEl.dataset.autoClipboard;
     }
@@ -11928,9 +11938,12 @@ async function addCurrentCardToAnki() {
     const lpcgBank = document.querySelector("#lpcgWordBank");
     if (lpcgBank) lpcgBank.innerHTML = "";
     updateLpcgSelectionCount();
-    resetCopilotLocks();
-    cancelCopilotRequests();
-    await clearManualDraftStorage();
+    resetCopilotLocks(); // the next card starts unlocked, even if its Front is half-typed
+    hideCopilotFactPicker();
+    if (!kept.length) {
+      cancelCopilotRequests();
+      await clearManualDraftStorage();
+    }
     // Keep the source drawer coherent after the fields clear — the queue path gets this
     // via renderEditor(); without it the summary preview and rendered iframe diverge.
     updateOverlaySourceChrome();
