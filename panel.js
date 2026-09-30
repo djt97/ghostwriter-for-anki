@@ -68,10 +68,6 @@ function isPreviewMode() {
   return previewModeState.mode === "preview";
 }
 
-function isMacPlatform() {
-  return navigator.platform.toUpperCase().includes("MAC");
-}
-
 function normalizePreviewMode(mode) {
   return mode === "source" ? "source" : "preview";
 }
@@ -7576,37 +7572,11 @@ async function saveManualPrefs(prefs) {
 }
 
 function parseShortcutSpec(value) {
-  if (!value || typeof value !== "string") return null;
-  const parts = value.split(/[\s+]+/).filter(Boolean);
-  if (!parts.length) return null;
-  const spec = { key: null, ctrl: false, alt: false, shift: false, meta: false };
-  for (const raw of parts) {
-    const token = raw.toLowerCase();
-    if (["ctrl", "control"].includes(token)) spec.ctrl = true;
-    else if (["alt", "option"].includes(token)) spec.alt = true;
-    else if (token === "shift") spec.shift = true;
-    else if (["cmd", "command", "meta", "⌘"].includes(token)) spec.meta = true;
-    else if (!spec.key) {
-      spec.key = token.length === 1 ? token : token;
-    } else {
-      return null;
-    }
-  }
-  if (!spec.key) return null;
-  return spec;
+  return window.GHOSTWRITER_SHORTCUTS.parseShortcutSpec(value);
 }
 
 function formatShortcutSpec(spec) {
-  if (!spec || !spec.key) return "";
-  const parts = [];
-  if (spec.meta) parts.push("Cmd");
-  if (spec.ctrl) parts.push("Ctrl");
-  if (spec.alt) parts.push("Alt");
-  if (spec.shift) parts.push("Shift");
-  const keyNames = { enter: "Enter", return: "Enter", escape: "Esc", esc: "Esc", space: "Space" };
-  const key = keyNames[spec.key] || (spec.key.length === 1 ? spec.key.toUpperCase() : spec.key);
-  parts.push(key);
-  return parts.join(" + ");
+  return window.GHOSTWRITER_SHORTCUTS.formatShortcutSpec(spec);
 }
 
 function normalizeShortcutCoachState(value = {}, metrics = {}) {
@@ -7849,19 +7819,7 @@ function applyShortcutSetting(spec) {
 }
 
 function matchesShortcut(event, shortcut) {
-  if (!shortcut || !shortcut.key) return false;
-  const key = (event.key || "").toLowerCase();
-  const expected = shortcut.key.toLowerCase();
-  if (expected.length === 1) {
-    if (key !== expected) return false;
-  } else if (key !== expected) {
-    return false;
-  }
-  if (!!event.ctrlKey !== !!shortcut.ctrl) return false;
-  if (!!event.altKey !== !!shortcut.alt) return false;
-  if (!!event.shiftKey !== !!shortcut.shift) return false;
-  if (!!event.metaKey !== !!shortcut.meta) return false;
-  return true;
+  return window.GHOSTWRITER_SHORTCUTS.matchesShortcut(event, shortcut);
 }
 
 function updateShortcutHelpText() {

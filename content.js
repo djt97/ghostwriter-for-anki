@@ -60,31 +60,13 @@ if (window.__QUICKFLASH_INJECTED__) {
   let lastImageSelectionTarget = null;
   let lastImageSelectionAt = 0;
 
+  // Shared with the panel via shortcuts.js, injected just before this file.
   function parseShortcutSpec(value) {
-    if (!value || typeof value !== 'string') return null;
-    const parts = value.split(/[\s+]+/).filter(Boolean);
-    if (!parts.length) return null;
-    const spec = { key: null, ctrl: false, alt: false, shift: false, meta: false };
-    for (const raw of parts) {
-      const token = raw.toLowerCase();
-      if (['ctrl', 'control'].includes(token)) spec.ctrl = true;
-      else if (['alt', 'option'].includes(token)) spec.alt = true;
-      else if (token === 'shift') spec.shift = true;
-      else if (['cmd', 'command', 'meta', '⌘'].includes(token)) spec.meta = true;
-      else if (!spec.key) spec.key = token;
-      else return null;
-    }
-    return spec.key ? spec : null;
+    return globalThis.GHOSTWRITER_SHORTCUTS.parseShortcutSpec(value);
   }
 
   function matchesShortcut(event, shortcut) {
-    if (!shortcut?.key) return false;
-    if ((event.key || '').toLowerCase() !== shortcut.key.toLowerCase()) return false;
-    if (!!event.ctrlKey !== !!shortcut.ctrl) return false;
-    if (!!event.altKey !== !!shortcut.alt) return false;
-    if (!!event.shiftKey !== !!shortcut.shift) return false;
-    if (!!event.metaKey !== !!shortcut.meta) return false;
-    return true;
+    return globalThis.GHOSTWRITER_SHORTCUTS.matchesShortcut(event, shortcut);
   }
 
   async function refreshQueueShortcut() {

@@ -14,6 +14,7 @@ const REQUIRED_RELEASE_FILES = [
   'panel.html',
   'panel.js',
   'copilot-core.js',
+  'shortcuts.js',
   'review.html',
   'review.js',
   'options.html',

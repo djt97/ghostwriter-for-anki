@@ -65,6 +65,7 @@
         "panel-ai-templates.js",
         "copilot-core.js",
         "defaults.js",
+        "shortcuts.js",
         "prompts.js",
         "native-ai.js",
         "metadata-fallback.js",

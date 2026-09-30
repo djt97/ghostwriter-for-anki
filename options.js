@@ -849,24 +849,12 @@ const num = (sel, dflt) => {
 };
 
 function parseShortcut(value) {
-  if (!value || typeof value !== "string") return null;
-  const parts = value.split(/[\s+]+/).filter(Boolean);
-  if (!parts.length) return null;
-  const state = { key: null, ctrl: false, alt: false, shift: false, meta: false };
-  for (const raw of parts) {
-    const token = raw.toLowerCase();
-    if (["ctrl", "control"].includes(token)) state.ctrl = true;
-    else if (["alt", "option"].includes(token)) state.alt = true;
-    else if (["shift"].includes(token)) state.shift = true;
-    else if (["cmd", "command", "meta", "⌘"].includes(token)) state.meta = true;
-    else if (!state.key) {
-      state.key = token.length === 1 ? token : token;
-    } else {
-      return null;
-    }
-  }
-  if (!state.key) return null;
-  return state;
+  return window.GHOSTWRITER_SHORTCUTS.parseShortcutSpec(value);
+}
+
+// Label shown in the input for this platform, e.g. "Ctrl + Shift + X" off Mac.
+function displayShortcut(value) {
+  return window.GHOSTWRITER_SHORTCUTS.formatShortcutSpec(parseShortcut(value));
 }
 
 function applyEditorFieldLabelsFromConfig(opts) {
@@ -898,14 +886,7 @@ function applyEditorFieldLabelsFromConfig(opts) {
 }
 
 function serializeShortcut(shortcut) {
-  if (!shortcut || !shortcut.key) return "";
-  const parts = [];
-  if (shortcut.ctrl) parts.push("Ctrl");
-  if (shortcut.meta) parts.push("Cmd");
-  if (shortcut.alt) parts.push("Alt");
-  if (shortcut.shift) parts.push("Shift");
-  parts.push(shortcut.key.length === 1 ? shortcut.key.toUpperCase() : shortcut.key);
-  return parts.join("+");
+  return window.GHOSTWRITER_SHORTCUTS.serializeShortcutSpec(shortcut);
 }
 
 function normalizeShortcutInput(raw) {
@@ -1017,7 +998,7 @@ async function save() {
     autoCompleteAI: $("#autoCompleteAI").value === "true",
     autoMagicGenerate: $("#autoMagicGenerate").checked,
     manualCopilotOnly: $("#manualCopilotOnly").checked,
-    copilotShortcut: $("#copilotShortcut").value.trim() || DEFAULT_COPILOT_SHORTCUT,
+    copilotShortcut: serializeShortcut(parseShortcut($("#copilotShortcut").value.trim())) || DEFAULT_COPILOT_SHORTCUT,
     copilotFrontSystemPrompt: $("#copilotFrontSystemPrompt")?.value.trim() || DEFAULT_COPILOT_FRONT_PROMPT,
     copilotBackSystemPrompt: $("#copilotBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_BACK_PROMPT,
     copilotFrontFromBackSystemPrompt: $("#copilotFrontFromBackSystemPrompt")?.value.trim() || DEFAULT_COPILOT_FRONT_FROM_BACK_PROMPT,
@@ -1108,7 +1089,7 @@ async function save() {
     }
   }
   setTimeout(() => { $("#msg").textContent=""; $("#msg").className=""; }, permissionResult.granted === false ? 7000 : 1600);
-  if (shortcut) $("#addShortcut").value = serializeShortcut(shortcut);
+  if (shortcut) $("#addShortcut").value = displayShortcut(serializeShortcut(shortcut));
 }
 
 async function load() {
@@ -1126,7 +1107,9 @@ async function load() {
   document.querySelector("#autoCompleteAI").value = String(opts.autoCompleteAI !== false);
   document.querySelector("#autoMagicGenerate").checked = !!opts.autoMagicGenerate;
   document.querySelector("#manualCopilotOnly").checked = opts.manualCopilotOnly !== false;
-  document.querySelector("#copilotShortcut").value = opts.copilotShortcut || DEFAULT_COPILOT_SHORTCUT;
+  document.querySelector("#copilotShortcut").value = displayShortcut(opts.copilotShortcut || DEFAULT_COPILOT_SHORTCUT);
+  document.querySelector("#copilotShortcut").placeholder = displayShortcut(DEFAULT_COPILOT_SHORTCUT);
+  document.querySelector("#addShortcut").placeholder = displayShortcut(DEFAULT_SHORTCUT);
   const defaults = getDefaultCopilotPrompts();
   const frontPrompt = defaults.front;
   const backPrompt = defaults.back;
@@ -1239,7 +1222,7 @@ async function load() {
     typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_SHORTCUT
   );
   const parsedShortcut = parseShortcut(rawShortcut);
-  document.querySelector("#addShortcut").value = rawShortcut === "" ? "" : (parsedShortcut ? serializeShortcut(parsedShortcut) : "");
+  document.querySelector("#addShortcut").value = rawShortcut === "" ? "" : (parsedShortcut ? displayShortcut(serializeShortcut(parsedShortcut)) : "");
 }
 
 function escapeHtml(str) {

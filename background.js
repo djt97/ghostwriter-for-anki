@@ -430,7 +430,7 @@ async function ensureContentScript(tabId) {
 
   // Not present — inject
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["shortcuts.js", "content.js"] });
     // Give it a tick to attach listeners
     await new Promise((r) => setTimeout(r, 0));
     return true;
