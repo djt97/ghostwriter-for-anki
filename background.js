@@ -856,6 +856,24 @@ async function backupOptionsBeforeMigration(existingOptions, { previousVersion =
   }
 }
 
+// One-time v3 changes to existing installs, each applied once and recorded.
+const V3_MIGRATIONS_KEY = "ghostwriter_v3_migrations_v1";
+
+async function runV3Migrations() {
+  const got = await chrome.storage.local.get(V3_MIGRATIONS_KEY).catch(() => ({}));
+  const done = got?.[V3_MIGRATIONS_KEY] || {};
+  if (!done.suggestBarOn) {
+    // The Suggest button was hidden by default by mistake; anyone who saved Options stored
+    // "off" without choosing it. Show it once; a user can still turn it off again.
+    const { [OPTIONS_KEY]: opts } = await chrome.storage.sync.get(OPTIONS_KEY).catch(() => ({}));
+    if (opts && opts.showMiniCopilotMode === "off") {
+      await chrome.storage.sync.set({ [OPTIONS_KEY]: { ...opts, showMiniCopilotMode: "on" } });
+    }
+    done.suggestBarOn = true;
+  }
+  await chrome.storage.local.set({ [V3_MIGRATIONS_KEY]: done });
+}
+
 async function runFocusedV2CompatibilityUpdate({ reason = "update", previousVersion = "" } = {}) {
   if (reason !== "update" && reason !== "startup") return null;
   const currentVersion = chrome.runtime.getManifest().version;
@@ -905,6 +923,7 @@ chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
     if (reason === "update") {
       await storeArchiveBackup({ trigger: "update", prev: previousVersion || "" });
       updateResult = await runFocusedV2CompatibilityUpdate({ reason, previousVersion: previousVersion || "" });
+      await runV3Migrations().catch((err) => console.warn("v3 migrations failed:", err));
       maybeShowUpdateNotification(updateResult?.notice);
     }
     await chrome.storage.local.set({ [LAST_VER_KEY]: chrome.runtime.getManifest().version });
@@ -934,6 +953,7 @@ chrome.runtime.onStartup?.addListener(async () => {
     if (prev && prev !== current) {
       await storeArchiveBackup({ trigger: "startup", prev });
       const updateResult = await runFocusedV2CompatibilityUpdate({ reason: "startup", previousVersion: prev });
+      await runV3Migrations().catch((err) => console.warn("v3 migrations failed:", err));
       maybeShowUpdateNotification(updateResult?.notice);
       await chrome.storage.local.set({ [LAST_VER_KEY]: current });
     }

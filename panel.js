@@ -5524,7 +5524,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       return;
     }
 
-    if ((backState.userEditSeq || 0) !== editSeqAtRequest) {
+    if ((backState.userEditSeq || 0) !== editSeqAtRequest && (backState.textarea?.value || "") !== existingBack) {
       dropSuggestionAfterUserEdit(backState);
       return;
     }
@@ -6518,7 +6518,8 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       );
       return;
     }
-    if ((state.userEditSeq || 0) !== editSeqAtRequest) {
+    // Typed since the request and the text differs (an IME commit that changes nothing keeps it).
+    if ((state.userEditSeq || 0) !== editSeqAtRequest && (textarea?.value || "") !== value) {
       dropSuggestionAfterUserEdit(state);
       return;
     }
@@ -9680,7 +9681,8 @@ async function clipboardHtmlToMarkdown(html) {
   const walk = async (node) => {
     for (const child of node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
-        parts.push(child.textContent.replace(/\s+/g, " "));
+        const inCode = !!child.parentElement?.closest("pre, code");
+        parts.push(inCode ? child.textContent : child.textContent.replace(/\s+/g, " "));
         continue;
       }
       if (child.nodeType !== Node.ELEMENT_NODE) continue;
@@ -9692,10 +9694,19 @@ async function clipboardHtmlToMarkdown(html) {
       }
       if (tag === "IMG") {
         const src = child.getAttribute("src") || "";
+        // Lazy-load placeholders and tracking pixels are not content.
+        const tiny = ["width", "height"].some((dim) => { const n = Number(child.getAttribute(dim)); return n > 0 && n <= 2; });
+        if (tiny || child.hasAttribute("data-src")) continue;
         let filename = null;
         if (src.startsWith("data:image/")) filename = await ensureImageStoredFromDataUrl(src);
         else if (src.startsWith("blob:")) filename = await storeBlobUrlAsFilename(src);
         if (filename) parts.push(`![](${filename})`);
+        continue;
+      }
+      if (tag === "PRE") {
+        parts.push("\n```\n");
+        await walk(child);
+        parts.push("\n```\n");
         continue;
       }
       const block = PASTE_BLOCK_TAGS.test(tag);
@@ -9705,7 +9716,12 @@ async function clipboardHtmlToMarkdown(html) {
     }
   };
   await walk(doc.body);
-  return parts.join("").replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  // Tidy blank space outside code fences only.
+  return parts.join("")
+    .split(/(\n```\n[\s\S]*?\n```\n)/)
+    .map((chunk, i) => (i % 2 ? chunk : chunk.replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n")))
+    .join("")
+    .trim();
 }
 
 async function handlePasteImage(event) {
@@ -9714,6 +9730,8 @@ async function handlePasteImage(event) {
   if (!(target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type === "text"))) {
     return;
   }
+  // Only fields the user can see; the clipboard reader uses a hidden textarea of its own.
+  if (target.hidden || !target.getClientRects().length) return;
   const items = Array.from(event.clipboardData?.items || []);
   const imageItem = items.find((item) => item.type && item.type.startsWith("image/"));
   const html = event.clipboardData?.getData("text/html") || "";
@@ -10957,7 +10975,7 @@ async function updateModelFieldWarning() {
     const hasContext = fieldNames.includes("Context");
     const hasSource = fieldNames.includes("Source");
     const fieldMap = window.GHOSTWRITER_ANKI_NOTE.resolveNoteFields(fieldNames);
-    const remapNote = !isClozeModelName(modelName) && fieldMap.remapped
+    const remapNote = !isClozeModelName(modelName) && !isLpcg1ModelName(modelName) && !isLpcgMode() && fieldMap.remapped
       ? (fieldMap.back
         ? `It has no Front/Back fields, so Ghostwriter will put the question in “${fieldMap.front}” and the answer in “${fieldMap.back}”.`
         : `It has only one field for the card (“${fieldMap.front}”), so the Back will not be saved.`)
