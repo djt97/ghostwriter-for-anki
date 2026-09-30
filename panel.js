@@ -2986,7 +2986,7 @@ function setCopilotEnabled(nextEnabled, { persist = false } = {}) {
     setCopilotStatus("Exact source assists remain available. Connect a provider or enable Chrome AI in Settings.");
   } else {
     if (copilot.manualOnly) {
-      setCopilotStatus(`Manual Copilot autocomplete: press ${copilot.triggerShortcut} to suggest`);
+      setCopilotStatus(`Manual Copilot autocomplete: press ${formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut} or Suggest`);
     } else {
       setCopilotStatus("Copilot ready.");
       try {
@@ -12674,7 +12674,7 @@ async function updateCompactCopilotVisibility() {
   if (!miniNew && !miniOld) return;
 
   const opts = await getOptions();
-  const mode = normalizeMiniCopilotMode(opts.showMiniCopilotMode || 'off');
+  const mode = normalizeMiniCopilotMode(opts.showMiniCopilotMode || (window.GHOSTWRITER_DEFAULTS || {}).showMiniCopilotMode || 'on');
   copilot.showSourceModePill = opts.showSourceModePill !== false;
   const isPopover = /\bpopover\b/i.test(location.hash);
   const small = window.matchMedia('(max-width: 640px)').matches || isPopover;
