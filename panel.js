@@ -9621,50 +9621,42 @@ async function storeBlobUrlAsFilename(blobUrl) {
   }
 }
 
-async function replaceClipboardImageSources(text) {
-  if (!text) return { text: text || "", didReplace: false };
-  let next = text;
-  let didReplace = false;
-  const replacementMap = new Map();
-  const imgMatches = Array.from(text.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi));
+const PASTE_BLOCK_TAGS = /^(?:P|DIV|LI|H[1-6]|TR|BLOCKQUOTE|PRE|SECTION|ARTICLE|UL|OL|TABLE|FIGURE|FIGCAPTION)$/;
 
-  for (const match of imgMatches) {
-    const src = match[1];
-    if (!src) continue;
-    if (replacementMap.has(src)) continue;
-    if (src.startsWith("data:image/")) {
-      const filename = await ensureImageStoredFromDataUrl(src);
-      if (filename) replacementMap.set(src, filename);
-    } else if (src.startsWith("blob:")) {
-      const filename = await storeBlobUrlAsFilename(src);
-      if (filename) replacementMap.set(src, filename);
+// Turn pasted web HTML into plain text with Markdown images, so a copied passage with
+// pictures arrives as readable text plus images Anki can store.
+async function clipboardHtmlToMarkdown(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const parts = [];
+  const walk = async (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        parts.push(child.textContent.replace(/\s+/g, " "));
+        continue;
+      }
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      const tag = child.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") continue;
+      if (tag === "BR") {
+        parts.push("\n");
+        continue;
+      }
+      if (tag === "IMG") {
+        const src = child.getAttribute("src") || "";
+        let filename = null;
+        if (src.startsWith("data:image/")) filename = await ensureImageStoredFromDataUrl(src);
+        else if (src.startsWith("blob:")) filename = await storeBlobUrlAsFilename(src);
+        if (filename) parts.push(`![](${filename})`);
+        continue;
+      }
+      const block = PASTE_BLOCK_TAGS.test(tag);
+      if (block) parts.push("\n");
+      await walk(child);
+      if (block) parts.push("\n");
     }
-  }
-
-  for (const [src, filename] of replacementMap.entries()) {
-    const tagMatch = new RegExp(`(<img\\b[^>]*\\bsrc=["'])${src.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(["'][^>]*>)`, "gi");
-    next = next.replace(tagMatch, `$1${filename}$2`);
-    didReplace = true;
-  }
-
-  const blobMatches = Array.from(next.matchAll(/blob:[^\s"'>]+/g));
-  for (const match of blobMatches) {
-    const src = match[0];
-    if (!src) continue;
-    if (replacementMap.has(src)) {
-      next = next.replace(src, replacementMap.get(src));
-      didReplace = true;
-      continue;
-    }
-    const filename = await storeBlobUrlAsFilename(src);
-    if (filename) {
-      replacementMap.set(src, filename);
-      next = next.replace(src, filename);
-      didReplace = true;
-    }
-  }
-
-  return { text: next, didReplace };
+  };
+  await walk(doc.body);
+  return parts.join("").replace(/[ \t]+\n/g, "\n").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 async function handlePasteImage(event) {
@@ -9675,41 +9667,29 @@ async function handlePasteImage(event) {
   }
   const items = Array.from(event.clipboardData?.items || []);
   const imageItem = items.find((item) => item.type && item.type.startsWith("image/"));
-  if (imageItem) {
-    const file = imageItem.getAsFile();
-    if (!file) return;
-    event.preventDefault();
-    try {
+  const html = event.clipboardData?.getData("text/html") || "";
+  const plain = event.clipboardData?.getData("text/plain") || "";
+  const htmlHasInlineImages = /<img\b[^>]*\bsrc=["'](?:data:image\/|blob:)/i.test(html);
+  const file = imageItem && !htmlHasInlineImages ? imageItem.getAsFile() : null;
+  if (!file && !htmlHasInlineImages) return; // ordinary text paste: let the browser handle it
+
+  // Decide before any await: the browser's own paste runs as soon as this handler yields.
+  event.preventDefault();
+  try {
+    if (file) {
       const buffer = await file.arrayBuffer();
       const mime = file.type || "image/png";
-      const ext = mimeToExtension(mime);
       const hash = await sha1Hex(buffer);
-      const filename = `paste-${hash}.${ext}`;
-      const base64 = arrayBufferToBase64(buffer);
-      await addImageToStore({ filename, data: base64, type: mime });
-      const htmlImage = `<img src="${filename}" data-editor-shrink="false">`;
-      insertTextAtCursor(target, htmlImage);
-      scheduleMarkdownPreviewUpdate();
-    } catch (err) {
-      console.warn("Failed to paste image", err);
+      const filename = `paste-${hash}.${mimeToExtension(mime)}`;
+      await addImageToStore({ filename, data: arrayBufferToBase64(buffer), type: mime });
+      insertTextAtCursor(target, `![](${filename})`);
+    } else {
+      insertTextAtCursor(target, await clipboardHtmlToMarkdown(html));
     }
-    return;
-  }
-
-  const clipboardData = event.clipboardData;
-  const html = clipboardData?.getData("text/html") || "";
-  const text = clipboardData?.getData("text/plain") || "";
-  const source = html || text;
-  if (!source) return;
-
-  try {
-    const result = await replaceClipboardImageSources(source);
-    if (!result.didReplace) return;
-    event.preventDefault();
-    insertTextAtCursor(target, result.text);
     scheduleMarkdownPreviewUpdate();
   } catch (err) {
-    console.warn("Failed to paste clipboard content with images", err);
+    console.warn("Failed to paste image", err);
+    if (plain) insertTextAtCursor(target, plain);
   }
 }
 

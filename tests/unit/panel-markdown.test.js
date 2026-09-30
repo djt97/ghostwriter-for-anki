@@ -117,9 +117,14 @@ describe('panel-markdown.js', () => {
     });
 
     it('falls back to escaped HTML when markdown-it is not available', () => {
-      const result = renderMarkdownToHtml('Hello <b>world</b>');
-      assert.ok(result.includes('&lt;b&gt;'));
-      assert.ok(!result.includes('<b>'));
+      const result = renderMarkdownToHtml('Hello <span class="x">world</span> <script>x()</script>');
+      assert.ok(result.includes('&lt;span'));
+      assert.ok(result.includes('&lt;script&gt;'));
+      assert.ok(!result.includes('<span'));
+    });
+
+    it('keeps attribute-free formatting tags such as <b> and <sub>', () => {
+      assert.equal(renderMarkdownToHtml('H<sub>2</sub>O <b>world</b>'), 'H<sub>2</sub>O <b>world</b>');
     });
 
     it('preserves math segments through rendering', () => {

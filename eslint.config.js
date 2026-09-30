@@ -48,6 +48,7 @@ export default [
         IntersectionObserver: "readonly",
         ResizeObserver: "readonly",
         Node: "readonly",
+        DOMParser: "readonly",
         HTMLElement: "readonly",
         HTMLTextAreaElement: "readonly",
         HTMLInputElement: "readonly",

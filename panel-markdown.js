@@ -70,20 +70,45 @@ function restoreMathSegments(text, mathSegments) {
     });
 }
 
+// Raw HTML stays escaped (markdown-it runs with html:false), except a few attribute-free
+// formatting tags Anki users type by hand and images that point at a bare media filename
+// (what pasting a screenshot inserts). Nothing here can carry a script or an event handler.
+const SAFE_INLINE_TAG_RE = /<\/?(?:b|i|u|em|strong|sub|sup)>|<br\s*\/?>/gi;
+const MEDIA_IMG_TAG_RE = /<img\b[^>]*?\bsrc=["']([^"'<>]+)["'][^>]*>/gi;
+const MEDIA_FILENAME_RE = /^[\w][\w.-]*\.(?:png|jpe?g|gif|webp|svg)$/i;
+
+function extractSafeHtmlTags(text) {
+  const tags = [];
+  const keep = (html) => {
+    tags.push(html);
+    return `@@QF_TAG_${tags.length - 1}@@`;
+  };
+  const out = text
+    .replace(MEDIA_IMG_TAG_RE, (match, src) => (MEDIA_FILENAME_RE.test(src) ? keep(`<img src="${src}">`) : match))
+    .replace(SAFE_INLINE_TAG_RE, (match) => keep(match.toLowerCase().replace(/<br\s*\/?>/, "<br>")));
+  return { text: out, tags };
+}
+
+function restoreSafeHtmlTags(html, tags) {
+  return html.replace(/@@QF_TAG_(\d+)@@/g, (_m, idx) => tags[Number(idx)] ?? "");
+}
+
 function renderMarkdownToHtml(text) {
   if (text === null || text === undefined) return "";
   const raw = typeof text === "string" ? text : String(text);
   if (!raw.trim()) return "";
-  const { text: masked, segments } = extractMathSegments(raw);
+  const { text: mathMasked, segments } = extractMathSegments(raw);
+  const { text: masked, tags } = extractSafeHtmlTags(mathMasked);
   const renderer = getMarkdownRenderer();
   let html = "";
   if (renderer) {
     html = renderer.render(masked);
-    html = html.replace(/^<p>([\s\S]*?)<\/p>\n?$/, '$1');
+    // Unwrap a single paragraph; leave multi-paragraph output balanced.
+    html = html.replace(/^<p>((?:(?!<\/?p>)[\s\S])*)<\/p>\n?$/, '$1');
   } else {
     html = escapeHtml(masked).replace(/\n/g, "<br>");
   }
-  return restoreMathSegments(html, segments);
+  return restoreMathSegments(restoreSafeHtmlTags(html, tags), segments);
 }
 
 function convertLatexToAnki(text) {
