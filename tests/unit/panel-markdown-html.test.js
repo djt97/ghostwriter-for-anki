@@ -74,3 +74,8 @@ test("forged placeholders cannot turn a link into javascript:", () => {
 test("uppercase formatting tags are normalised", () => {
   assert.equal(render("<B>x</B> <SUB>2</SUB>"), "<b>x</b> <sub>2</sub>");
 });
+
+test("Markdown after a line that starts with a tag still renders", () => {
+  assert.equal(render('<img src="x.png">\n**important**'), '<img src="x.png"><br>\n<strong>important</strong>');
+  assert.match(render("<b>Note</b>\n\n- item"), /<ul>\s*<li>item<\/li>/);
+});

@@ -11751,6 +11751,13 @@ async function addCurrentCardToAnki() {
     source: $("#source")?.value || "",
   };
   let contextAfterAdd = $("#context")?.value || ""; // updated when auto-context fills it
+  // Show the generated context in the field, unless the user has edited it since Add was pressed.
+  const showAutoContext = (value) => {
+    const contextEl = $("#context");
+    if (!contextEl || (contextEl.value || "") !== contextAfterAdd) return;
+    contextEl.value = value;
+    contextAfterAdd = value;
+  };
   let deckName = $("#deck").value || "All Decks";
   const modelName = $("#model").value || "Basic";
   const front = ($("#front").value || "").trim();
@@ -11906,18 +11913,14 @@ async function addCurrentCardToAnki() {
         const base = (card.context || stickyBase || "").trim();
         const merged = base ? `${base}, ${context}` : context;
         card.context = merged;
-        const contextEl = $("#context");
-        if (contextEl) contextEl.value = merged;
+        showAutoContext(merged);
         stickyContextState.value = merged;
       } else {
         card.context = context;
-        const contextEl = $("#context");
-        if (contextEl) contextEl.value = context;
+        showAutoContext(context);
       }
     }
   }
-
-  contextAfterAdd = $("#context")?.value || "";
 
   if (stickyActive) {
     finalStickyValue = (card.context || stickyBase || "").trim();

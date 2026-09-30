@@ -27,8 +27,10 @@ function getMarkdownRenderer() {
     linkify: true,
     breaks: true
   });
+  // No HTML blocks: a line starting with a tag would swallow the Markdown on the lines after it.
+  // Such lines parse as ordinary paragraphs, with the tags as inline HTML.
+  md.disable("html_block");
   md.renderer.rules.html_inline = (tokens, idx) => sanitizeHtmlFragment(tokens[idx].content);
-  md.renderer.rules.html_block = (tokens, idx) => sanitizeHtmlFragment(tokens[idx].content);
   markdownRendererState.instance = md;
   return md;
 }
