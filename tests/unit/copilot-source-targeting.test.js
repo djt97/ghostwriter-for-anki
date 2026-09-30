@@ -141,3 +141,27 @@ describe('source sentence focus keeps numbers, initialisms and referents intact'
     assert.equal(selectRelevantSource(dead, 'What does its density', ''), 'Swimmers often visit. Its density keeps swimmers afloat.');
   });
 });
+
+describe('source focus on text copied from PDFs', () => {
+  const WRAPPED = 'Prospect theory describes how people choose under risk. Kahneman and Tversky estimated that losses\n' +
+    'loom roughly twice as large as gains of the same size, a pattern they\n' +
+    'called loss aversion. The effect was later replicated in many\n' +
+    'field settings.';
+  it('joins lines that a PDF wrapped mid-sentence', () => {
+    assert.equal(
+      selectRelevantSource(WRAPPED, 'Who estimated that losses loom', ''),
+      'Kahneman and Tversky estimated that losses loom roughly twice as large as gains of the same size, a pattern they called loss aversion.'
+    );
+  });
+  it('keeps real line breaks such as Q:/A: labels and list items', () => {
+    const core = require('../../copilot-core.js');
+    assert.deepEqual(core.splitSourceSentencesVerbatim('Q: What is it?\nA: A lake.'), ['Q: What is it?', 'A: A lake.']);
+    assert.deepEqual(core.splitSourceSentencesVerbatim('Steps\n- boil water\n- add tea'), ['Steps', '- boil water', '- add tea']);
+  });
+  it('focuses excerpts that start with an ellipsis', () => {
+    assert.equal(
+      selectRelevantSource('...the central bank raised rates. Inflation fell to 2%. Unemployment rose.', 'Inflation fell', ''),
+      'Inflation fell to 2%.'
+    );
+  });
+});

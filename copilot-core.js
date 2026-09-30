@@ -689,10 +689,31 @@
     return sentences;
   }
 
-  // Sentences exactly as they appear in the source, terminal punctuation included.
-  // Decimals (99.97), initialisms (U.S., e.g.) and titles (Dr.) do not end a sentence.
+  // Text copied from PDFs and emails breaks every printed line. Join those soft breaks; keep a
+  // line break only before a blank line, a list item or a label such as "Q:" / "A:".
+  const HARD_LINE_START_RE = /^\s*(?:[-*•‣◦▪]\s|\d{1,3}[.)]\s|\p{Lu}[\p{L}]{0,15}:\s)/u;
+
+  function joinSoftLineBreaks(value) {
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+    let out = lines[0] || "";
+    for (let i = 1; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!line.trim() || !lines[i - 1].trim() || HARD_LINE_START_RE.test(line)) {
+        out += `\n${line}`;
+      } else if (/\p{L}-$/u.test(out)) {
+        out += line.trimStart(); // "trans-" + "formation" keeps its hyphen, loses the gap
+      } else {
+        out += ` ${line.trimStart()}`;
+      }
+    }
+    return out;
+  }
+
+  // Sentences as they appear in the source, terminal punctuation included, with soft line
+  // breaks joined. Decimals (99.97), initialisms (U.S., e.g.) and titles (Dr.) do not end a
+  // sentence, and a leading ellipsis ("...the bank raised rates.") is dropped.
   function splitSourceSentencesVerbatim(value) {
-    let remaining = String(value || "").trim();
+    let remaining = joinSoftLineBreaks(value).trim().replace(/^[.!?…]+\s*/u, "");
     const sentences = [];
     for (let guard = 0; remaining && guard < 500; guard += 1) {
       const core = firstSourceSentence(remaining);
