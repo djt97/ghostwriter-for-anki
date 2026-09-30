@@ -63,13 +63,14 @@ if (window.__QUICKFLASH_INJECTED__) {
   let lastImageSelectionTarget = null;
   let lastImageSelectionAt = 0;
 
-  // Shared with the panel via shortcuts.js, injected just before this file.
+  // Shared with the panel via shortcuts.js, which the background injects just before this
+  // file. Without it the overlay still opens; only its keyboard shortcut is unavailable.
   function parseShortcutSpec(value) {
-    return globalThis.GHOSTWRITER_SHORTCUTS.parseShortcutSpec(value);
+    return globalThis.GHOSTWRITER_SHORTCUTS?.parseShortcutSpec(value) || null;
   }
 
   function matchesShortcut(event, shortcut) {
-    return globalThis.GHOSTWRITER_SHORTCUTS.matchesShortcut(event, shortcut);
+    return !!globalThis.GHOSTWRITER_SHORTCUTS?.matchesShortcut(event, shortcut);
   }
 
   async function refreshQueueShortcut() {

@@ -78,7 +78,8 @@ test.describe('Ghostwriter for Anki UI', () => {
         tabs.find((candidate) => candidate.active && /^https?:/.test(candidate.url || ''));
       if (!tab?.id) return { ok: false, error: 'No injectable fixture tab found.' };
       try {
-        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+        // Same files, same order, as background.js ensureContentScript().
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['shortcuts.js', 'content.js'] });
         return { ok: true };
       } catch (err) {
         return { ok: false, error: err?.message || String(err) };
@@ -277,7 +278,9 @@ test.describe('Ghostwriter for Anki UI', () => {
 
     await panelPage.goto(panelUrl, { waitUntil: 'load' });
     await expect(panelPage.locator('html')).toHaveAttribute('data-qf-panel', 'ready', { timeout: 30_000 });
-    await panelPage.locator('#mathjaxPreview').setChecked(true, { force: true });
+    // No force: a forced click lands on whatever covers the box (the sticky header at some
+    // scroll positions). Let Playwright scroll it clear and click it like a user.
+    await panelPage.locator('#mathjaxPreview').check();
     await panelPage.locator('#front').fill('Energy $E=mc^2$');
 
     const frontPreviewFrame = panelPage.locator('#previewFront');
