@@ -15,6 +15,7 @@ const REQUIRED_RELEASE_FILES = [
   'panel.js',
   'copilot-core.js',
   'shortcuts.js',
+  'anki-connect.js',
   'review.html',
   'review.js',
   'options.html',

@@ -320,40 +320,7 @@ function invalidatesAnkiSetupCache(action) {
 
 async function sendAnkiConnectRequest(action, params = {}) {
   const opts = await getOptions();
-  const configured = (opts.ankiBaseUrl || "http://127.0.0.1:8765").replace(/\/+$/,'');
-  const candidates = [configured];
-  const alt = configured.includes("127.0.0.1")
-    ? configured.replace("127.0.0.1", "localhost")
-    : (configured.includes("localhost") ? configured.replace("localhost", "127.0.0.1") : null);
-  if (alt && alt !== configured) candidates.push(alt);
-
-  const payload = { action, version: 6, params };
-  let lastErr = null;
-
-  for (const base of candidates) {
-    try {
-      const res = await fetch(base, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || (data && data.error)) {
-        const msg = (data && (data.error || data.detail)) || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-      return data.result;
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-
-  const help = [
-    "Could not reach AnkiConnect.",
-    `Tried: ${candidates.join(" -> ")}.`,
-    "On Android: open AnkiconnectAndroid, tap \"Start Service\", then set \"CORS host\" to the Extension origin shown in Options."
-  ].join(" ");
-  throw new Error(`${help} (${lastErr?.message || lastErr || "unknown error"})`);
+  return window.GHOSTWRITER_ANKI.request(action, params, { baseUrl: opts.ankiBaseUrl });
 }
 
 async function anki(action, params = {}) {
@@ -393,7 +360,8 @@ async function anki(action, params = {}) {
     if (invalidatesAnkiSetupCache(action)) clearAnkiSessionCache({ keepPermission: true });
     return result;
   } catch (err) {
-    clearAnkiSessionCache();
+    // A refusal (duplicate, missing deck) says nothing about the connection.
+    if (err?.kind !== "anki") clearAnkiSessionCache();
     throw err;
   }
 }
@@ -10338,7 +10306,7 @@ async function refreshMetaAndDefaults() {
     }
     console.warn(e);
     const msg = e?.message || e?.toString?.() || e || "unknown error";
-    status(`Could not reach AnkiConnect. Is Anki running & AnkiConnect installed? (${msg})`);
+    status(e?.kind ? msg : `Couldn't connect to Anki: ${msg}`);
   }
 
   await updateModelFieldWarning();
@@ -11693,7 +11661,35 @@ async function maybeCloseOverlayAfterAdd() {
   } catch {}
 }
 
+// One add at a time: a second click or shortcut during a slow add would send the card twice.
+let ankiAddInFlight = false;
+
 async function addToAnki() {
+  if (ankiAddInFlight) return;
+  ankiAddInFlight = true;
+  const addBtn = document.querySelector("#add");
+  if (addBtn) {
+    addBtn.disabled = true;
+    addBtn.setAttribute("aria-busy", "true");
+  }
+  try {
+    return await addCurrentCardToAnki();
+  } finally {
+    ankiAddInFlight = false;
+    if (addBtn) {
+      addBtn.disabled = false;
+      addBtn.removeAttribute("aria-busy");
+    }
+  }
+}
+
+async function addCurrentCardToAnki() {
+  // What was in the editor when Add was pressed; text typed during the add is kept.
+  const typedAtStart = {
+    front: $("#front").value || "",
+    back: $("#back").value || "",
+    notes: $("#notes").value || "",
+  };
   let deckName = $("#deck").value || "All Decks";
   const modelName = $("#model").value || "Basic";
   const front = ($("#front").value || "").trim();
@@ -11832,6 +11828,13 @@ async function addToAnki() {
     }
   }
 
+  // Check Anki before spending model requests on tags and context.
+  try {
+    await anki("version");
+  } catch (e) {
+    return status(e?.kind ? e.message : `Failed: ${e?.message || e}`);
+  }
+
   const wantAutoTag = $("#manualAutoTag") ? $("#manualAutoTag").checked : !!(manualPrefsCache?.autoTagManual);
   const wantAutoContext = $("#manualAutoContext") ? $("#manualAutoContext").checked : !!(manualPrefsCache?.autoContextManual);
 
@@ -11883,6 +11886,10 @@ async function addToAnki() {
   }
 
   const resetManualFields = async () => {
+    const tagsEl = document.querySelector("#tags");
+    if (tagsEl) tagsEl.value = ""; // ← important: prevent tag accumulation
+    const typedSince = ["front", "back", "notes"].some((id) => ($(`#${id}`)?.value || "") !== typedAtStart[id]);
+    if (typedSince) return; // the user has started the next card; leave it alone
     $("#front").value = "";
     $("#back").value  = "";
     $("#notes").value = "";
@@ -11894,8 +11901,6 @@ async function addToAnki() {
       sourceEl.value = "";
       delete sourceEl.dataset.autoClipboard;
     }
-    const tagsEl = document.querySelector("#tags");
-    if (tagsEl) tagsEl.value = ""; // ← important: prevent tag accumulation
     const lpcgTextEl = document.querySelector("#lpcgText");
     if (lpcgTextEl) lpcgTextEl.value = "";
     lpcgState.tokens = [];
@@ -12053,7 +12058,7 @@ async function addToAnki() {
       status("No result from AnkiConnect.");
     }
   } catch (e) {
-    status(`Failed: ${e.message}`);
+    status(e?.kind ? e.message : `Failed: ${e.message}`);
   }
 }
 

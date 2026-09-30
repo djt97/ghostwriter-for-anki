@@ -1,5 +1,7 @@
 // background.js — drive Ghostwriter for Anki UI surfaces (overlay ➜ tab; side panel is explicit)
 
+importScripts("anki-connect.js"); // eslint-disable-line no-undef
+
 const supportsSidePanel = () => Boolean(chrome.sidePanel && (chrome.sidePanel.open || chrome.sidePanel.setOptions)); // keep
 const OPTIONS_KEY = "quickflash_options";
 
@@ -1091,63 +1093,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "quickflash:anki") {
       const { action, params } = message;
       try {
-        // 1) Load configured Anki base URL from sync storage
         const quickflash_options = await getQuickflashOptions();
-        const rawBase = (quickflash_options?.ankiBaseUrl || "http://127.0.0.1:8765").trim() || "http://127.0.0.1:8765";
-
-        // Normalize + construct host candidates (127.0.0.1 <-> localhost swap, preserve port)
-        let base = rawBase.replace(/\/+$/g, "");
-        let candidates = [];
-
-        try {
-          const u = new URL(base);
-          const proto = u.protocol || "http:";
-          const hostname = u.hostname || "127.0.0.1";
-          const port = u.port ? `:${u.port}` : "";
-
-          candidates.push(`${proto}//${hostname}${port}`);
-
-          if (hostname === "127.0.0.1") {
-            candidates.push(`${proto}//localhost${port}`);
-          } else if (hostname === "localhost") {
-            candidates.push(`${proto}//127.0.0.1${port}`);
-          }
-        } catch {
-          // If URL parsing fails, fall back to default
-          candidates = ["http://127.0.0.1:8765"];
-        }
-
-        let lastError = null;
-
-        for (const baseUrl of candidates) {
-          try {
-            const res = await fetch(baseUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action,
-                version: 6,
-                params: params || {},
-              }),
-            });
-
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok || data?.error) {
-              throw new Error(data?.error || `HTTP ${res.status}`);
-            }
-
-            // Success from this candidate
-            sendResponse({ ok: true, result: data.result });
-            return;
-          } catch (err) {
-            lastError = err;
-          }
-        }
-
-        // All candidates failed
-        throw lastError || new Error("Could not reach AnkiConnect");
+        const result = await globalThis.GHOSTWRITER_ANKI.request(action, params || {}, {
+          baseUrl: quickflash_options?.ankiBaseUrl,
+        });
+        sendResponse({ ok: true, result });
       } catch (err) {
-        sendResponse({ ok: false, error: err?.message || String(err) });
+        sendResponse({ ok: false, error: err?.message || String(err), kind: err?.kind || "" });
       }
       return;
     }

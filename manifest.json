@@ -66,6 +66,7 @@
         "copilot-core.js",
         "defaults.js",
         "shortcuts.js",
+        "anki-connect.js",
         "prompts.js",
         "native-ai.js",
         "metadata-fallback.js",
