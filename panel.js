@@ -11,7 +11,7 @@ try {
   const versionEl = $("#app-version");
   if (versionEl) versionEl.textContent = "v" + chrome.runtime.getManifest().version;
 } catch {}
-const status = (msg, good) => { const el = $("#status"); el.textContent = msg || ""; el.style.color = good ? "#0b5f17" : "#333"; };
+const status = (msg, good) => { const el = $("#status"); el.textContent = msg || ""; el.classList.toggle("status-ok", !!good); };
 try {
   window.parent?.postMessage({ type: "quickflash:panelReady" }, "*");
 } catch {}

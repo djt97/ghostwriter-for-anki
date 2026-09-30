@@ -1652,6 +1652,9 @@
     /* ...except a blocked draft offered via "Use anyway" — it has no other surface, so it must
        stay visible everywhere (overlay, side panel, tab). */
     .copilot-suggestion.rejected-draft-mode:not([hidden]) { display: grid !important; }
+      /* Status line: theme colours so messages stay readable in dark mode */
+    #status { color: var(--text); }
+    #status.status-ok { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -2043,7 +2046,7 @@
       </button>
     </div>
 
-    <div class="small" id="status"></div>
+    <div class="small" id="status" role="status" aria-live="polite"></div>
   </main>
 
   <div id="copilotFactPicker" class="modal-overlay copilot-fact-overlay" hidden>
