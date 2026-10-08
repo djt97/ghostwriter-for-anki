@@ -30,7 +30,7 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 4. Write the card in the overlay; press the Copilot autocomplete shortcut when useful.
 5. Add the card directly to Anki.
 
-The compact Suggest/Accept/Reject/Clear bar is hidden by default. Keyboard shortcuts still work. You can enable the buttons in **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**; existing saved display choices are retained.
+The compact Suggest/Accept/Reject/Clear bar shows by default on touch devices and stays hidden on desktop, where the keyboard shortcuts do the same job. To change it, use **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**.
 
 Ghostwriter includes 100 lifetime hosted-model requests per browser installation, with no per-install daily cap and no paid plan. Temporary network and service safety limits may still pause included requests. You can instead connect your own provider or local OpenAI-compatible model. Supported Chrome installations can also opt in to Chrome's on-device Prompt API (English only in the current adapter); setup is explicit because Chrome may need to download its model. Hosted fallback from the on-device model is separately controllable in Options.
 

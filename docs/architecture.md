@@ -11,7 +11,7 @@ Ghostwriter is implemented as a Manifest V3 extension with these main pieces:
 - `native-ai.js` + `native-ai-options.js` — document-context adapter and explicit setup UI for Chrome's on-device Prompt API
 - `copilot-core.js` — shared deterministic source-verbatim card assists used by the runtime and eval harness
 - `metadata-fallback.js` — conservative local subject classifier and URL reduction for automatic metadata prompts
-- `stage2-migration.js` — verified legacy-record and uploaded-image recovery backups
+- `stage2-migration.js` — verified legacy-record backup; removes pasted images once Anki has saved them
 
 ## Control flow overview
 
@@ -35,7 +35,7 @@ Common message categories:
 
 - User configuration stored in extension storage.
 - The panel stores the current editor draft locally. There is no Review Queue or outbox in the source update.
-- A one-time migration retains a verified local backup before clearing legacy queue/archive keys. Images removed from the active cache after a confirmed upload and note add are first retained in a verified recovery backup. Options provides local export and safe retry controls.
+- A one-time migration retains a verified local backup before clearing legacy queue/archive keys. Pasted images are removed from extension storage after a confirmed upload and note add, unless a draft or legacy record still refers to them. Options provides local export and safe retry controls.
 
 ## Release build
 
@@ -77,4 +77,4 @@ The panel resolves a backend for each model-backed task in this order:
 
 The active-backend UI is updated when routing or fallback changes so users can see where a model request ran.
 
-Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged. The full source URL is retained in Anki Source/backlinks when known. Copilot source/image context is a separate path and can include URLs supplied in the selected source.
+Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged. The full source URL is retained in Anki Source/backlinks when known, except that no backlink is written into a typed-answer or question-side answer field (see `anki-note.js` `sourceLinkUnsafeReason`). Copilot source/image context is a separate path and can include URLs supplied in the selected source.

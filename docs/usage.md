@@ -28,7 +28,7 @@ You can open Ghostwriter using:
 5. Fill/review **Back**.
 6. Add the finished card to Anki with `Ctrl/Cmd+Shift+A` or the **Add to Anki** button.
 
-Suggestions appear only when requested. The compact Suggest/Accept/Reject/Clear bar is hidden by default; existing saved display choices remain in effect. To show the buttons, use **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**. Keyboard shortcuts work with the bar hidden. Review Queue and its outbox are retired in the source update; **Add to Anki** sends the edited card directly to Anki.
+Suggestions appear only when requested. The compact Suggest/Accept/Reject/Clear bar shows by default on touch devices and stays hidden on desktop. To change it, use **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**. Keyboard shortcuts work with the bar hidden. Review Queue and its outbox are retired in the source update; **Add to Anki** sends the edited card directly to Anki.
 
 ## Source and context behavior
 
@@ -55,4 +55,4 @@ When model tagging is unavailable, Auto-Tag may add at most one high-confidence 
 - Reject suggestions that drift toward generic trivia, vague context, or passage restatement.
 - Treat AI output as a draft; edit it before adding the card.
 
-Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged and may contain URLs. A known full HTTP(S) source URL remains in the Anki Source field or backlink. Known local-file/PDF-viewer addresses remain as escaped source text rather than clickable links. This reduction applies to those automatic helpers; Copilot uses the selected source, which can include URLs or image metadata. Clipboard text without a known source page has no source URL to save.
+Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged and may contain URLs. A known full HTTP(S) source URL remains in the Anki Source field or a backlink on the Back. On note types without a Source field that grade a typed answer or show the answer field on the question side (for example **Basic (type in the answer)** or **Basic (and reversed card)**), the link is left out so it can't spoil the card; the note-type warning recommends **Basic [Ghostwriter]**, which keeps it in its Source field. Known local-file/PDF-viewer addresses remain as escaped source text rather than clickable links. This reduction applies to those automatic helpers; Copilot uses the selected source, which can include URLs or image metadata. Clipboard text without a known source page has no source URL to save.

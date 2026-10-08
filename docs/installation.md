@@ -44,6 +44,6 @@ The overlay shortcut is `Option+Shift+F` on Mac and `Ctrl+Shift+F` on Windows/Li
 
 The source update retires Review Queue, its outbox and suggestions that appear automatically while typing. The editor still sends cards directly to Anki, and Copilot runs when you press Suggest or its shortcut.
 
-Before clearing legacy queue/archive records, the update saves and verifies a local recovery backup. It keeps pasted-image data so that images referenced by the backup remain available. Current editor drafts, settings, provider keys and cards already in Anki are preserved.
+Before clearing legacy queue/archive records, the update saves and verifies a local recovery backup. Pasted images that the backup refers to are kept. Current editor drafts, settings, provider keys and cards already in Anki are preserved.
 
-In Options, **Export recovery backup** saves the retained records and image data to a local JSON file. The export does not include settings or provider keys, but may contain private card text, source URLs and images. If cleanup could not complete, **Retry safe cleanup** retries the backup-and-cleanup procedure. Keep an exported copy if you need to recover old records; exporting is not an import into Anki.
+In Options, **Export recovery backup** saves the retained records and any pasted images still on this device to a local JSON file. The export does not include settings or provider keys, but may contain private card text, source URLs and images. If cleanup could not complete, **Retry safe cleanup** retries the backup-and-cleanup procedure. Keep an exported copy if you need to recover old records; exporting is not an import into Anki.

@@ -15,7 +15,7 @@ For **Anki denied the connection** or **Anki refused the connection (HTTP 401/40
 3. In Anki, open **Tools → Add-ons**, select AnkiConnect, and open **Config**. Append that exact `chrome-extension://…` origin to `webCorsOriginList`, preserving its existing entries. Do not replace the list with a wildcard.
 4. Restart Anki and try again. Ghostwriter rechecks permission after a refusal; it does not send the pending card while permission is denied.
 
-If Ghostwriter says **AnkiConnect did not confirm permission**, check that AnkiConnect is up to date and retry. A successful connection test alone does not grant permission to add notes.
+If Ghostwriter says **Anki denied the connection**, AnkiConnect's permission prompt in Anki was declined. Retry and choose to allow Ghostwriter, or add the extension to AnkiConnect's `webCorsOriginList`.
 
 ### Anki didn't respond in time
 
@@ -23,7 +23,7 @@ Close any dialog in Anki. Before retrying an add whose result is uncertain, chec
 
 ### Anki rejected the card
 
-Read the reported Anki error. A duplicate Front, a missing deck or a changed note type needs a card or setup change, rather than another permission grant. Ghostwriter retains the editor text after a refused add.
+Read the reported Anki error. A missing deck or a changed note type needs a setup change, rather than another permission grant. For a duplicate Front, change the card or, if you meant it, press **Add anyway**. Ghostwriter retains the editor text after a refused add.
 
 ## AI request failures
 
@@ -54,4 +54,4 @@ Click Save in Options, reload the extension from `chrome://extensions`, and reop
 
 ## Old Review Queue or archive records
 
-Review Queue and its outbox are retired in the source update. Options provides **Export recovery backup** for records retained before cleanup, including available pasted-image data. If the backup or cleanup failed, use **Retry safe cleanup**. Do not clear extension storage while you need these records; it also contains drafts, settings and provider keys.
+Review Queue and its outbox are retired in the source update. Options provides **Export recovery backup** for records retained before cleanup, including any pasted images still on this device. If the backup or cleanup failed, use **Retry safe cleanup**. Do not clear extension storage while you need these records; it also contains drafts, settings and provider keys.

@@ -56,5 +56,5 @@ This is the primary development repo. Two distribution variants share nearly ide
 
 - `tabs` and `clipboardRead` are optional; `notifications` is removed. Do not silently request permissions while testing real profiles.
 - Automatic tag/context requests use the page hostname and URL-reduced title/metadata hints. Front/Back text is unchanged. Preserve the full Anki source backlink; do not generalize this reduction to all Copilot/source text.
-- Legacy queue/archive cleanup must retain and verify its local recovery backup first. Preserve current drafts, preferences, provider keys and image bytes. Use fixtures for migration and refusal tests.
+- Legacy queue/archive cleanup must retain and verify its local recovery backup first. Preserve current drafts, preferences and provider keys; pasted-image bytes are removed only after Anki confirms them and nothing local refers to them (DJ, 2026-10-08). Use fixtures for migration and refusal tests.
 - Real Anki writes, live provider calls, commits, pushes and store uploads need the applicable explicit authorization. Stage 1 was explicitly accepted after testing on October 5, 2026; the receipt is in the local October 5 execution evidence. That acceptance does not approve a new store attestation or publication.
