@@ -11,6 +11,7 @@ const optionsSource = fs.readFileSync(path.join(root, 'options.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 const copy = (value) => structuredClone(value);
 const NOTICE_KEY = 'ghostwriter_update_notice_v2';
+const SHOWN_KEY = 'ghostwriter_stage2_notice_shown_v1';
 const OPTIONS_BACKUP_KEY = 'ghostwriter_options_backup_v1';
 const IMAGE_KEY = 'quickflash_image_store_v1';
 const EXTENSION_ID = 'fixture-extension';
@@ -265,7 +266,11 @@ describe('Stage 2 worker recovery bridge', () => {
       { name: 'action.setBadgeText', args: [{ text: '' }] },
       { name: 'action.setBadgeText', args: [{ text: '' }] },
     ]);
-    assert.deepEqual(harness.local.calls.get.flat(), [NOTICE_KEY, 'qf_lastVersion', NOTICE_KEY]);
+    assert.deepEqual(harness.local.calls.get.flat(), [SHOWN_KEY, NOTICE_KEY, 'qf_lastVersion', SHOWN_KEY, NOTICE_KEY]);
+    // Legacy data was present, so the notice is shown once; the restart does not write it again.
+    assert.equal(harness.local.data[NOTICE_KEY].id, 'focused-editor-stage2');
+    assert.equal(harness.local.data[SHOWN_KEY], true);
+    assert.equal(harness.local.calls.set.length, 1);
     assert.equal(harness.local.calls.remove.length, 0);
     assert.deepEqual(harness.sync.calls.get, []);
     assert.equal(harness.local.data.quickflash_provider_secrets_v1.openaiKey, 'mock-only-secret');
@@ -344,10 +349,13 @@ describe('Stage 2 worker recovery bridge', () => {
       schemaVersion: 1,
       exportSource: 'verified-backup',
       legacyBackup: harness.legacyBackup,
+      unverifiedLegacyBackup: null,
+      // Legacy data still in place is exported too; it can differ from an older backup.
+      activeLegacy: harness.activeSnapshot,
       imageStore,
       uploadedImageBackup: null,
     } });
-    assert.deepEqual(harness.migrationCalls, ['exportBackup', 'exportUploadedImages']);
+    assert.deepEqual(harness.migrationCalls, ['exportBackup', 'status', 'snapshot', 'exportUploadedImages']);
     assert.deepEqual(harness.local.calls.get, [[IMAGE_KEY]]);
     assert.deepEqual(harness.local.calls.set, []);
     assert.deepEqual(harness.local.calls.remove, []);
@@ -364,10 +372,12 @@ describe('Stage 2 worker recovery bridge', () => {
       schemaVersion: 1,
       exportSource: 'active',
       legacyBackup: harness.activeSnapshot,
+      unverifiedLegacyBackup: null,
+      activeLegacy: null,
       imageStore: {},
       uploadedImageBackup: null,
     } });
-    assert.deepEqual(harness.migrationCalls, ['exportBackup', 'snapshot', 'exportUploadedImages']);
+    assert.deepEqual(harness.migrationCalls, ['exportBackup', 'snapshot', 'status', 'exportUploadedImages']);
     assert.deepEqual(harness.local.calls.set, []);
     assert.deepEqual(harness.local.calls.remove, []);
   });
@@ -393,24 +403,30 @@ describe('Stage 2 worker recovery bridge', () => {
     assert.deepEqual(harness.effects, [{ name: 'action.setBadgeText', args: [{ text: '' }] }]);
   });
 
-  it('records a completion notice once, then preserves its dismissal on further retries', async () => {
+  it('shows the Review Queue notice once to users who had queue data, and never rewrites it', async () => {
     const pending = statusFixture();
     const complete = statusFixture({ complete: true, code: 'migrated', legacyKeys: [], message: 'Previous cards remain recoverable.' });
     const harness = await worker({ migrationResults: [pending, complete] });
-    assert.equal(harness.local.data[NOTICE_KEY].id, 'focused-editor-stage2-pending');
+    const notice = copy(harness.local.data[NOTICE_KEY]);
+    assert.equal(notice.id, 'focused-editor-stage2');
+    assert.equal(notice.dismissed, false);
     harness.clearCalls();
     assert.deepEqual(await harness.send('ghostwriter:stage2Retry'), { ok: true, status: { ...complete, uploadedImageCount: 0, uploadedImageError: null } });
-    const completionNotice = copy(harness.local.data[NOTICE_KEY]);
-    assert.equal(completionNotice.id, 'focused-editor-stage2-complete');
-    assert.equal(completionNotice.dismissed, false);
-    assert.equal(completionNotice.message, complete.message);
-    assert.equal(harness.local.calls.set.length, 1);
-    harness.local.data[NOTICE_KEY] = { ...completionNotice, dismissed: true, dismissedAt: 1000 };
+    assert.deepEqual(harness.local.data[NOTICE_KEY], notice);
+    assert.deepEqual(harness.local.calls.set, []);
+    harness.local.data[NOTICE_KEY] = { ...notice, dismissed: true, dismissedAt: 1000 };
     const dismissed = copy(harness.local.data[NOTICE_KEY]);
     harness.clearCalls();
     await harness.send('ghostwriter:stage2Retry');
     assert.deepEqual(harness.local.data[NOTICE_KEY], dismissed);
     assert.deepEqual(harness.local.calls.set, []);
+  });
+
+  it('shows no Review Queue notice on a fresh install', async () => {
+    const fresh = statusFixture({ complete: true, code: 'no_legacy_data', hasBackup: false, legacyKeys: [] });
+    const harness = await worker({ migrationResults: [fresh] });
+    assert.equal(harness.local.data[NOTICE_KEY], undefined);
+    assert.equal(harness.local.data[SHOWN_KEY], undefined);
   });
 
   it('routes uploaded-image retirement only through the guarded bridge, forwarding exact filenames and draft references', async () => {

@@ -383,7 +383,8 @@ async function renderStage2Recovery() {
   if (!section) return;
   try {
     const { status } = await stage2RecoveryRequest("ghostwriter:stage2Status");
-    const hasLegacyData = status?.hasBackup || status?.legacyKeys?.length || status?.uploadedImageCount;
+    const hasLegacyData = status?.hasBackup || status?.legacyKeys?.length || status?.uploadedImageCount
+      || status?.code === "invalid_backup"; // its raw contents can still be exported
     section.hidden = Boolean(status?.complete && !hasLegacyData && !status?.uploadedImageError);
     const message = document.querySelector("#stage2RecoveryMessage");
     if (message) message.textContent = [status?.message || "Your previous queue data remains local.", status?.uploadedImageError].filter(Boolean).join(" ");

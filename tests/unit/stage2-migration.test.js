@@ -148,15 +148,16 @@ describe('recoverable Stage 2 legacy retirement', () => {
     assert.equal(fake.calls.remove.length, 0);
   });
 
-  it('retains originals when the durable pre-retirement status cannot be written', async () => {
+  it('retains originals and drops the new backup when the pre-retirement status cannot be written', async () => {
     const fixture = legacyFixture();
     const fake = storage(fixture, { set(values) {
       if (values[STATUS_KEY]?.phase === 'ready') throw new Error('QUOTA_BYTES');
     } });
-    assert.equal((await migration.migrate(fake.area)).code, 'status_write_failed');
+    assert.equal((await migration.migrate(fake.area)).code, 'backup_write_failed');
     assertOriginals(fake.data, fixture);
-    assert.equal(fake.calls.remove.length, 0);
-    assert.ok(fake.data[BACKUP_KEY]);
+    // Nearly full storage must not be left holding two copies of the same data.
+    assert.deepEqual(fake.calls.remove, [[BACKUP_KEY]]);
+    assert.equal(owns(fake.data, BACKUP_KEY), false);
   });
 
   it('retains originals when removal is refused', async () => {
@@ -423,12 +424,12 @@ describe('backup status, export and explicit restore', () => {
   });
 });
 
-describe('recoverable uploaded-image retirement', () => {
+describe('uploaded-image retirement (Anki already has the image)', () => {
   const IMAGE_KEY = 'quickflash_image_store_v1';
   const IMAGE_BACKUP_KEY = 'ghostwriter_stage2_uploaded_images_backup_v1';
   const entry = (data) => ({ data, type: 'image/png', updatedAt: 123456, extra: { exact: true } });
 
-  it('archives only confirmed uploaded existing unreferenced entries and verifies their exact bytes', async () => {
+  it('removes only confirmed, existing, unreferenced entries and keeps no second copy', async () => {
     const images = { 'paste-uploaded.png': entry('uploaded-bytes'), 'paste-other.png': entry('not-uploaded') };
     const fake = storage({ [IMAGE_KEY]: images, quickflash_lastDraft: { front: 'new draft' }, quickflash_options: { preference: true } });
     const result = await migration.retireUploadedImages(fake.area, ['paste-uploaded.png', 'missing.png']);
@@ -436,8 +437,8 @@ describe('recoverable uploaded-image retirement', () => {
     assert.deepEqual(result.retired, ['paste-uploaded.png']);
     assert.deepEqual(result.retained, ['missing.png']);
     assert.deepEqual(fake.data[IMAGE_KEY], { 'paste-other.png': images['paste-other.png'] });
-    assert.deepEqual(fake.data[IMAGE_BACKUP_KEY].entries, { 'paste-uploaded.png': images['paste-uploaded.png'] });
-    assert.deepEqual((await migration.exportUploadedImages(fake.area)).entries, fake.data[IMAGE_BACKUP_KEY].entries);
+    assert.equal(owns(fake.data, IMAGE_BACKUP_KEY), false);
+    assert.equal(await migration.exportUploadedImages(fake.area), null);
     assert.deepEqual(fake.data.quickflash_options, { preference: true });
     assert.deepEqual(fake.data.quickflash_lastDraft, { front: 'new draft' });
   });
@@ -473,79 +474,39 @@ describe('recoverable uploaded-image retirement', () => {
     assert.deepEqual(fake.data.quickflash_manual_draft_v1, draft);
   });
 
-  it('merges earlier exact image backups without discarding bytes and is idempotent', async () => {
-    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a'), 'paste-b.png': entry('b') } });
+  it('is idempotent: a second call retires nothing and writes nothing', async () => {
+    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a') } });
     await migration.retireUploadedImages(fake.area, ['paste-a.png']);
-    const first = copy(fake.data[IMAGE_BACKUP_KEY].entries['paste-a.png']);
-    await migration.retireUploadedImages(fake.area, ['paste-b.png']);
-    assert.deepEqual(fake.data[IMAGE_BACKUP_KEY].entries, { 'paste-a.png': first, 'paste-b.png': entry('b') });
-    const backup = copy(fake.data[IMAGE_BACKUP_KEY]);
     const writes = fake.calls.set.length;
-    const again = await migration.retireUploadedImages(fake.area, ['paste-a.png', 'paste-b.png']);
+    const again = await migration.retireUploadedImages(fake.area, ['paste-a.png']);
     assert.equal(again.ok, true);
     assert.deepEqual(again.retired, []);
-    assert.deepEqual(fake.data[IMAGE_BACKUP_KEY], backup);
     assert.equal(fake.calls.set.length, writes);
   });
 
-  it('keeps the active cache on image backup quota failure', async () => {
-    const images = { 'paste-a.png': entry('a') };
-    const fake = storage({ [IMAGE_KEY]: images }, { set(values) { if (owns(values, IMAGE_BACKUP_KEY)) throw new Error('QUOTA_BYTES'); } });
-    const result = await migration.retireUploadedImages(fake.area, ['paste-a.png']);
-    assert.equal(result.ok, false);
-    assert.equal(result.code, 'image_backup_write_failed');
-    assert.deepEqual(fake.data[IMAGE_KEY], images);
-  });
-
-  it('keeps the cache when image backup readback is incomplete', async () => {
-    const images = { 'paste-a.png': entry('a') };
-    const fake = storage({ [IMAGE_KEY]: images }, { get(keys, data) { if (keys.includes(IMAGE_BACKUP_KEY) && data[IMAGE_BACKUP_KEY]) return {}; } });
-    assert.equal((await migration.retireUploadedImages(fake.area, ['paste-a.png'])).code, 'image_backup_verification_failed');
-    assert.deepEqual(fake.data[IMAGE_KEY], images);
-  });
-
-  it('keeps the cache when image backup bytes are corrupted during readback', async () => {
-    const images = { 'paste-a.png': entry('a') };
-    const fake = storage({ [IMAGE_KEY]: images }, { get(keys, data) {
-      if (keys.includes(IMAGE_BACKUP_KEY) && data[IMAGE_BACKUP_KEY]) data[IMAGE_BACKUP_KEY].entries['paste-a.png'].data = 'corrupted';
-    } });
-    assert.equal((await migration.retireUploadedImages(fake.area, ['paste-a.png'])).ok, false);
-    assert.deepEqual(fake.data[IMAGE_KEY], images);
-    await assert.rejects(migration.exportUploadedImages(fake.area), { code: 'invalid_image_backup' });
-  });
-
-  it('refuses a filename collision with different earlier recoverable bytes', async () => {
-    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('old') } });
+  it('accepts the same image pasted again after it was removed', async () => {
+    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a') } });
     await migration.retireUploadedImages(fake.area, ['paste-a.png']);
-    const backup = copy(fake.data[IMAGE_BACKUP_KEY]);
-    fake.data[IMAGE_KEY]['paste-a.png'] = entry('new');
-    assert.equal((await migration.retireUploadedImages(fake.area, ['paste-a.png'])).code, 'image_backup_collision');
-    assert.deepEqual(fake.data[IMAGE_KEY]['paste-a.png'], entry('new'));
-    assert.deepEqual(fake.data[IMAGE_BACKUP_KEY], backup);
+    assert.equal((await migration.storeImageEntry(fake.area, 'paste-a.png', { ...entry('a'), updatedAt: 999 })).ok, true);
+    const result = await migration.retireUploadedImages(fake.area, ['paste-a.png']);
+    assert.deepEqual(result.retired, ['paste-a.png']);
+    assert.deepEqual(fake.data[IMAGE_KEY], {});
   });
 
-  it('does not overwrite a changed image cache between backup and pruning', async () => {
-    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a') } }, { get(keys, data) {
-      if (keys.includes(IMAGE_KEY) && data[IMAGE_BACKUP_KEY]) data[IMAGE_KEY]['paste-new.png'] = entry('new');
-    } });
-    assert.equal((await migration.retireUploadedImages(fake.area, ['paste-a.png'])).code, 'image_sources_changed');
-    assert.deepEqual(fake.data[IMAGE_KEY], { 'paste-a.png': entry('a'), 'paste-new.png': entry('new') });
-  });
-
-  it('does not prune after a stored draft adds a reference during backup', async () => {
-    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a') } }, { get(keys, data) {
-      if (keys.includes(IMAGE_KEY) && data[IMAGE_BACKUP_KEY]) data.quickflash_manual_draft_v1 = { back: '![](paste-a.png)' };
-    } });
-    assert.equal((await migration.retireUploadedImages(fake.area, ['paste-a.png'])).code, 'image_sources_changed');
-    assert.deepEqual(fake.data[IMAGE_KEY], { 'paste-a.png': entry('a') });
-  });
-
-  it('keeps the active image cache when its prune write fails', async () => {
+  it('keeps the cache when the prune write fails', async () => {
     const images = { 'paste-a.png': entry('a') };
     const fake = storage({ [IMAGE_KEY]: images }, { set(values) { if (owns(values, IMAGE_KEY)) throw new Error('cache quota'); } });
     assert.equal((await migration.retireUploadedImages(fake.area, ['paste-a.png'])).ok, false);
     assert.deepEqual(fake.data[IMAGE_KEY], images);
-    assert.deepEqual(fake.data[IMAGE_BACKUP_KEY].entries['paste-a.png'], images['paste-a.png']);
+  });
+
+  it('puts the image back if a draft starts referring to it while it is being removed', async () => {
+    const images = { 'paste-a.png': entry('a') };
+    const fake = storage({ [IMAGE_KEY]: images }, { set(values, data) {
+      if (owns(values, IMAGE_KEY)) data.quickflash_manual_draft_v1 = { back: '![](paste-a.png)' };
+    } });
+    assert.equal((await migration.retireUploadedImages(fake.area, ['paste-a.png'])).code, 'image_retirement_failed');
+    assert.deepEqual(fake.data[IMAGE_KEY], images);
   });
 
   it('repairs a partial cache write that erased uploaded and unrelated entries', async () => {
@@ -558,37 +519,22 @@ describe('recoverable uploaded-image retirement', () => {
     assert.deepEqual(fake.data[IMAGE_KEY], images);
   });
 
-  it('retains previous image backup bytes after a partial merged-backup write', async () => {
-    let failMerge = false;
-    let failed = false;
-    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a'), 'paste-b.png': entry('b') } }, { set(values, data) {
-      if (failMerge && !failed && owns(values, IMAGE_BACKUP_KEY)) { failed = true; data[IMAGE_BACKUP_KEY] = { corrupt: true }; throw new Error('partial backup write'); }
-    } });
-    await migration.retireUploadedImages(fake.area, ['paste-a.png']);
-    const previous = copy(fake.data[IMAGE_BACKUP_KEY]);
-    failMerge = true;
-    assert.equal((await migration.retireUploadedImages(fake.area, ['paste-b.png'])).ok, false);
-    assert.deepEqual(fake.data[IMAGE_BACKUP_KEY], previous);
-    assert.deepEqual(fake.data[IMAGE_KEY], { 'paste-b.png': entry('b') });
-  });
-
-  it('serializes simultaneous image retirement and preserves all backup entries', async () => {
+  it('serializes simultaneous retirements', async () => {
     const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a'), 'paste-b.png': entry('b') } });
     const results = await Promise.all([
       migration.retireUploadedImages(fake.area, ['paste-a.png']), migration.retireUploadedImages(fake.area, ['paste-b.png']),
     ]);
     assert.ok(results.every((result) => result.ok));
-    assert.deepEqual(fake.data[IMAGE_BACKUP_KEY].entries, { 'paste-a.png': entry('a'), 'paste-b.png': entry('b') });
     assert.deepEqual(fake.data[IMAGE_KEY], {});
   });
 
-  it('returns null for absent image backup and an independent copy for existing backup', async () => {
-    const fake = storage({ [IMAGE_KEY]: { 'paste-a.png': entry('a') } });
-    assert.equal(await migration.exportUploadedImages(fake.area), null);
-    await migration.retireUploadedImages(fake.area, ['paste-a.png']);
-    const exported = await migration.exportUploadedImages(fake.area);
-    exported.entries['paste-a.png'].data = 'export mutation';
-    assert.equal(fake.data[IMAGE_BACKUP_KEY].entries['paste-a.png'].data, 'a');
+  it('migrate() removes an image backup left by earlier test builds, and only when present', async () => {
+    const withOld = storage({ [IMAGE_BACKUP_KEY]: { schemaVersion: 1, entries: { 'paste-a.png': entry('a') } } });
+    await migration.migrate(withOld.area);
+    assert.equal(owns(withOld.data, IMAGE_BACKUP_KEY), false);
+    const without = storage({});
+    await migration.migrate(without.area);
+    assert.equal(without.calls.remove.length, 0);
   });
 
   it('refuses pruning if an existing legacy recovery backup is corrupted', async () => {
@@ -707,7 +653,7 @@ describe('serialized pasted-image entry storage', () => {
     assert.equal(retired.ok, true);
     assert.equal(stored.ok, true);
     assert.deepEqual(fake.data[IMAGE_KEY], { 'paste-other.png': entry('other'), 'paste-new.png': entry('new') });
-    assert.deepEqual((await migration.exportUploadedImages(fake.area)).entries, { 'paste-sent.png': entry('sent') });
+    assert.equal(await migration.exportUploadedImages(fake.area), null);
   });
 
   it('serializes a new paste before retirement without dropping its newly stored bytes', async () => {

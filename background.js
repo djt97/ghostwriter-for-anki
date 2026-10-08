@@ -860,15 +860,23 @@ async function runFocusedV2CompatibilityUpdate({ reason = "update", previousVers
   return { ...migrated, notice };
 }
 
+const STAGE2_NOTICE_SHOWN_KEY = "ghostwriter_stage2_notice_shown_v1";
+
 async function runStage2CompatibilityUpdate() {
   const status = await globalThis.GHOSTWRITER_STAGE2_MIGRATION.migrate(chrome.storage.local);
-  const id = `focused-editor-stage2-${status.complete ? "complete" : "pending"}`;
-  const got = await chrome.storage.local.get(UPDATE_NOTICE_KEY);
-  const previous = got?.[UPDATE_NOTICE_KEY];
-  if (previous?.id !== id) {
+  // Explain the retired Review Queue once, and only to people who had queue data: not on a
+  // fresh install, and not again after every later update.
+  const hadLegacyData = status.code === "migrated" || status.hasBackup || (status.legacyKeys || []).length > 0;
+  const got = await chrome.storage.local.get([STAGE2_NOTICE_SHOWN_KEY, UPDATE_NOTICE_KEY]);
+  const earlier = String(got?.[UPDATE_NOTICE_KEY]?.id || "").startsWith("focused-editor-stage2");
+  if (hadLegacyData && !got?.[STAGE2_NOTICE_SHOWN_KEY] && earlier) {
+    // A test build already showed this notice (and the user may have dismissed it).
+    await chrome.storage.local.set({ [STAGE2_NOTICE_SHOWN_KEY]: true });
+  } else if (hadLegacyData && !got?.[STAGE2_NOTICE_SHOWN_KEY]) {
     await chrome.storage.local.set({
+      [STAGE2_NOTICE_SHOWN_KEY]: true,
       [UPDATE_NOTICE_KEY]: {
-        id,
+        id: "focused-editor-stage2",
         kind: "focused-editor-stage2",
         createdAt: Date.now(),
         dismissed: false,
@@ -877,7 +885,7 @@ async function runStage2CompatibilityUpdate() {
         actions: [
           "Add to Anki sends the current card. Saved queue data remains recoverable in Settings.",
           "Browser notifications are removed. Tab access is optional and requested only from a Source control that needs it.",
-          "Pasted images are retained while active drafts or recovery data may need them.",
+          "Pasted images are removed from this device once Anki has saved them.",
         ],
       },
     });
@@ -1025,16 +1033,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
         if (message.type === "ghostwriter:stage2Export") {
-          let legacyBackup;
+          let legacyBackup = null;
+          let unverifiedLegacyBackup = null;
           let exportSource = "verified-backup";
           try {
             legacyBackup = await migration.exportBackup(chrome.storage.local);
-          } catch {
-            // A quota failure must not prevent a user from saving their untouched legacy
-            // data to a file. This fallback only reads; it does not claim a durable backup.
-            legacyBackup = await migration.snapshot(chrome.storage.local);
-            exportSource = "active";
+          } catch (err) {
+            // A backup that fails its integrity check is still the best copy left: export its
+            // bytes as they are, labelled, rather than an empty file.
+            if (err?.code === "invalid_backup") {
+              unverifiedLegacyBackup = await migration.exportBackupUnverified(chrome.storage.local);
+              exportSource = "unverified-backup";
+            } else {
+              // No backup (e.g. storage too full to make one): the untouched originals are it.
+              legacyBackup = await migration.snapshot(chrome.storage.local);
+              exportSource = "active";
+            }
           }
+          // Legacy data still in place can differ from an older backup; always include it.
+          const current = await migration.status(chrome.storage.local);
+          const activeLegacy = exportSource !== "active" && (current.legacyKeys || []).length
+            ? await migration.snapshot(chrome.storage.local)
+            : null;
           const got = await chrome.storage.local.get("quickflash_image_store_v1");
           const uploadedImageBackup = await migration.exportUploadedImages(chrome.storage.local);
           sendResponse({ ok: true, backup: {
@@ -1042,6 +1062,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             schemaVersion: 1,
             exportSource,
             legacyBackup,
+            unverifiedLegacyBackup,
+            activeLegacy,
             imageStore: got?.quickflash_image_store_v1 || {},
             uploadedImageBackup,
           } });

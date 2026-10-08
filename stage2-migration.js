@@ -31,9 +31,9 @@
     migrated: "Legacy Review Queue and archive data was retired. A recoverable backup and pasted images remain on this device; export them from Settings.",
     no_legacy_data: "No legacy Review Queue or archive data needed retirement.",
     restored: "Legacy card data was explicitly restored. Automatic retirement is paused; the recovery backup and pasted images remain on this device.",
-    backup_write_failed: "The recovery backup could not be saved. Legacy card data was retained. Free local storage and retry, or export a recovery copy from Settings.",
+    backup_write_failed: "Local storage is too full to make a recovery copy of the old Review Queue data, so it was left in place unchanged. You can export it from Settings at any time.",
     backup_verification_failed: "The recovery backup did not match its exact stored readback. Legacy card data was retained.",
-    invalid_backup: "The existing recovery backup is incomplete or has an unsupported format. Legacy card data was retained; the backup was not overwritten.",
+    invalid_backup: "The recovery copy of the old Review Queue data failed its integrity check. It was kept as it is; export it from Settings to save what it contains.",
     originals_changed: "Legacy card data changed after its recovery backup was created. Current data and the existing backup were retained; export a recovery copy before resolving the difference.",
     storage_read_failed: "Local storage could not be read. Legacy card retirement did not proceed.",
     unsupported_data: "Legacy card data could not be copied exactly into a recovery backup. Its original records were retained.",
@@ -216,6 +216,13 @@
   }
 
   async function migrateUnlocked(area) {
+    let createdBackup = false;
+    // Test builds of this release kept a backup of pasted images already confirmed in Anki.
+    // Those bytes live in Anki's media folder; drop the local copy (approved by DJ, 2026-10-08).
+    try {
+      const old = await area.get([UPLOADED_IMAGES_BACKUP_KEY]);
+      if (old && own(old, UPLOADED_IMAGES_BACKUP_KEY)) await area.remove(UPLOADED_IMAGES_BACKUP_KEY);
+    } catch {}
     let data;
     try { data = await read(area); } catch { return blocked(area, "storage_read_failed"); }
     let backup = own(data, BACKUP_KEY) ? data[BACKUP_KEY] : null;
@@ -239,6 +246,7 @@
     } else {
       try { backup = await makeBackup(data); } catch { return blocked(area, "unsupported_data", data); }
       try { await area.set({ [BACKUP_KEY]: backup }); } catch { return blocked(area, "backup_write_failed", data); }
+      createdBackup = true;
       let got;
       try { got = await read(area, [BACKUP_KEY]); } catch { return blocked(area, "backup_verification_failed", data); }
       if (!own(got, BACKUP_KEY) || !await verifiedBackup(got[BACKUP_KEY]) || !equal(got[BACKUP_KEY], backup)) {
@@ -246,7 +254,17 @@
       }
     }
 
-    try { await writeStatus(area, result("ready", data, backup)); } catch { return blocked(area, "status_write_failed", data, backup); }
+    try {
+      await writeStatus(area, result("ready", data, backup));
+    } catch {
+      // Nearly full storage: the backup fitted but the small status record did not. Drop the
+      // copy made in this run so the originals are not left duplicated, and leave them alone.
+      if (createdBackup) {
+        try { await area.remove(BACKUP_KEY); } catch {}
+        return blocked(area, "backup_write_failed", data);
+      }
+      return blocked(area, "status_write_failed", data, backup);
+    }
     let beforeRemoval;
     try { beforeRemoval = await read(area); } catch { return blocked(area, "storage_read_failed", data, backup); }
     if (!await verifiedBackup(beforeRemoval[BACKUP_KEY]) || !equal(beforeRemoval[BACKUP_KEY], backup)) {
@@ -298,6 +316,15 @@
     });
   }
 
+  // When the stored backup fails verification its bytes are still the best copy left; export
+  // them as they are, clearly marked, rather than nothing.
+  function exportBackupUnverified(area) {
+    return serialized(area, async () => {
+      const data = await read(area, [BACKUP_KEY]);
+      return own(data, BACKUP_KEY) ? data[BACKUP_KEY] : null;
+    });
+  }
+
   // This read-only escape hatch works even when local quota prevents a durable
   // backup. It does not authorize retirement and does not replace an old backup.
   function snapshot(area) {
@@ -340,19 +367,15 @@
   }
 
   const IMAGE_MESSAGES = Object.freeze({
-    uploaded_images_retired: "Uploaded pasted images were moved into a verified recovery backup on this device.",
+    uploaded_images_retired: "Pasted images that Anki saved were removed from this device's storage.",
     nothing_to_retire: "No uploaded pasted images could be safely retired; referenced images remain in the active cache.",
     invalid_arguments: "Uploaded-image retirement requires an array of local filenames.",
     invalid_image_cache: "The pasted-image cache could not be copied exactly. It was retained.",
     invalid_image_backup: "The uploaded-image recovery backup is incomplete or corrupted. The active cache was retained.",
     invalid_legacy_backup: "The legacy card recovery backup could not be verified. Pasted images were retained.",
-    image_backup_collision: "An uploaded filename has different bytes in an earlier recovery backup. Both copies were retained.",
-    image_backup_write_failed: "The uploaded-image recovery backup could not be saved. The active cache was retained.",
-    image_backup_verification_failed: "The uploaded-image backup did not match its exact stored readback. The active cache was retained.",
-    image_backup_restore_failed: "An earlier image recovery backup could not be restored after a failed write. The active cache was retained; export the available recovery data before retrying.",
     image_sources_changed: "Pasted images or draft references changed during backup. The active cache was retained.",
     image_retirement_failed: "Uploaded-image retirement failed. Missing active cache entries were restored and the recovery backup was retained.",
-    image_rollback_failed: "Uploaded-image retirement failed and the active cache could not be fully restored. The verified uploaded-image backup remains available for local export.",
+    image_rollback_failed: "Removing saved images failed and some could not be put back. Images already in Anki are unaffected.",
     storage_read_failed: "Local image storage could not be read. Pasted-image retirement did not proceed.",
     image_stored: "The pasted image was saved on this device.",
     invalid_image_entry: "The pasted image filename or exact image entry has an unsupported format. The image cache was retained.",
@@ -432,11 +455,6 @@
     } catch { return false; }
   }
 
-  async function makeImageBackup(entries, previous) {
-    const payload = { schemaVersion: 1, createdAt: previous?.createdAt || new Date().toISOString(), entries: clone(entries) };
-    return { ...payload, sha256: await digest(payload) };
-  }
-
   function referencesFilename(value, filename) {
     if (typeof value === "string") {
       if (value.includes(filename)) return true;
@@ -463,17 +481,6 @@
     ]));
   }
 
-  async function restoreEarlierImageBackup(area, previous) {
-    if (!previous) return;
-    const current = await read(area, [UPLOADED_IMAGES_BACKUP_KEY]);
-    if (equal(current[UPLOADED_IMAGES_BACKUP_KEY], previous)) return;
-    await area.set({ [UPLOADED_IMAGES_BACKUP_KEY]: previous });
-    const got = await read(area, [UPLOADED_IMAGES_BACKUP_KEY]);
-    if (!equal(got[UPLOADED_IMAGES_BACKUP_KEY], previous) || !await verifiedImageBackup(got[UPLOADED_IMAGES_BACKUP_KEY])) {
-      throw new Error(IMAGE_MESSAGES.image_backup_restore_failed);
-    }
-  }
-
   async function restoreMissingImages(area, original) {
     const got = await read(area, [IMAGE_STORE_KEY]);
     const current = plainMap(got[IMAGE_STORE_KEY]) ? got[IMAGE_STORE_KEY] : {};
@@ -486,8 +493,9 @@
     if (!missing.every((name) => equal(verified[IMAGE_STORE_KEY][name], original[name]))) throw new Error("Image cache restore mismatch");
   }
 
-  // Call only after Anki confirms a note add. Media upload alone is insufficient.
-  // All references are searched conservatively, including unfamiliar card shapes.
+  // Call only after Anki confirms a note add, which means storeMediaFile succeeded and the image
+  // is in Anki's media folder. The local copy is then removed, unless a draft, legacy record or
+  // backup still refers to the file. No second copy is kept: Anki has the image.
   function retireUploadedImages(area, filenames, liveDraftRefs = []) {
     return serialized(area, async () => {
       if (!Array.isArray(filenames) || filenames.some((name) => typeof name !== "string" || !FILENAME_RE.test(name))) {
@@ -495,50 +503,24 @@
       }
       const names = [...new Set(filenames)];
       if (!names.length) return imageResult("nothing_to_retire", names);
-      const keys = [...LEGACY_KEYS, BACKUP_KEY, ...DRAFT_KEYS, IMAGE_STORE_KEY, UPLOADED_IMAGES_BACKUP_KEY];
+      const keys = [...LEGACY_KEYS, BACKUP_KEY, ...DRAFT_KEYS, IMAGE_STORE_KEY];
       let data;
       try { data = await read(area, keys); } catch { return imageResult("storage_read_failed", names); }
       if (own(data, BACKUP_KEY) && !await verifiedBackup(data[BACKUP_KEY])) return imageResult("invalid_legacy_backup", names);
       if (!own(data, IMAGE_STORE_KEY)) return imageResult("nothing_to_retire", names);
       if (!plainMap(data[IMAGE_STORE_KEY])) return imageResult("invalid_image_cache", names);
-      const previous = own(data, UPLOADED_IMAGES_BACKUP_KEY) ? data[UPLOADED_IMAGES_BACKUP_KEY] : null;
-      if (own(data, UPLOADED_IMAGES_BACKUP_KEY) && !await verifiedImageBackup(previous)) return imageResult("invalid_image_backup", names);
       let refs;
       let liveRefs;
       try { refs = referenceSnapshot(data); liveRefs = clone(liveDraftRefs); } catch { return imageResult("image_sources_changed", names); }
       const original = clone(data[IMAGE_STORE_KEY]);
       const eligible = names.filter((name) => own(original, name) && !referencesFilename(refs, name) && !referencesFilename(liveRefs, name));
       if (!eligible.length) return imageResult("nothing_to_retire", names);
-      if (eligible.some((name) => previous && own(previous.entries, name) && !equal(previous.entries[name], original[name]))) {
-        return imageResult("image_backup_collision", names);
-      }
-      const entries = previous ? clone(previous.entries) : {};
-      for (const name of eligible) Object.defineProperty(entries, name, { value: clone(original[name]), enumerable: true, configurable: true, writable: true });
-      const backup = await makeImageBackup(entries, previous);
-      let backupFailure = "image_backup_write_failed";
-      try {
-        await area.set({ [UPLOADED_IMAGES_BACKUP_KEY]: backup });
-        backupFailure = "image_backup_verification_failed";
-        const got = await read(area, [UPLOADED_IMAGES_BACKUP_KEY]);
-        if (!await verifiedImageBackup(got[UPLOADED_IMAGES_BACKUP_KEY]) || !equal(got[UPLOADED_IMAGES_BACKUP_KEY], backup)) throw new Error("Image backup readback mismatch");
-      } catch {
-        try { await restoreEarlierImageBackup(area, previous); } catch { return imageResult("image_backup_restore_failed", names); }
-        return imageResult(backupFailure, names);
-      }
-      let current;
-      try { current = await read(area, keys); } catch { return imageResult("storage_read_failed", names); }
-      if (!equal(current[IMAGE_STORE_KEY], original) || !equal(referenceSnapshot(current), refs) || !equal(liveDraftRefs, liveRefs)) {
-        return imageResult("image_sources_changed", names);
-      }
-      if (!await verifiedImageBackup(current[UPLOADED_IMAGES_BACKUP_KEY]) || !equal(current[UPLOADED_IMAGES_BACKUP_KEY], backup)) {
-        return imageResult("image_backup_verification_failed", names);
-      }
       const pruned = clone(original);
       for (const name of eligible) delete pruned[name];
       try {
         await area.set({ [IMAGE_STORE_KEY]: pruned });
         const after = await read(area, keys);
-        if (!equal(after[IMAGE_STORE_KEY], pruned) || !equal(referenceSnapshot(after), refs) || !equal(liveDraftRefs, liveRefs) || !equal(after[UPLOADED_IMAGES_BACKUP_KEY], backup)) {
+        if (!equal(after[IMAGE_STORE_KEY], pruned) || !equal(referenceSnapshot(after), refs) || !equal(liveDraftRefs, liveRefs)) {
           throw new Error("Image retirement readback mismatch");
         }
         return imageResult("uploaded_images_retired", names, eligible);
@@ -564,6 +546,6 @@
 
   return Object.freeze({
     BACKUP_KEY, STATUS_KEY, LEGACY_KEYS, IMAGE_STORE_KEY, UPLOADED_IMAGES_BACKUP_KEY,
-    migrate, status, exportBackup, snapshot, restore, retireUploadedImages, exportUploadedImages, storeImageEntry,
+    migrate, status, exportBackup, exportBackupUnverified, snapshot, restore, retireUploadedImages, exportUploadedImages, storeImageEntry,
   });
 });
