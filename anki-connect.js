@@ -115,6 +115,10 @@
       }
 
       // Something answered. From here on, never retry on another address.
+      // An HTTP refusal takes precedence over any JSON reply body.
+      if (res.status === 401 || res.status === 403) {
+        throw makeError(refusedMessage(res.status), { kind: "refused", raw: `HTTP ${res.status}`, tried });
+      }
       let data = null;
       try {
         data = await res.json();
@@ -126,9 +130,6 @@
           throw makeError(describeAnkiRefusal(data.error), { kind: "anki", raw: String(data.error), tried });
         }
         return data.result;
-      }
-      if (res.status === 401 || res.status === 403) {
-        throw makeError(refusedMessage(res.status), { kind: "refused", raw: `HTTP ${res.status}`, tried });
       }
       throw makeError(`${unreachableMessage(baseUrl)} (Something else answered at ${url}: HTTP ${res.status}.)`, {
         kind: "unreachable", raw: `HTTP ${res.status} (not an AnkiConnect response)`, tried,

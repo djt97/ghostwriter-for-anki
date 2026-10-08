@@ -71,12 +71,30 @@
     return !!needle && ` ${normalizedText} `.includes(` ${needle} `);
   }
 
-  function readHostname(value) {
+  // Automatic metadata prompts get only a web page's hostname. Keep the original URL
+  // separately for local source links; never use this value to build an Anki backlink.
+  function getMetadataHostname(value) {
+    if (typeof value !== "string") return "";
     try {
-      return new URL(String(value || "")).hostname.toLowerCase().replace(/^www\./, "");
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.hostname : "";
     } catch {
       return "";
     }
+  }
+
+  // Page titles and harvested hints may themselves contain URLs. Apply this only to
+  // automatically collected metadata text, leaving the user's card text unchanged.
+  function metadataTextForAI(value) {
+    if (typeof value !== "string") return "";
+    return value.replace(
+      /\b(?:[a-z][a-z\d+.-]*:\/\/|https?:|about:|data:|javascript:|mailto:|blob:)[^\s<>"']*/gi,
+      (url) => getMetadataHostname(url)
+    );
+  }
+
+  function readHostname(value) {
+    return getMetadataHostname(value).replace(/^www\./, "");
   }
 
   function sanitizeAiSuggestedTags(suggestion = {}) {
@@ -132,6 +150,8 @@
   return Object.freeze({
     CONTROLLED_DOMAINS,
     DOMAIN_TERMS,
+    getMetadataHostname,
+    metadataTextForAI,
     classifyDomainTags,
     normalizeTagToken,
     sanitizeAiSuggestedTags,

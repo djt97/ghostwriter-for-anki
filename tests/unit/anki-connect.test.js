@@ -100,6 +100,22 @@ test("HTTP 403 says Anki refused the connection", async () => {
   );
 });
 
+for (const status of [401, 403]) {
+  for (const [label, body] of [
+    ["success", { result: 6, error: null }],
+    ["error", { result: null, error: "access denied" }],
+  ]) {
+    test(`HTTP ${status} takes refusal precedence over an AnkiConnect ${label} envelope`, async () => {
+      const f = fakeFetch([json(body, status), json({ result: 123456, error: null })]);
+      await assert.rejects(
+        A.request("addNote", { note: {} }, { baseUrl: "http://127.0.0.1:8765", fetchImpl: f.impl }),
+        (err) => err.kind === "refused" && err.raw === `HTTP ${status}` && err.tried.length === 1,
+      );
+      assert.equal(f.calls.length, 1);
+    });
+  }
+}
+
 test("candidate URLs swap loopback names and keep the port", () => {
   assert.deepEqual(A.candidateUrls("http://localhost:9999/"), ["http://localhost:9999", "http://127.0.0.1:9999"]);
   assert.deepEqual(A.candidateUrls(""), ["http://127.0.0.1:8765", "http://localhost:8765"]);

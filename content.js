@@ -13,7 +13,7 @@ if (window.__QUICKFLASH_INJECTED__) {
   const MIN_OVERLAY_HEIGHT = 360;
   const EXT_ORIGIN = new URL(chrome.runtime.getURL('')).origin;
   const OPTIONS_KEY = 'quickflash_options';
-  const DEFAULT_QUEUE_SHORTCUT = 'Meta+Shift+A';
+  const DEFAULT_ADD_SHORTCUT = 'Meta+Shift+A';
 
   async function localGetSafe(keys) {
     try {
@@ -55,7 +55,7 @@ if (window.__QUICKFLASH_INJECTED__) {
     lastSize: null,
     panelReady: false,
     lastOpenFailureReason: '',
-    queueShortcut: null,
+    addShortcut: null,
   };
   // Text Chrome passed to the right-click menu. Chrome's PDF viewer keeps its selection away
   // from page scripts, so this is the only way to see what the reader highlighted there.
@@ -73,21 +73,21 @@ if (window.__QUICKFLASH_INJECTED__) {
     return !!globalThis.GHOSTWRITER_SHORTCUTS?.matchesShortcut(event, shortcut);
   }
 
-  async function refreshQueueShortcut() {
+  async function refreshAddShortcut() {
     try {
       const { [OPTIONS_KEY]: opts } = await chrome.storage.sync.get(OPTIONS_KEY);
-      const raw = typeof opts?.addShortcut === 'string' ? opts.addShortcut : DEFAULT_QUEUE_SHORTCUT;
+      const raw = typeof opts?.addShortcut === 'string' ? opts.addShortcut : DEFAULT_ADD_SHORTCUT;
       if (raw === '') {
-        popoverState.queueShortcut = null;
+        popoverState.addShortcut = null;
         return;
       }
       const stored = parseShortcutSpec(raw);
       const isRetiredDefault = stored?.meta && stored?.shift && !stored?.ctrl && !stored?.alt && stored?.key === 'q';
-      popoverState.queueShortcut = isRetiredDefault
-        ? parseShortcutSpec(DEFAULT_QUEUE_SHORTCUT)
-        : (stored || parseShortcutSpec(DEFAULT_QUEUE_SHORTCUT));
+      popoverState.addShortcut = isRetiredDefault
+        ? parseShortcutSpec(DEFAULT_ADD_SHORTCUT)
+        : (stored || parseShortcutSpec(DEFAULT_ADD_SHORTCUT));
     } catch {
-      popoverState.queueShortcut = parseShortcutSpec(DEFAULT_QUEUE_SHORTCUT);
+      popoverState.addShortcut = parseShortcutSpec(DEFAULT_ADD_SHORTCUT);
     }
   }
 
@@ -139,8 +139,9 @@ if (window.__QUICKFLASH_INJECTED__) {
 
       const encoded = encodeURIComponent(fragmentText);
 
-      // Drop any existing text fragment; replace with ours
-      url.hash = `:~:text=${encoded}`;
+      // Keep the page's anchor while replacing only its previous text directive.
+      const pageAnchor = url.hash.slice(1).split(":~:", 1)[0];
+      url.hash = `${pageAnchor}:~:text=${encoded}`;
       return url.toString();
     } catch {
       return rawUrl || window.location.href;
@@ -422,11 +423,11 @@ if (window.__QUICKFLASH_INJECTED__) {
       closePopover();
       return;
     }
-    if (matchesShortcut(event, popoverState.queueShortcut)) {
+    if (matchesShortcut(event, popoverState.addShortcut)) {
       event.preventDefault();
       event.stopPropagation();
       try {
-        popoverState.frame?.contentWindow?.postMessage({ type: 'quickflash:queueCurrentCard' }, EXT_ORIGIN);
+        popoverState.frame?.contentWindow?.postMessage({ type: 'quickflash:addCurrentCard' }, EXT_ORIGIN);
       } catch {}
     }
   }
@@ -847,7 +848,7 @@ if (window.__QUICKFLASH_INJECTED__) {
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     popoverState.isOpen = true;
-    await refreshQueueShortcut();
+    await refreshAddShortcut();
     document.documentElement.setAttribute('data-qf-overlay', 'open');
     document.addEventListener('keydown', onKeydown, true);
 
@@ -999,6 +1000,7 @@ if (window.__QUICKFLASH_INJECTED__) {
   });
 
   (function autoOpenForCI() {
+    if (!QF_TEST_MODE) return;
     try {
       const url = new URL(window.location.href);
       if (url.searchParams.has('__qf_ci')) {
@@ -1013,7 +1015,7 @@ if (window.__QUICKFLASH_INJECTED__) {
     }
   })();
 
-  if (typeof window.__quickflash_openPopoverForTest !== 'function') {
+  if (QF_TEST_MODE && typeof window.__quickflash_openPopoverForTest !== 'function') {
     window.__quickflash_openPopoverForTest = () => {
       try {
         return openPopover();

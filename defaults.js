@@ -7,7 +7,7 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
   autoCompleteAI: true,
   autoFillBackAI: true,
   manualCopilotOnly: true,
-  showMiniCopilotMode: "on",
+  showMiniCopilotMode: "off",
   showSourceModePill: true,
   copilotShortcut: "Cmd+Shift+X",
   copilotFrontWordCap: 18,

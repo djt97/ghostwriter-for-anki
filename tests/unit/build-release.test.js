@@ -1,188 +1,297 @@
-const { describe, it, before } = require('node:test');
+const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const fs = require('fs');
+const os = require('os');
+const fs = require('fs/promises');
+const { readFileSync, existsSync } = require('fs');
+const { execFileSync } = require('child_process');
+const vm = require('vm');
+const {
+  RELEASE_SOURCE_FILES,
+  GENERATED_RELEASE_FILES,
+  REQUIRED_RELEASE_FILES,
+  copyReleaseFiles,
+  hardenReleaseBuild,
+  assertReleaseContents,
+  createReleaseArchive,
+  build
+} = require('../../scripts/build-release.js');
 
-// The build script isn't structured as a module, so we extract the pure
-// functions by reading and evaluating just the parts we need.
-const buildScriptPath = path.resolve(__dirname, '../../scripts/build-release.js');
-const buildScriptSource = fs.readFileSync(buildScriptPath, 'utf8');
-const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../manifest.json'), 'utf8'));
+const ROOT = path.resolve(__dirname, '../..');
+const manifest = JSON.parse(readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+const TEST_MODE_MARKER = 'const QF_TEST_MODE = /\\b__qf_ci\\b/i.test(location.search + location.hash);';
 
-// Extract pure function source and evaluate in isolation
-function extractFunction(source, name) {
-  const regex = new RegExp(`function ${name}\\b[\\s\\S]*?\\n\\}`);
-  const match = source.match(regex);
-  if (!match) throw new Error(`Could not extract function: ${name}`);
-  return match[0];
+async function fixture(t) {
+  const sourceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'ghostwriter-release-'));
+  t.after(() => fs.rm(sourceRoot, { recursive: true, force: true }));
+  execFileSync('git', ['init', '--quiet'], { cwd: sourceRoot });
+  for (const relPath of REQUIRED_RELEASE_FILES) {
+    const filePath = path.join(sourceRoot, relPath);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const content = ['content.js', 'panel.js'].includes(relPath)
+      ? await fs.readFile(path.join(ROOT, relPath), 'utf8')
+      : `fixture: ${relPath}\n`;
+    await fs.writeFile(filePath, content);
+  }
+  execFileSync('git', ['add', '--', ...RELEASE_SOURCE_FILES], { cwd: sourceRoot });
+  return { sourceRoot, buildRoot: path.join(sourceRoot, 'dist', 'ghostwriter') };
 }
 
-// Build isolated versions of the pure functions
-const normalizePath = new Function('path', `
-  ${extractFunction(buildScriptSource, 'normalizePath')}
-  return normalizePath;
-`)({ sep: '/' });
+function archiveFiles(zipPath) {
+  return execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' })
+    .trim().split('\n').filter((name) => !name.endsWith('/')).sort();
+}
 
-const isExcluded = new Function('path', `
-  ${(buildScriptSource.match(/const EXCLUDED_EXTENSIONS = new Set\(\[[\s\S]*?\]\);/) || [''])[0]}
-  ${extractFunction(buildScriptSource, 'isExcluded')}
-  return isExcluded;
-`)({
-  extname: (p) => {
-    const dot = p.lastIndexOf('.');
-    const slash = p.lastIndexOf('/');
-    return dot > slash ? p.slice(dot) : '';
-  },
+function testModeValue(source, location) {
+  const declaration = source.match(/^\s*const QF_TEST_MODE = .*$/m)?.[0];
+  assert.ok(declaration, 'test mode declaration exists');
+  return vm.runInNewContext(`${declaration}\nQF_TEST_MODE`, { location });
+}
+
+function panelAnki(source, request, permissionGranted = true) {
+  const declaration = source.match(/^const QF_TEST_MODE = .*$/m)?.[0];
+  const start = source.indexOf('async function anki(action, params = {}) {');
+  const end = source.indexOf('\nfunction isMalformedJsonError', start);
+  assert.ok(declaration && start >= 0 && end > start, 'real panel Anki function exists');
+  return vm.runInNewContext(`${declaration}\n${source.slice(start, end)}\nanki`, {
+    location: { search: '?__qf_ci=1', hash: '#__qf_ci' },
+    ankiSessionCache: { permissionGranted, values: new Map() },
+    sendAnkiConnectRequest: request,
+    isCacheableAnkiAction: () => false,
+    invalidatesAnkiSetupCache: () => false,
+    clearAnkiSessionCache: () => {}
+  });
+}
+
+describe('release resource contract', () => {
+  it('contains only explicit, unique paths and keeps all notice files', () => {
+    assert.equal(new Set(REQUIRED_RELEASE_FILES).size, REQUIRED_RELEASE_FILES.length);
+    assert.deepEqual(GENERATED_RELEASE_FILES, [
+      'libs/mathjax/mathjax-bundle.js',
+      'libs/mathjax/mathjax-bundle.js.LICENSE.txt'
+    ]);
+    for (const relPath of REQUIRED_RELEASE_FILES) {
+      assert.ok(existsSync(path.join(ROOT, relPath)), `source missing: ${relPath}`);
+      assert.ok(!relPath.includes('*'), `allowlist must name exact files: ${relPath}`);
+      assert.ok(!relPath.startsWith('.') && !relPath.startsWith('tests/'));
+    }
+    for (const relPath of ['LICENSE', 'privacy.md', 'PRIVACY_POLICY.md', 'THIRD_PARTY_NOTICES.md', 'APACHE-2.0.txt']) {
+      assert.ok(RELEASE_SOURCE_FILES.includes(relPath), `missing notice: ${relPath}`);
+    }
+  });
+
+  it('preserves every manifest entry point, icon and web-accessible resource', () => {
+    const references = [
+      manifest.background.service_worker,
+      manifest.side_panel.default_path,
+      manifest.options_page,
+      ...manifest.sandbox.pages,
+      ...Object.values(manifest.icons),
+      ...Object.values(manifest.action.default_icon),
+      ...manifest.web_accessible_resources.flatMap((entry) => entry.resources)
+    ];
+    for (const relPath of references) {
+      if (relPath.endsWith('/*')) {
+        const prefix = relPath.slice(0, -1);
+        const actual = execFileSync('git', ['ls-files', '-z', '--', prefix], { cwd: ROOT, encoding: 'utf8' })
+          .split('\0').filter(Boolean);
+        assert.ok(actual.length, `glob resolves resources: ${relPath}`);
+        for (const file of actual) assert.ok(REQUIRED_RELEASE_FILES.includes(file), `missing manifest resource: ${file}`);
+      } else {
+        assert.ok(REQUIRED_RELEASE_FILES.includes(relPath), `missing manifest resource: ${relPath}`);
+      }
+    }
+  });
+
+  it('preserves local scripts and styles referenced by every release HTML page', () => {
+    for (const relPath of RELEASE_SOURCE_FILES.filter((file) => file.endsWith('.html'))) {
+      const html = readFileSync(path.join(ROOT, relPath), 'utf8');
+      const references = Array.from(html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)=["']([^"']+)["']/gi), (match) => match[1]);
+      assert.ok(references.length, `HTML references checked: ${relPath}`);
+      for (const reference of references) {
+        assert.ok(REQUIRED_RELEASE_FILES.includes(reference), `${relPath} needs ${reference}`);
+      }
+    }
+  });
+
+  it('keeps the migration worker dependency and excludes the retired review pages', () => {
+    const source = readFileSync(path.join(ROOT, 'background.js'), 'utf8');
+    const imports = Array.from(source.matchAll(/importScripts\(["']([^"']+)["']\)/g), (match) => match[1]);
+    assert.ok(imports.includes('stage2-migration.js'));
+    for (const resource of imports) assert.ok(REQUIRED_RELEASE_FILES.includes(resource), `worker needs ${resource}`);
+    assert.equal(REQUIRED_RELEASE_FILES.includes('review.html'), false);
+    assert.equal(REQUIRED_RELEASE_FILES.includes('review.js'), false);
+  });
 });
 
-function extractConstArray(name) {
-  const match = buildScriptSource.match(new RegExp(`const ${name} = \\[([\\s\\S]*?)\\];`));
-  assert.ok(match, `Could not find ${name}`);
-  return match[1].match(/'[^']+'/g).map(s => s.slice(1, -1));
-}
-
-describe('build-release.js pure functions', () => {
-  describe('normalizePath', () => {
-    it('returns path unchanged on posix', () => {
-      assert.equal(normalizePath('src/foo/bar'), 'src/foo/bar');
-    });
-
-    it('handles empty string', () => {
-      assert.equal(normalizePath(''), '');
-    });
-
-    it('handles single filename', () => {
-      assert.equal(normalizePath('file.js'), 'file.js');
-    });
+describe('release input selection', () => {
+  it('ignores tracked unknown files and untracked plans, transcripts, hidden tests and assets', async (t) => {
+    const { sourceRoot, buildRoot } = await fixture(t);
+    const unwanted = [
+      'tracked-runtime.js', 'GHOSTWRITER_V3_PLAN.md', 'private-transcript.txt',
+      '.tests/private.json', 'icons/local-note.txt', 'libs/mathjax/local-note.js',
+      'new-root-file.json', 'demo.mp4'
+    ];
+    for (const relPath of unwanted) {
+      await fs.mkdir(path.dirname(path.join(sourceRoot, relPath)), { recursive: true });
+      await fs.writeFile(path.join(sourceRoot, relPath), 'private fixture');
+    }
+    execFileSync('git', ['add', '--', 'tracked-runtime.js', 'GHOSTWRITER_V3_PLAN.md'], { cwd: sourceRoot });
+    await copyReleaseFiles(sourceRoot, buildRoot);
+    await assertReleaseContents(buildRoot);
+    for (const relPath of unwanted) assert.equal(existsSync(path.join(buildRoot, relPath)), false, relPath);
+    // The generated bundle and notice are deliberately untracked in this fixture.
+    for (const relPath of GENERATED_RELEASE_FILES) assert.ok(existsSync(path.join(buildRoot, relPath)), relPath);
   });
 
-  describe('isExcluded', () => {
-    const excludes = ['.git', 'node_modules', 'tests', 'dist'];
-
-    it('returns true for exact match', () => {
-      assert.ok(isExcluded('.git', excludes));
-      assert.ok(isExcluded('tests', excludes));
+  for (const relPath of ['panel.js', 'icons/icon128.png']) {
+    it(`rejects an untracked file even at an allowed path: ${relPath}`, async (t) => {
+      const { sourceRoot, buildRoot } = await fixture(t);
+      execFileSync('git', ['rm', '--cached', '--quiet', '--', relPath], { cwd: sourceRoot });
+      await assert.rejects(copyReleaseFiles(sourceRoot, buildRoot), /must be git tracked/);
+      assert.equal(existsSync(buildRoot), false);
     });
+  }
 
-    it('returns true for path under excluded dir', () => {
-      assert.ok(isExcluded('node_modules/foo/bar.js', excludes));
-      assert.ok(isExcluded('.git/config', excludes));
+  for (const relPath of ['options.css', 'libs/mathjax/mathjax-bundle.js']) {
+    it(`fails closed when a required input is missing: ${relPath}`, async (t) => {
+      const { sourceRoot, buildRoot } = await fixture(t);
+      await fs.rm(path.join(sourceRoot, relPath));
+      await assert.rejects(copyReleaseFiles(sourceRoot, buildRoot), { code: 'ENOENT' });
+      assert.equal(existsSync(buildRoot), false);
     });
+  }
 
-    it('returns false for non-excluded paths', () => {
-      assert.ok(!isExcluded('panel.js', excludes));
-      assert.ok(!isExcluded('background.js', excludes));
-    });
-
-    it('returns false for partial name matches', () => {
-      assert.ok(!isExcluded('.github', excludes));
-      assert.ok(!isExcluded('testing', excludes));
-    });
-
-    it('handles empty excludes', () => {
-      assert.ok(!isExcluded('anything', []));
-    });
-
-    it('drops video/audio working files no matter where they sit', () => {
-      // A 382MB store zip shipped demo takes before this guard existed.
-      assert.ok(isExcluded('Ghostwriter_v2_Demo.mp4', []));
-      assert.ok(isExcluded('v2_demo_audio.wav', []));
-      assert.ok(isExcluded('sub/dir/clip.mov', []));
-      assert.ok(isExcluded('UPPER.MP4', []));
-    });
-
-    it('drops stray root-level images but keeps extension icons', () => {
-      assert.ok(isExcluded('ChatGPT Image Jul 1, 2026, 02_10_22 PM.png', []));
-      assert.ok(!isExcluded('icons/icon128.png', []));
-    });
+  it('rejects a symlink at an allowed source path', async (t) => {
+    const { sourceRoot, buildRoot } = await fixture(t);
+    await fs.rm(path.join(sourceRoot, 'panel.js'));
+    await fs.symlink(path.join(sourceRoot, 'content.js'), path.join(sourceRoot, 'panel.js'));
+    await assert.rejects(copyReleaseFiles(sourceRoot, buildRoot), /must be a regular file: panel.js/);
   });
 
-  describe('EXCLUDES', () => {
-    let EXCLUDES;
-
-    before(() => {
-      const match = buildScriptSource.match(
-        /const EXCLUDES = \[([\s\S]*?)\];/
-      );
-      assert.ok(match, 'Could not find EXCLUDES');
-      EXCLUDES = match[1].match(/'[^']+'/g).map(s => s.slice(1, -1));
+  for (const dir of ['icons', 'libs/mathjax']) {
+    it(`rejects a symlinked ancestor before copying resources: ${dir}`, async (t) => {
+      const { sourceRoot, buildRoot } = await fixture(t);
+      const target = path.join(sourceRoot, 'external-resources');
+      await fs.rename(path.join(sourceRoot, dir), target);
+      await fs.symlink(target, path.join(sourceRoot, dir));
+      await assert.rejects(copyReleaseFiles(sourceRoot, buildRoot), /must be a real directory/);
+      assert.equal(existsSync(buildRoot), false);
     });
+  }
+});
 
-    it('excludes git and CI dirs', () => {
-      assert.ok(EXCLUDES.includes('.git'));
-      assert.ok(EXCLUDES.includes('.github'));
-    });
-
-    it('excludes dev-only files', () => {
-      assert.ok(EXCLUDES.includes('node_modules'));
-      assert.ok(EXCLUDES.includes('tests'));
-      assert.ok(EXCLUDES.includes('test-results'));
-      assert.ok(EXCLUDES.includes('playwright-report'));
-      assert.ok(EXCLUDES.includes('package.json'));
-      assert.ok(EXCLUDES.includes('eslint.config.js'));
-      assert.ok(EXCLUDES.includes('AGENTS.md'));
-      assert.ok(EXCLUDES.includes('.DS_Store'));
-      assert.ok(EXCLUDES.includes('.gitignore'));
-      assert.ok(EXCLUDES.includes('stubs'));
-      assert.ok(EXCLUDES.includes('vendor'));
-    });
-
-    it('excludes dist to prevent nesting', () => {
-      assert.ok(EXCLUDES.includes('dist'));
-    });
-
-    it('excludes documentation and plan files', () => {
-      assert.ok(EXCLUDES.includes('CLAUDE.md'));
-      assert.ok(EXCLUDES.includes('LISTING.md'));
-      assert.ok(EXCLUDES.includes('GHOSTWRITER_V2_PLAN.md'));
-    });
-
-    it('excludes stale licence files for removed features', () => {
-      assert.ok(EXCLUDES.includes('licences'));
-    });
+describe('production and explicit CI test hooks', () => {
+  it('disables both modes for query and fragment flags without changing source files', async (t) => {
+    const { sourceRoot, buildRoot } = await fixture(t);
+    await copyReleaseFiles(sourceRoot, buildRoot);
+    await hardenReleaseBuild(buildRoot);
+    for (const relPath of ['content.js', 'panel.js']) {
+      const src = await fs.readFile(path.join(sourceRoot, relPath), 'utf8');
+      const built = await fs.readFile(path.join(buildRoot, relPath), 'utf8');
+      assert.ok(src.includes(TEST_MODE_MARKER), `source unchanged: ${relPath}`);
+      assert.ok(!built.includes(TEST_MODE_MARKER), `mode removed: ${relPath}`);
+      for (const location of [{ search: '?__qf_ci=1', hash: '' }, { search: '', hash: '#__qf_ci' }]) {
+        assert.equal(testModeValue(built, location), false, relPath);
+      }
+    }
   });
 
-  describe('release contents contract', () => {
-    const required = extractConstArray('REQUIRED_RELEASE_FILES');
-    const forbidden = extractConstArray('FORBIDDEN_RELEASE_PATHS');
+  it('production panel sends through the mocked Anki request instead of returning a fake success', async (t) => {
+    const { sourceRoot, buildRoot } = await fixture(t);
+    await copyReleaseFiles(sourceRoot, buildRoot);
+    await hardenReleaseBuild(buildRoot);
+    const built = await fs.readFile(path.join(buildRoot, 'panel.js'), 'utf8');
+    const calls = [];
+    const anki = panelAnki(built, async (action) => { calls.push(action); return 987654; });
+    assert.equal(await anki('addNote', { note: {} }), 987654);
+    assert.deepEqual(calls, ['addNote']);
+    const denied = new Error('mock permission denied');
+    denied.kind = 'permission-denied';
+    const permissionCalls = [];
+    const deniedAnki = panelAnki(built, async (action) => { permissionCalls.push(action); throw denied; }, false);
+    await assert.rejects(deniedAnki('addNote', { note: {} }), (err) => err === denied);
+    assert.deepEqual(permissionCalls, ['requestPermission']);
+  });
 
-    it('requires release-facing privacy and notice files', () => {
-      for (const relPath of [
-        'privacy.md',
-        'PRIVACY_POLICY.md',
-        'THIRD_PARTY_NOTICES.md',
-        'APACHE-2.0.txt',
-        'native-ai.js',
-        'native-ai-options.js',
-        'metadata-fallback.js',
-        'libs/markdown-it.min.js',
-        'libs/mathjax/mathjax-bundle.js.LICENSE.txt',
-      ]) {
-        assert.ok(required.includes(relPath), `missing required release file: ${relPath}`);
-        assert.ok(fs.existsSync(path.resolve(__dirname, '../..', relPath)), `source missing: ${relPath}`);
+  it('keeps both query and fragment test modes only for an explicit CI build', async (t) => {
+    const { sourceRoot, buildRoot } = await fixture(t);
+    await copyReleaseFiles(sourceRoot, buildRoot);
+    await hardenReleaseBuild(buildRoot, { keepTestHooks: true });
+    for (const relPath of ['content.js', 'panel.js']) {
+      const built = await fs.readFile(path.join(buildRoot, relPath), 'utf8');
+      assert.equal(built, await fs.readFile(path.join(sourceRoot, relPath), 'utf8'));
+      for (const location of [{ search: '?__qf_ci=1', hash: '' }, { search: '', hash: '#__qf_ci' }]) {
+        assert.equal(testModeValue(built, location), true, relPath);
       }
-    });
+    }
+    const anki = panelAnki(await fs.readFile(path.join(buildRoot, 'panel.js'), 'utf8'), () => assert.fail('CI should use fixture Anki'));
+    assert.equal(await anki('addNote', { note: {} }), 123456);
+  });
 
-    it('keeps development-only and stale license paths out of the release', () => {
-      for (const relPath of [
-        'node_modules',
-        'tests',
-        'docs',
-        'scripts',
-        'package.json',
-        'package-lock.json',
-        'licences',
-      ]) {
-        assert.ok(forbidden.includes(relPath), `missing forbidden release path: ${relPath}`);
-        assert.ok(isExcluded(relPath, forbidden));
-      }
-    });
+  for (const relPath of ['content.js', 'panel.js']) {
+    for (const keepTestHooks of [false, true]) {
+      it(`fails closed for a changed marker in ${relPath} (CI=${keepTestHooks})`, async (t) => {
+        const { sourceRoot, buildRoot } = await fixture(t);
+        await copyReleaseFiles(sourceRoot, buildRoot);
+        const file = path.join(buildRoot, relPath);
+        await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replace(TEST_MODE_MARKER, 'const QF_TEST_MODE = true;'));
+        await assert.rejects(hardenReleaseBuild(buildRoot, { keepTestHooks }), new RegExp(`expected one QF_TEST_MODE marker in ${relPath}`));
+      });
+    }
+  }
+});
 
-    it('does not exclude files required by the release contents check', () => {
-      for (const relPath of required) {
-        assert.equal(isExcluded(relPath, forbidden), false, `required file is forbidden: ${relPath}`);
-      }
+describe('release archive validation', () => {
+  it('creates an archive containing exactly the explicit release files', async (t) => {
+    const { sourceRoot } = await fixture(t);
+    await fs.writeFile(path.join(sourceRoot, 'private-transcript.txt'), 'private fixture');
+    const { buildRoot, zipPath } = await build({ sourceRoot, keepTestHooks: false });
+    assert.deepEqual(archiveFiles(zipPath), [...REQUIRED_RELEASE_FILES].sort());
+    await assertReleaseContents(buildRoot);
+    const panel = execFileSync('unzip', ['-p', zipPath, 'panel.js'], { encoding: 'utf8' });
+    assert.equal(testModeValue(panel, { search: '?__qf_ci=1', hash: '' }), false);
+  });
+
+  it('preserves test hooks in the archive for the explicit CI environment option', async (t) => {
+    const { sourceRoot } = await fixture(t);
+    const previous = process.env.GHOSTWRITER_BUILD_TEST_HOOKS;
+    let zipPath;
+    try {
+      process.env.GHOSTWRITER_BUILD_TEST_HOOKS = '1';
+      ({ zipPath } = await build({ sourceRoot }));
+    } finally {
+      if (previous === undefined) delete process.env.GHOSTWRITER_BUILD_TEST_HOOKS;
+      else process.env.GHOSTWRITER_BUILD_TEST_HOOKS = previous;
+    }
+    assert.deepEqual(archiveFiles(zipPath), [...REQUIRED_RELEASE_FILES].sort());
+    for (const relPath of ['content.js', 'panel.js']) {
+      const source = execFileSync('unzip', ['-p', zipPath, relPath], { encoding: 'utf8' });
+      assert.equal(testModeValue(source, { search: '?__qf_ci=1', hash: '' }), true, relPath);
+    }
+  });
+
+  for (const relPath of ['new-root-file.txt', 'icons/private.txt', '.tests']) {
+    it(`refuses to archive unexpected contents: ${relPath}`, async (t) => {
+      const { sourceRoot, buildRoot } = await fixture(t);
+      await copyReleaseFiles(sourceRoot, buildRoot);
+      if (relPath === '.tests') await fs.mkdir(path.join(buildRoot, relPath));
+      else await fs.writeFile(path.join(buildRoot, relPath), 'private fixture');
+      const zipPath = path.join(sourceRoot, 'blocked.zip');
+      await assert.rejects(createReleaseArchive(buildRoot, zipPath), /Unexpected paths:/);
+      assert.equal(existsSync(zipPath), false);
     });
+  }
+
+  it('refuses to archive a missing required resource or a symlink', async (t) => {
+    const { sourceRoot, buildRoot } = await fixture(t);
+    await copyReleaseFiles(sourceRoot, buildRoot);
+    await fs.rm(path.join(buildRoot, 'options.css'));
+    const zipPath = path.join(sourceRoot, 'blocked.zip');
+    await assert.rejects(createReleaseArchive(buildRoot, zipPath), /Missing required files: options.css/);
+    await fs.symlink(path.join(buildRoot, 'panel.js'), path.join(buildRoot, 'options.css'));
+    await assert.rejects(createReleaseArchive(buildRoot, zipPath), /Unexpected paths: options.css/);
+    assert.equal(existsSync(zipPath), false);
   });
 });
 

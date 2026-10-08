@@ -38,6 +38,20 @@
         <button id="dismissUpdateNotice" type="button">Dismiss</button>
       </section>
 
+      <section id="stage2Recovery" class="update-notice" hidden>
+        <div>
+          <p class="eyebrow">Saved card recovery</p>
+          <h2>Recover saved cards and images</h2>
+          <p id="stage2RecoveryMessage" class="description" role="status" aria-live="polite"></p>
+          <p class="small">The recovery export includes saved cards and pasted image data. It does not include API keys or settings. Keep the file private.</p>
+          <div class="button-row">
+            <button id="exportStage2Recovery" type="button">Export recovery backup</button>
+            <button id="retryStage2Recovery" type="button">Retry safe cleanup</button>
+          </div>
+          <p id="stage2RecoveryResult" class="small" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
       <section class="card options-pane" id="connection" data-options-pane="connection">
       <details class="accordion section-accordion" open>
         <summary class="accordion-summary">
@@ -274,8 +288,8 @@
                   <label for="showMiniCopilotMode">Compact suggestion buttons (between Front &amp; Back)</label>
                   <select id="showMiniCopilotMode">
                     <option value="auto">Auto (mobile only)</option>
-                    <option value="on" selected>On</option>
-                    <option value="off">Off</option>
+                    <option value="on">On</option>
+                    <option value="off" selected>Off</option>
                   </select>
                   <p class="small">Adds “Suggest” and “Accept” buttons for touch workflows.</p>
                 </div>
@@ -443,6 +457,20 @@
                 </label>
                 <p class="small muted">When enabled, every note this extension creates will include the tag above.</p>
               </fieldset>
+            </div>
+          </details>
+
+          <details class="accordion sub-accordion">
+            <summary class="accordion-summary">
+              <div>
+                <h3>Page source access</h3>
+                <p class="description">Allow Ghostwriter to read the active tab title and URL when toolbar access is unavailable.</p>
+              </div>
+            </summary>
+            <div class="accordion-body">
+              <p class="small">This is optional. Opening Ghostwriter from its toolbar button or shortcut can provide access to that page without it.</p>
+              <button id="allowPageSourceAccess" type="button">Allow page source access</button>
+              <p id="pageSourceAccessStatus" class="small" role="status" aria-live="polite"></p>
             </div>
           </details>
 

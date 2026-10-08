@@ -3,74 +3,50 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const reviewHtml = fs.readFileSync(
-  path.resolve(__dirname, '../../review.html'), 'utf8'
-);
-const reviewJs = fs.readFileSync(
-  path.resolve(__dirname, '../../review.js'), 'utf8'
-);
+const repoRoot = path.resolve(__dirname, '../..');
+const panelHtml = fs.readFileSync(path.join(repoRoot, 'panel.html'), 'utf8');
+const panelSource = fs.readFileSync(path.join(repoRoot, 'panel.js'), 'utf8');
+const elementIds = new Set([...panelHtml.matchAll(/<(?![!/])[^>]*\bid\s*=\s*["']([^"']+)["']/g)]
+  .map((match) => match[1]));
+const declaredFunctions = new Set([...panelSource.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g)]
+  .map((match) => match[1]));
 
-describe('review queue UI', () => {
-  it('keeps Front and Back as the central review card content', () => {
-    assert.ok(reviewHtml.includes('class="review-container"'));
-    assert.ok(reviewHtml.includes('class="card-face front-face"'));
-    assert.ok(reviewHtml.includes('class="card-face back-face"'));
-    assert.match(reviewHtml, /<textarea id="cardFront"[\s\S]*?<\/textarea>/);
-    assert.match(reviewHtml, /<textarea id="cardBack"[\s\S]*?<\/textarea>/);
+describe('review queue retirement', () => {
+  it('removes the retired review page and script', () => {
+    for (const file of ['review.html', 'review.js']) {
+      assert.equal(fs.existsSync(path.join(repoRoot, file)), false, `${file} must be removed`);
+    }
   });
 
-  it('hides secondary review information in disclosures or the top menu', () => {
-    assert.ok(reviewHtml.includes('<details class="meta-drawer">'));
-    assert.ok(reviewHtml.includes('<summary>Card details</summary>'));
-    assert.ok(reviewHtml.includes('<summary>Source</summary>'));
-    assert.ok(reviewHtml.includes('<details class="review-menu">'));
-    assert.ok(reviewHtml.includes('id="btnDelete"'));
+  it('removes queue, triage and undo-send controls from the editor', () => {
+    const retiredIds = [...elementIds].filter((id) =>
+      /^(?:triage(?:[A-Z]|$)|outbox(?:[A-Z]|$)|overlayReview(?:Queue|Badge)$|openReviewQueue(?:Inline)?$|readyToSendSection$|clearOutbox$|sendOutbox$|undoLastSend$)/.test(id));
+    assert.deepEqual(retiredIds, []);
   });
 
-  it('centers the primary decision controls in the bottom action panel', () => {
-    assert.ok(reviewHtml.includes('class="actions-bar"'));
-    assert.ok(reviewHtml.includes('class="nav-group"'));
-    assert.match(reviewHtml, /id="btnPrev"[\s\S]*?id="btnSkip"[\s\S]*?id="btnAccept"[\s\S]*?id="btnNext"/);
-    assert.ok(reviewHtml.includes('grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)'));
+  it('removes legacy queue, archive and automatic suggestion entrypoints', () => {
+    const retiredFunctions = [
+      'queueCurrentCardForReview', 'sendOutboxToAnki', 'undoLastSend',
+      'acceptCurrentCard', 'skipCurrentCard', 'undoLastTriageDecision',
+      'saveTriageState', 'saveOutboxState', 'restoreSavedState',
+      'archiveGetAll', 'archiveGetById', 'archiveUpsertCards', 'scheduleCopilot',
+    ];
+    assert.deepEqual(retiredFunctions.filter((name) => declaredFunctions.has(name)), []);
   });
 
-  it('renders queue status into the small status pill instead of the card body', () => {
-    assert.ok(reviewHtml.includes('id="statusPill"'));
-    assert.ok(reviewJs.includes('statusPill.textContent'));
-    assert.ok(reviewJs.includes('statusPill.dataset.status'));
+  it('retires browser notifications while preserving the panel cloze warning', () => {
+    assert.equal(/chrome\.notifications\b/.test(panelSource), false);
+    assert.equal(elementIds.has('clozeModelNotice'), true);
+    assert.equal(elementIds.has('modelFieldWarning'), true);
+    assert.equal(declaredFunctions.has('warnIfClozeModelMistyped'), true);
   });
 
-  it('advertises and handles the triage keyboard shortcuts', () => {
-    assert.ok(reviewHtml.includes('<kbd>A</kbd> Accept'));
-    assert.ok(reviewHtml.includes('<kbd>R</kbd> Reject'));
-    assert.ok(reviewHtml.includes('<kbd>U</kbd> Undo'));
-    assert.ok(reviewHtml.includes('title="Reject (R)"'));
-    assert.ok(reviewHtml.includes('id="btnUndo"'));
-    assert.match(reviewJs, /case "a": case "A":[\s\S]*?acceptCurrent\(\);/);
-    assert.match(reviewJs, /case "r": case "R":[\s\S]*?rejectCurrent\(\);/);
-    assert.match(reviewJs, /case "ArrowLeft":[\s\S]*?goToPrev\(\);/);
-    assert.match(reviewJs, /case "ArrowRight":[\s\S]*?goToNext\(\);/);
-    assert.match(reviewJs, /key === "u"[\s\S]*?undoLastAction\(\);/);
-  });
-
-  it('treats reject as deletion and keeps an undo path for review decisions', () => {
-    assert.match(reviewJs, /function rejectCurrent\(\) {\s*removeCurrent\(\{ type: "reject" \}\);/);
-    assert.match(reviewJs, /function removeCurrent\(\{ type = "delete" \} = \{\}\)[\s\S]*?setReviewStatus\(item, "deleted"\)/);
-    assert.ok(reviewJs.includes('undoStack'));
-    assert.match(reviewJs, /function undoLastAction\(\)/);
-    assert.match(reviewJs, /btnUndo\.addEventListener\("click", undoLastAction\)/);
-  });
-
-  it('loads the shared Markdown/Anki conversion helpers before review.js', () => {
-    assert.match(reviewHtml, /<script src="libs\/markdown-it\.min\.js"><\/script>\s*<script src="panel-markdown\.js"><\/script>\s*<script src="review\.js"><\/script>/);
-  });
-
-  it('builds Anki notes from actual model fields instead of hard-coding Front and Back only', () => {
-    assert.match(reviewJs, /async function getModelFields\(modelName\)/);
-    assert.match(reviewJs, /async function buildReviewNote\(item, deckName, modelName\)/);
-    assert.match(reviewJs, /const fieldNames = await getModelFields\(modelName\)/);
-    assert.ok(reviewJs.includes('"Text" in fields'));
-    assert.ok(reviewJs.includes('"Source" in fields'));
-    assert.match(reviewJs, /const note = await buildReviewNote\(item, deck, modelName\)/);
+  it('retains direct card editing and explicit Add and Suggest controls', () => {
+    for (const id of ['front', 'back', 'context', 'notes', 'source', 'add', 'copilotMiniGenerate']) {
+      assert.equal(elementIds.has(id), true, `${id} must remain available`);
+    }
+    for (const name of ['addToAnki', 'addCurrentCardToAnki', 'persistManualDraftFromInputs', 'restoreManualDraftFromStorage']) {
+      assert.equal(declaredFunctions.has(name), true, `${name} must remain available`);
+    }
   });
 });

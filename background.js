@@ -1,6 +1,7 @@
 // background.js — drive Ghostwriter for Anki UI surfaces (overlay ➜ tab; side panel is explicit)
 
 importScripts("anki-connect.js"); // eslint-disable-line no-undef
+importScripts("stage2-migration.js"); // eslint-disable-line no-undef
 
 const supportsSidePanel = () => Boolean(chrome.sidePanel && (chrome.sidePanel.open || chrome.sidePanel.setOptions)); // keep
 const OPTIONS_KEY = "quickflash_options";
@@ -650,8 +651,6 @@ try {
   }
 }
 
-const ARCHIVE_KEY = "quickflash_archive_v1";
-const ARCHIVE_BACKUP_KEY = "quickflash_archive_backup_v1";
 const LAST_VER_KEY = "qf_lastVersion";
 const OPTIONS_BACKUP_KEY = "ghostwriter_options_backup_v1";
 const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v2";
@@ -673,25 +672,6 @@ const PROVIDER_CONFIG_FIELDS = [
   "claudeModel",
 ];
 const CONTENT_STORAGE_KEYS = new Set(["quickflash_overlay_size", "quickflash_lastDraft"]);
-
-async function storeArchiveBackup({ trigger = "update", prev = "" } = {}) {
-  try {
-    const got = await chrome.storage.local.get([ARCHIVE_KEY, ARCHIVE_BACKUP_KEY]);
-    const state = got?.[ARCHIVE_KEY];
-    if (got?.[ARCHIVE_BACKUP_KEY]) return;
-    if (!state) return; // nothing to back up
-    await chrome.storage.local.set({
-      [ARCHIVE_BACKUP_KEY]: {
-        snapshotAt: Date.now(),
-        trigger,
-        prevVersion: prev || null,
-        data: state,
-      },
-    });
-  } catch (e) {
-    console.warn("Auto-backup failed:", e);
-  }
-}
 
 function hasStoredValue(opts, key) {
   return typeof opts?.[key] === "string" ? !!opts[key].trim() : opts?.[key] !== undefined && opts?.[key] !== null;
@@ -848,30 +828,12 @@ async function backupOptionsBeforeMigration(existingOptions, { previousVersion =
         snapshotAt: Date.now(),
         previousVersion: previousVersion || null,
         currentVersion: currentVersion || null,
-        options: existingOptions,
+        options: sanitizeOptionsForSync(existingOptions),
       },
     });
   } catch (err) {
     console.warn("Options compatibility backup failed:", err?.message || err);
   }
-}
-
-// One-time v3 changes to existing installs, each applied once and recorded.
-const V3_MIGRATIONS_KEY = "ghostwriter_v3_migrations_v1";
-
-async function runV3Migrations() {
-  const got = await chrome.storage.local.get(V3_MIGRATIONS_KEY).catch(() => ({}));
-  const done = got?.[V3_MIGRATIONS_KEY] || {};
-  if (!done.suggestBarOn) {
-    // The Suggest button was hidden by default by mistake; anyone who saved Options stored
-    // "off" without choosing it. Show it once; a user can still turn it off again.
-    const { [OPTIONS_KEY]: opts } = await chrome.storage.sync.get(OPTIONS_KEY).catch(() => ({}));
-    if (opts && opts.showMiniCopilotMode === "off") {
-      await chrome.storage.sync.set({ [OPTIONS_KEY]: { ...opts, showMiniCopilotMode: "on" } });
-    }
-    done.suggestBarOn = true;
-  }
-  await chrome.storage.local.set({ [V3_MIGRATIONS_KEY]: done });
 }
 
 async function runFocusedV2CompatibilityUpdate({ reason = "update", previousVersion = "" } = {}) {
@@ -898,17 +860,49 @@ async function runFocusedV2CompatibilityUpdate({ reason = "update", previousVers
   return { ...migrated, notice };
 }
 
-function maybeShowUpdateNotification(notice) {
-  try {
-    if (!notice || !chrome.notifications?.create) return;
-    chrome.notifications.create(`ghostwriter-update-${notice.id}`, {
-      type: "basic",
-      iconUrl: "icons/icon128.png",
-      title: notice.title,
-      message: "Settings and API keys were preserved. Open Settings to review what changed.",
+async function runStage2CompatibilityUpdate() {
+  const status = await globalThis.GHOSTWRITER_STAGE2_MIGRATION.migrate(chrome.storage.local);
+  const id = `focused-editor-stage2-${status.complete ? "complete" : "pending"}`;
+  const got = await chrome.storage.local.get(UPDATE_NOTICE_KEY);
+  const previous = got?.[UPDATE_NOTICE_KEY];
+  if (previous?.id !== id) {
+    await chrome.storage.local.set({
+      [UPDATE_NOTICE_KEY]: {
+        id,
+        kind: "focused-editor-stage2",
+        createdAt: Date.now(),
+        dismissed: false,
+        title: "Ghostwriter now sends cards directly to Anki",
+        message: status.message,
+        actions: [
+          "Add to Anki sends the current card. Saved queue data remains recoverable in Settings.",
+          "Browser notifications are removed. Tab access is optional and requested only from a Source control that needs it.",
+          "Pasted images are retained while active drafts or recovery data may need them.",
+        ],
+      },
     });
-  } catch {}
+  }
+  // An old queue count can persist across updates. Clear it once; no new counts or nudges.
+  try { await chrome.action.setBadgeText({ text: "" }); } catch {}
+  return status;
 }
+
+function isStage2RecoverySender(sender) {
+  if (sender?.id !== chrome.runtime.id || !sender?.url) return false;
+  try {
+    const url = new URL(sender.url);
+    const own = new URL(chrome.runtime.getURL(""));
+    return url.protocol === own.protocol && url.host === own.host
+      && ["/panel.html", "/options.html"].includes(url.pathname);
+  } catch { return false; }
+}
+
+// Worker restarts/reloads may not produce an update event. The module is idempotent and
+// preserves originals on backup failure, so every worker can resume an unfinished update.
+const stage2Ready = runStage2CompatibilityUpdate().catch((err) => {
+  console.warn("Stage 2 compatibility update paused:", err?.message || err);
+  return null;
+});
 
 chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
   configureSidePanelBehavior(false);
@@ -919,59 +913,29 @@ chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
   chrome.contextMenus.create({ id: "quickflash-write-card", title: "Create Anki card with Ghostwriter", contexts: ["selection"] });
 
   try {
-    let updateResult = null;
     if (reason === "update") {
-      await storeArchiveBackup({ trigger: "update", prev: previousVersion || "" });
-      updateResult = await runFocusedV2CompatibilityUpdate({ reason, previousVersion: previousVersion || "" });
-      await runV3Migrations().catch((err) => console.warn("v3 migrations failed:", err));
-      maybeShowUpdateNotification(updateResult?.notice);
+      await runFocusedV2CompatibilityUpdate({ reason, previousVersion: previousVersion || "" });
     }
+    await stage2Ready;
+    await runStage2CompatibilityUpdate();
     await chrome.storage.local.set({ [LAST_VER_KEY]: chrome.runtime.getManifest().version });
   } catch {}
-  refreshBadge();
 });
-
-const SAVED_ITEMS_KEY = "ghostwriter_saved_items";
-const NUDGE_MILESTONE_KEY = "ghostwriter_nudge_milestone_v1";
-
-async function refreshBadge() {
-  try {
-    const got = await chrome.storage.local.get(SAVED_ITEMS_KEY);
-    const items = got?.[SAVED_ITEMS_KEY] || [];
-    chrome.action.setBadgeText({ text: items.length > 0 ? String(items.length) : "" });
-    chrome.action.setBadgeBackgroundColor({ color: "#2563eb" });
-  } catch {}
-}
 
 chrome.runtime.onStartup?.addListener(async () => {
   configureSidePanelBehavior(false);
-  refreshBadge();
   try {
     const current = chrome.runtime.getManifest().version;
     const got = await chrome.storage.local.get(LAST_VER_KEY);
     const prev = got?.[LAST_VER_KEY];
     if (prev && prev !== current) {
-      await storeArchiveBackup({ trigger: "startup", prev });
-      const updateResult = await runFocusedV2CompatibilityUpdate({ reason: "startup", previousVersion: prev });
-      await runV3Migrations().catch((err) => console.warn("v3 migrations failed:", err));
-      maybeShowUpdateNotification(updateResult?.notice);
+      await runFocusedV2CompatibilityUpdate({ reason: "startup", previousVersion: prev });
       await chrome.storage.local.set({ [LAST_VER_KEY]: current });
     }
+    await stage2Ready;
+    await runStage2CompatibilityUpdate();
   } catch {}
 });
-
-// Open review queue when nudge notification is clicked
-try {
-  chrome.notifications?.onClicked?.addListener((notificationId) => {
-    if (notificationId.startsWith("ghostwriter-update")) {
-      try { chrome.runtime.openOptionsPage(); } catch {}
-      return;
-    }
-    if (notificationId.startsWith("ghostwriter-nudge")) {
-      chrome.tabs.create({ url: chrome.runtime.getURL("review.html") });
-    }
-  });
-} catch {}
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   (async () => {
@@ -1041,6 +1005,63 @@ chrome.commands.onCommand.addListener((command, tab) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (!message || typeof message !== "object") return;
+
+    if (["ghostwriter:stage2Status", "ghostwriter:stage2Export", "ghostwriter:stage2Retry", "ghostwriter:retireUploadedImages", "ghostwriter:storePastedImage"].includes(message.type)) {
+      if (!isStage2RecoverySender(sender)) {
+        sendResponse({ ok: false, error: "Recovery controls are available only in Ghostwriter pages." });
+        return;
+      }
+      try {
+        await stage2Ready;
+        const migration = globalThis.GHOSTWRITER_STAGE2_MIGRATION;
+        if (message.type === "ghostwriter:storePastedImage") {
+          const result = await migration.storeImageEntry(chrome.storage.local, message.filename, message.entry);
+          sendResponse({ ok: true, result });
+          return;
+        }
+        if (message.type === "ghostwriter:retireUploadedImages") {
+          const result = await migration.retireUploadedImages(chrome.storage.local, message.filenames, message.liveDraftRefs);
+          sendResponse({ ok: true, result });
+          return;
+        }
+        if (message.type === "ghostwriter:stage2Export") {
+          let legacyBackup;
+          let exportSource = "verified-backup";
+          try {
+            legacyBackup = await migration.exportBackup(chrome.storage.local);
+          } catch {
+            // A quota failure must not prevent a user from saving their untouched legacy
+            // data to a file. This fallback only reads; it does not claim a durable backup.
+            legacyBackup = await migration.snapshot(chrome.storage.local);
+            exportSource = "active";
+          }
+          const got = await chrome.storage.local.get("quickflash_image_store_v1");
+          const uploadedImageBackup = await migration.exportUploadedImages(chrome.storage.local);
+          sendResponse({ ok: true, backup: {
+            format: "ghostwriter-stage2-recovery",
+            schemaVersion: 1,
+            exportSource,
+            legacyBackup,
+            imageStore: got?.quickflash_image_store_v1 || {},
+            uploadedImageBackup,
+          } });
+        } else {
+          const status = message.type === "ghostwriter:stage2Retry"
+            ? await runStage2CompatibilityUpdate()
+            : await migration.status(chrome.storage.local);
+          let uploadedImageCount = 0;
+          let uploadedImageError = null;
+          try {
+            const uploaded = await migration.exportUploadedImages(chrome.storage.local);
+            uploadedImageCount = Object.keys(uploaded?.entries || {}).length;
+          } catch (err) { uploadedImageError = err?.message || String(err); }
+          sendResponse({ ok: true, status: { ...status, uploadedImageCount, uploadedImageError } });
+        }
+      } catch (err) {
+        sendResponse({ ok: false, error: err?.message || String(err) });
+      }
+      return;
+    }
 
     if (message.type === "quickflash:test:ping") {
       sendResponse({ ok: true });
@@ -1206,57 +1227,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (err) {
         sendResponse({ ok: false, error: err?.message || String(err) });
       }
-      return;
-    }
-
-    if (message.type === "ghostwriter:openReviewQueue") {
-      try {
-        const reviewUrl = chrome.runtime.getURL("review.html");
-        const [existing] = await chrome.tabs.query({ url: `${reviewUrl}*` });
-        if (existing) {
-          await chrome.tabs.update(existing.id, { active: true });
-        } else {
-          await chrome.tabs.create({ url: reviewUrl });
-        }
-        sendResponse({ ok: true });
-      } catch (err) {
-        sendResponse({ ok: false, error: err?.message || String(err) });
-      }
-      return;
-    }
-
-    if (message.type === "ghostwriter:updateBadge") {
-      const count = message.count || 0;
-      try {
-        chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
-        chrome.action.setBadgeBackgroundColor({ color: count >= 10 ? "#dc2626" : "#2563eb" });
-        // Nudge once per upward crossing of a milestone; reset when the queue drains
-        // so a later re-crossing can fire again (avoids re-firing on every count===5).
-        const milestone = count >= 10 ? 10 : count >= 5 ? 5 : 0;
-        const storedMilestone = await chrome.storage.local.get(NUDGE_MILESTONE_KEY);
-        const lastMilestone = Number(storedMilestone?.[NUDGE_MILESTONE_KEY]) || 0;
-        if (milestone > lastMilestone) {
-          if (milestone === 5) {
-            chrome.notifications?.create?.("ghostwriter-nudge-5", {
-              type: "basic",
-              iconUrl: "icons/icon128.png",
-              title: "Ghostwriter for Anki",
-              message: "You have 5 saved highlights. Ready to review them?",
-            });
-          } else if (milestone === 10) {
-            chrome.notifications?.create?.("ghostwriter-nudge-10", {
-              type: "basic",
-              iconUrl: "icons/icon128.png",
-              title: "Ghostwriter for Anki",
-              message: "10 highlights saved! Time to turn them into cards.",
-            });
-          }
-          await chrome.storage.local.set({ [NUDGE_MILESTONE_KEY]: milestone });
-        } else if (milestone < lastMilestone) {
-          await chrome.storage.local.set({ [NUDGE_MILESTONE_KEY]: milestone });
-        }
-      } catch {}
-      sendResponse({ ok: true });
       return;
     }
 

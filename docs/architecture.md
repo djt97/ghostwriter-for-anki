@@ -6,18 +6,19 @@ Ghostwriter is implemented as a Manifest V3 extension with these main pieces:
 
 - `background.js` — service worker orchestration
 - `content.js` — page integration, overlay host, selection/context capture
-- `panel.html` + `panel.js` — main authoring/review UI
+- `panel.html` + `panel.js` — card editor, manually requested Copilot and direct Anki submission
 - `options.html` + `options.js` — settings UI and persistence
 - `native-ai.js` + `native-ai-options.js` — document-context adapter and explicit setup UI for Chrome's on-device Prompt API
 - `copilot-core.js` — shared deterministic source-verbatim card assists used by the runtime and eval harness
-- `metadata-fallback.js` — conservative local subject classifier used only when model-backed tagging is unavailable
+- `metadata-fallback.js` — conservative local subject classifier and URL reduction for automatic metadata prompts
+- `stage2-migration.js` — verified legacy-record and uploaded-image recovery backups
 
 ## Control flow overview
 
 1. User triggers Ghostwriter command.
 2. Background resolves active tab and ensures content script availability.
 3. UI opens in overlay, side panel, or panel tab.
-4. Panel handles AI generation, queue triage, and outbox actions.
+4. Panel handles manually requested Copilot and card editing.
 5. Background/panel exchange messages for page context and browser actions.
 6. Panel submits notes to AnkiConnect endpoint.
 
@@ -33,27 +34,30 @@ Common message categories:
 ## Data and state
 
 - User configuration stored in extension storage.
-- Temporary card draft/queue state managed by panel runtime.
-- Outbox exists as UI-level staging before Anki submission.
+- The panel stores the current editor draft locally. There is no Review Queue or outbox in the source update.
+- A one-time migration retains a verified local backup before clearing legacy queue/archive keys. Images removed from the active cache after a confirmed upload and note add are first retained in a verified recovery backup. Options provides local export and safe retry controls.
 
 ## Release build
 
-`scripts/build-release.js` builds the bundled MathJax asset, copies the extension into `dist/ghostwriter/`, excludes development-only files, and creates `dist/ghostwriter.zip`.
+`scripts/build-release.js` builds MathJax, copies an explicit list of tracked resources plus its two generated MathJax files, disables production test modes, validates the complete release tree, and creates `dist/ghostwriter.zip`.
 
 ## Security and permissions
 
 Manifest permissions include capabilities such as:
 
-- `storage`, `activeTab`, `scripting`, `tabs`, `contextMenus`, `sidePanel`, `notifications`
+- `storage`, `activeTab`, `scripting`, `contextMenus`, `sidePanel`
 
 Optional permissions include:
 
-- `clipboardRead`, requested at runtime only when clipboard Source fallback is used.
+- `tabs`, for source-tab information when the current `activeTab` grant is insufficient.
+- `clipboardRead`, requested from explicit Clipboard Source controls.
+
+Notifications are not requested; update notices appear in the editor.
 
 Host permissions include:
 
 - Localhost AnkiConnect
-- Selected AI provider domains
+- Selected AI provider domains as optional host permissions
 
 ## External integrations
 
@@ -72,3 +76,5 @@ The panel resolves a backend for each model-backed task in this order:
 4. For Auto-Tag only, a deterministic local classifier may emit at most one high-confidence subject tag. Auto-Context has no deterministic fallback.
 
 The active-backend UI is updated when routing or fallback changes so users can see where a model request ran.
+
+Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged. The full source URL is retained in Anki Source/backlinks when known. Copilot source/image context is a separate path and can include URLs supplied in the selected source.

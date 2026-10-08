@@ -1,189 +1,217 @@
 const path = require('path');
 const fs = require('fs/promises');
-const { existsSync } = require('fs');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const DIST_DIR = path.join(ROOT, 'dist');
 
-const REQUIRED_RELEASE_FILES = [
+// Only reviewed extension resources belong in a release. New files (including tracked
+// plans, transcripts and working assets) stay out until this list is explicitly updated.
+const RELEASE_SOURCE_FILES = [
   'manifest.json',
   'LICENSE',
   'background.js',
   'content.js',
   'panel.html',
   'panel.js',
+  'panel-markdown.js',
+  'panel-ai-templates.js',
   'copilot-core.js',
+  'defaults.js',
+  'prompts.js',
   'shortcuts.js',
   'anki-connect.js',
   'anki-note.js',
-  'review.html',
-  'review.js',
+  'stage2-migration.js',
   'options.html',
   'options.js',
+  'options.css',
   'native-ai.js',
   'native-ai-options.js',
   'metadata-fallback.js',
+  'mathjax-sandbox.html',
+  'mathjax-sandbox.js',
   'privacy.md',
   'PRIVACY_POLICY.md',
   'THIRD_PARTY_NOTICES.md',
   'APACHE-2.0.txt',
+  'icons/icon16.png',
+  'icons/icon19.png',
+  'icons/icon32.png',
+  'icons/icon38.png',
+  'icons/icon48.png',
+  'icons/icon128.png',
+  'icons/ghost-card.svg',
+  'icons/ghostwriter_small_promo_tile_440x280.png',
   'libs/markdown-it.min.js',
+  'libs/mathjax/fonts/tex/MathJax_AMS-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Calligraphic-Bold.woff',
+  'libs/mathjax/fonts/tex/MathJax_Calligraphic-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Fraktur-Bold.woff',
+  'libs/mathjax/fonts/tex/MathJax_Fraktur-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Main-Bold.woff',
+  'libs/mathjax/fonts/tex/MathJax_Main-Italic.woff',
+  'libs/mathjax/fonts/tex/MathJax_Main-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Math-BoldItalic.woff',
+  'libs/mathjax/fonts/tex/MathJax_Math-Italic.woff',
+  'libs/mathjax/fonts/tex/MathJax_Math-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_SansSerif-Bold.woff',
+  'libs/mathjax/fonts/tex/MathJax_SansSerif-Italic.woff',
+  'libs/mathjax/fonts/tex/MathJax_SansSerif-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Script-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Size1-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Size2-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Size3-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Size4-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Typewriter-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Vector-Bold.woff',
+  'libs/mathjax/fonts/tex/MathJax_Vector-Regular.woff',
+  'libs/mathjax/fonts/tex/MathJax_Zero.woff'
+];
+
+// Webpack creates these files; no other untracked file is a release input.
+const GENERATED_RELEASE_FILES = [
   'libs/mathjax/mathjax-bundle.js',
   'libs/mathjax/mathjax-bundle.js.LICENSE.txt'
 ];
+const REQUIRED_RELEASE_FILES = [...RELEASE_SOURCE_FILES, ...GENERATED_RELEASE_FILES];
 
-const FORBIDDEN_RELEASE_PATHS = [
-  '.git',
-  'node_modules',
-  'tests',
-  'docs',
-  'scripts',
-  'package.json',
-  'package-lock.json',
-  'eslint.config.js',
-  'playwright.config.ts',
-  'AGENTS.md',
-  'LISTING.md',
-  'GHOSTWRITER_V2_PLAN.md',
-  'licences'
-];
-
-const EXCLUDES = [
-  '.git',
-  '.github',
-  '.claude',
-  '.codex',
-  '.DS_Store',
-  '.gitignore',
-  'dist',
-  'node_modules',
-  'mathjax-entry.js',
-  'webpack.config.js',
-  'stubs',
-  'mathjax-config.js',
-  'libs/mathjax/tex-mml-chtml.js',
-  'tests',
-  'test-results',
-  'playwright-report',
-  'playwright.config.ts',
-  'package.json',
-  'package-lock.json',
-  'scripts',
-  'audit',
-  'explainer-video',
-  'docs',
-  'AGENTS.md',
-  'CLAUDE.md',
-  'eslint.config.js',
-  'LISTING.md',
-  'GHOSTWRITER_V2_PLAN.md',
-  'README.md',
-  'licences',
-  'vendor'
-];
-
-function normalizePath(value) {
-  return value.split(path.sep).join('/');
-}
-
-// The extension bundle never contains video/audio; stray recordings dropped in the repo root
-// (demo takes, narration WAVs) must not balloon the store zip.
-const EXCLUDED_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.wav', '.m4a', '.aiff', '.aif']);
-
-function isExcluded(relPath, excludes) {
-  if (excludes.some((entry) => relPath === entry || relPath.startsWith(`${entry}/`))) return true;
-  if (EXCLUDED_EXTENSIONS.has(path.extname(relPath).toLowerCase())) return true;
-  // Root-level images are working assets, not extension resources (icons live in icons/).
-  if (!relPath.includes('/') && /\.(png|jpe?g|gif)$/i.test(relPath)) return true;
-  return false;
-}
-
-async function copyDir(src, dest, excludes) {
-  await fs.mkdir(dest, { recursive: true });
-  const entries = await fs.readdir(src, { withFileTypes: true });
-
-  await Promise.all(entries.map(async (entry) => {
-    const srcPath = path.join(src, entry.name);
-    const relPath = normalizePath(path.relative(ROOT, srcPath));
-    if (isExcluded(relPath, excludes)) {
-      return;
-    }
-    const destPath = path.join(dest, entry.name);
-
-    if (entry.isDirectory()) {
-      await copyDir(srcPath, destPath, excludes);
-    } else if (entry.isFile()) {
-      await fs.copyFile(srcPath, destPath);
-    }
-  }));
-}
-
-// CI sets this to run the e2e suite against the built artifact: the suite drives the overlay
-// through the __qf_ci window-message hooks, which the store build must not answer. Everything
-// else about the build (copying, excludes, MathJax) stays identical.
-const KEEP_TEST_HOOKS = process.env.GHOSTWRITER_BUILD_TEST_HOOKS === '1';
-
-async function hardenReleaseBuild(buildRoot) {
-  // Disable the __qf_ci test hooks in the shipped build so a visited page cannot set
-  // ?__qf_ci on itself and drive the content-script test message handlers.
-  const contentPath = path.join(buildRoot, 'content.js');
-  const src = await fs.readFile(contentPath, 'utf8');
-  const marker = 'const QF_TEST_MODE = /\\b__qf_ci\\b/i.test(location.search + location.hash);';
-  if (!src.includes(marker)) {
-    throw new Error('build-release: QF_TEST_MODE marker not found in content.js; update scripts/build-release.js so release test hooks stay disabled.');
+async function copyReleaseFiles(sourceRoot, buildRoot) {
+  const trackedFiles = new Set(execFileSync('git', ['ls-files', '--cached', '-z'], {
+    cwd: sourceRoot,
+    encoding: 'utf8'
+  }).split('\0').filter(Boolean));
+  const untracked = RELEASE_SOURCE_FILES.filter((relPath) => !trackedFiles.has(relPath));
+  if (untracked.length) {
+    throw new Error(`Release source files must be git tracked: ${untracked.join(', ')}`);
   }
-  if (KEEP_TEST_HOOKS) {
+
+  // Check inputs before copying so missing files and symlinks cannot produce a release.
+  const checkedDirectories = new Set();
+  for (const relPath of REQUIRED_RELEASE_FILES) {
+    const directories = relPath.split('/').slice(0, -1);
+    for (let i = 1; i <= directories.length; i++) {
+      const dir = directories.slice(0, i).join('/');
+      if (checkedDirectories.has(dir)) continue;
+      const stat = await fs.lstat(path.join(sourceRoot, dir));
+      if (!stat.isDirectory()) {
+        throw new Error(`Release input directory must be a real directory: ${dir}`);
+      }
+      checkedDirectories.add(dir);
+    }
+    const stat = await fs.lstat(path.join(sourceRoot, relPath));
+    if (!stat.isFile()) {
+      throw new Error(`Release input must be a regular file: ${relPath}`);
+    }
+  }
+  for (const relPath of REQUIRED_RELEASE_FILES) {
+    const destPath = path.join(buildRoot, relPath);
+    await fs.mkdir(path.dirname(destPath), { recursive: true });
+    await fs.copyFile(path.join(sourceRoot, relPath), destPath);
+  }
+}
+
+async function hardenReleaseBuild(buildRoot, { keepTestHooks = false } = {}) {
+  const marker = 'const QF_TEST_MODE = /\\b__qf_ci\\b/i.test(location.search + location.hash);';
+  const sources = [];
+  // Both page-driven content hooks and panel fake-Anki responses must be disabled.
+  // Validate both markers even for CI, so a renamed test mode cannot silently ship.
+  for (const relPath of ['content.js', 'panel.js']) {
+    const src = await fs.readFile(path.join(buildRoot, relPath), 'utf8');
+    if (src.split(marker).length !== 2) {
+      throw new Error(`build-release: expected one QF_TEST_MODE marker in ${relPath}; update scripts/build-release.js so release test hooks stay disabled.`);
+    }
+    sources.push({ relPath, src });
+  }
+  if (keepTestHooks) {
     console.log('build-release: GHOSTWRITER_BUILD_TEST_HOOKS=1 — test hooks kept (CI build, do not ship)');
     return;
   }
-  const patched = src.replace(marker, 'const QF_TEST_MODE = false; // test hooks disabled in release build');
-  await fs.writeFile(contentPath, patched);
-}
-
-async function prepareDist() {
-  if (existsSync(DIST_DIR)) {
-    await fs.rm(DIST_DIR, { recursive: true, force: true });
+  for (const { relPath, src } of sources) {
+    const patched = src.replace(marker, 'const QF_TEST_MODE = false; // test hooks disabled in release build');
+    await fs.writeFile(path.join(buildRoot, relPath), patched);
   }
-  await fs.mkdir(DIST_DIR, { recursive: true });
 }
 
 async function assertReleaseContents(buildRoot) {
-  const missing = REQUIRED_RELEASE_FILES.filter((relPath) => !existsSync(path.join(buildRoot, relPath)));
-  const forbidden = FORBIDDEN_RELEASE_PATHS.filter((relPath) => existsSync(path.join(buildRoot, relPath)));
-  if (missing.length || forbidden.length) {
+  const expected = new Set(REQUIRED_RELEASE_FILES);
+  const allowedDirectories = new Set();
+  for (const relPath of expected) {
+    let dir = path.posix.dirname(relPath);
+    while (dir !== '.') {
+      allowedDirectories.add(dir);
+      dir = path.posix.dirname(dir);
+    }
+  }
+  const found = new Set();
+  const unexpected = [];
+  async function inspect(dir, prefix = '') {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory() && allowedDirectories.has(relPath)) {
+        await inspect(path.join(dir, entry.name), relPath);
+      } else if (entry.isFile() && expected.has(relPath)) {
+        found.add(relPath);
+      } else {
+        unexpected.push(relPath);
+      }
+    }
+  }
+  await inspect(buildRoot);
+  const missing = REQUIRED_RELEASE_FILES.filter((relPath) => !found.has(relPath));
+  if (missing.length || unexpected.length) {
     throw new Error([
       'Release contents check failed.',
       missing.length ? `Missing required files: ${missing.join(', ')}` : '',
-      forbidden.length ? `Forbidden files present: ${forbidden.join(', ')}` : ''
+      unexpected.length ? `Unexpected paths: ${unexpected.join(', ')}` : ''
     ].filter(Boolean).join(' '));
   }
 }
 
-function buildMathJaxBundle() {
-  execSync('npx webpack', { cwd: ROOT, stdio: 'inherit' });
+async function createReleaseArchive(buildRoot, zipPath) {
+  await assertReleaseContents(buildRoot);
+  await fs.rm(zipPath, { force: true });
+  execFileSync('zip', ['-qr', zipPath, '.'], { cwd: buildRoot, stdio: 'inherit' });
 }
 
-async function build() {
-  const buildRoot = path.join(DIST_DIR, 'ghostwriter');
-  await copyDir(ROOT, buildRoot, EXCLUDES);
-  await hardenReleaseBuild(buildRoot);
-  await assertReleaseContents(buildRoot);
-
-  const zipPath = path.join(DIST_DIR, 'ghostwriter.zip');
-  if (existsSync(zipPath)) {
-    await fs.rm(zipPath, { force: true });
-  }
-  execSync(`zip -r "${zipPath}" .`, { cwd: buildRoot, stdio: 'inherit' });
+async function build({
+  sourceRoot = ROOT,
+  distDir = path.join(sourceRoot, 'dist'),
+  // CI explicitly opts in to exercise the same built artifact via test hooks.
+  keepTestHooks = process.env.GHOSTWRITER_BUILD_TEST_HOOKS === '1'
+} = {}) {
+  await fs.rm(distDir, { recursive: true, force: true });
+  const buildRoot = path.join(distDir, 'ghostwriter');
+  await copyReleaseFiles(sourceRoot, buildRoot);
+  await hardenReleaseBuild(buildRoot, { keepTestHooks });
+  const zipPath = path.join(distDir, 'ghostwriter.zip');
+  await createReleaseArchive(buildRoot, zipPath);
+  return { buildRoot, zipPath };
 }
 
 async function main() {
-  buildMathJaxBundle();
-  await prepareDist();
+  // Use the installed webpack directly; a release build must not fetch a missing tool.
+  execFileSync(process.execPath, [path.join(ROOT, 'node_modules/webpack/bin/webpack.js')], {
+    cwd: ROOT,
+    stdio: 'inherit'
+  });
   await build();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+module.exports = {
+  RELEASE_SOURCE_FILES,
+  GENERATED_RELEASE_FILES,
+  REQUIRED_RELEASE_FILES,
+  copyReleaseFiles,
+  hardenReleaseBuild,
+  assertReleaseContents,
+  createReleaseArchive,
+  build
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
+}

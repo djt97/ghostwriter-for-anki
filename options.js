@@ -183,6 +183,10 @@ const FREE_TIER_LIMIT = 100;
 const UPDATE_NOTICE_KEY = "ghostwriter_update_notice_v2";
 const SHORTCUT_COACH_KEY = "ghostwriter_onboarding_v1";
 const PERMISSION_JUSTIFICATIONS = {
+	  tabs: {
+	    reason:
+	      "Reads the active tab title and URL when an explicit Source control needs them and activeTab access is unavailable. Requested only from that Source control.",
+	  },
 	  clipboardRead: {
 	    reason:
 	      "Reads clipboard text to populate the Source field in Clipboard Source mode, or as Auto Source fallback when no page selection is available. This optional permission is requested from explicit Source controls.",
@@ -329,6 +333,104 @@ async function dismissUpdateNotice() {
   } catch {}
   const noticeEl = document.querySelector("#updateNotice");
   if (noticeEl) noticeEl.hidden = true;
+}
+
+async function stage2RecoveryRequest(type) {
+  const response = await chrome.runtime.sendMessage({ type });
+  if (!response?.ok) throw new Error(response?.error || "Recovery data is unavailable.");
+  return response;
+}
+
+async function renderPageSourceAccess() {
+  const button = document.querySelector("#allowPageSourceAccess");
+  const status = document.querySelector("#pageSourceAccessStatus");
+  if (!button || !status) return;
+  try {
+    const granted = await chrome.permissions.contains({ permissions: ["tabs"] });
+    button.hidden = granted;
+    status.textContent = granted ? "Active tab title and URL access is allowed." : "Tab access has not been granted. Allow it only when you need page source metadata.";
+  } catch {
+    status.textContent = "Could not check tab access. You can still open Ghostwriter from its toolbar button or shortcut.";
+  }
+}
+
+function requestPageSourceAccess() {
+  // Keep the native request in the actual click callback, before any awaited work.
+  const button = document.querySelector("#allowPageSourceAccess");
+  const status = document.querySelector("#pageSourceAccessStatus");
+  let request;
+  try {
+    request = chrome.permissions.request({ permissions: ["tabs"] });
+  } catch (err) {
+    if (status) status.textContent = err?.message || "Chrome could not request page source access.";
+    return Promise.resolve(false);
+  }
+  if (button) button.disabled = true;
+  return Promise.resolve(request).then((granted) => {
+    if (button) button.hidden = Boolean(granted);
+    if (status) status.textContent = granted
+      ? "Active tab title and URL access is allowed. Return to the editor and retry Source."
+      : "Page source access was not granted. You can keep writing, use the toolbar shortcut, or retry this button.";
+    return Boolean(granted);
+  }).catch((err) => {
+    if (status) status.textContent = err?.message || "Chrome could not request page source access. You can retry this button.";
+    return false;
+  }).finally(() => { if (button) button.disabled = false; });
+}
+
+async function renderStage2Recovery() {
+  const section = document.querySelector("#stage2Recovery");
+  if (!section) return;
+  try {
+    const { status } = await stage2RecoveryRequest("ghostwriter:stage2Status");
+    const hasLegacyData = status?.hasBackup || status?.legacyKeys?.length || status?.uploadedImageCount;
+    section.hidden = Boolean(status?.complete && !hasLegacyData && !status?.uploadedImageError);
+    const message = document.querySelector("#stage2RecoveryMessage");
+    if (message) message.textContent = [status?.message || "Your previous queue data remains local.", status?.uploadedImageError].filter(Boolean).join(" ");
+    const exportButton = document.querySelector("#exportStage2Recovery");
+    if (exportButton) exportButton.disabled = !hasLegacyData;
+    const retryButton = document.querySelector("#retryStage2Recovery");
+    if (retryButton) retryButton.hidden = Boolean(status?.complete);
+  } catch (err) {
+    section.hidden = false;
+    const message = document.querySelector("#stage2RecoveryMessage");
+    if (message) message.textContent = err?.message || "Could not check recovery data.";
+  }
+}
+
+async function exportStage2Recovery() {
+  const result = document.querySelector("#stage2RecoveryResult");
+  try {
+    const { backup } = await stage2RecoveryRequest("ghostwriter:stage2Export");
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ghostwriter-recovery-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (result) result.textContent = "Recovery download started. This file contains saved card text and images.";
+  } catch (err) {
+    if (result) result.textContent = err?.message || "Could not export recovery data.";
+  }
+}
+
+async function retryStage2Recovery() {
+  const result = document.querySelector("#stage2RecoveryResult");
+  const button = document.querySelector("#retryStage2Recovery");
+  if (button) button.disabled = true;
+  try {
+    const { status } = await stage2RecoveryRequest("ghostwriter:stage2Retry");
+    if (result) result.textContent = status?.message || "Recovery data checked.";
+    await renderStage2Recovery();
+    await renderUpdateNotice();
+  } catch (err) {
+    if (result) result.textContent = err?.message || "Cleanup paused. Your previous data remains local.";
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function applyOptionsViewMode(mode) {
@@ -1032,7 +1134,7 @@ async function save() {
     copilotTimeoutMs: Math.max(1000, timeoutSec * 1000),
     nativeAiEnabled: nativeAiPreferences.nativeAiEnabled,
     nativeAiHostedFallback: nativeAiPreferences.nativeAiHostedFallback,
-    showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "on"),
+    showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "off"),
     showSourceModePill: !!$("#showSourceModePill")?.checked,
     showShortcutHints: document.querySelector("#showShortcutHints")?.checked !== false,
     contentFont: document.querySelector("#contentFont")?.value === "sans" ? "sans" : "serif",
@@ -1162,7 +1264,7 @@ async function load() {
   document.querySelector("#copilotMinIntervalMs").value = String(opts.copilotMinIntervalMs ?? D.copilotMinIntervalMs ?? 1200);
   document.querySelector("#copilotTimeoutSec").value = String(Math.round((opts.copilotTimeoutMs ?? D.copilotTimeoutMs ?? 30000) / 1000));
   document.querySelector("#showMiniCopilotMode").value = normalizeMiniCopilotMode(
-    opts.showMiniCopilotMode ?? D.showMiniCopilotMode ?? "on"
+    opts.showMiniCopilotMode ?? D.showMiniCopilotMode ?? "off"
   );
   const pill = document.querySelector("#showSourceModePill");
   if (pill) pill.checked = opts.showSourceModePill !== false;
@@ -1659,6 +1761,13 @@ document.addEventListener("DOMContentLoaded", () => {
   initOptionsNavigation();
   window.GHOSTWRITER_NATIVE_AI_OPTIONS?.init?.();
   renderUpdateNotice();
+  renderStage2Recovery();
+  renderPageSourceAccess();
+  document.querySelector("#allowPageSourceAccess")?.addEventListener("click", requestPageSourceAccess);
+  chrome.permissions.onAdded?.addListener(renderPageSourceAccess);
+  chrome.permissions.onRemoved?.addListener(renderPageSourceAccess);
+  document.querySelector("#exportStage2Recovery")?.addEventListener("click", exportStage2Recovery);
+  document.querySelector("#retryStage2Recovery")?.addEventListener("click", retryStage2Recovery);
   const dismissNotice = document.querySelector("#dismissUpdateNotice");
   if (dismissNotice) dismissNotice.addEventListener("click", (e) => {
     e.preventDefault();

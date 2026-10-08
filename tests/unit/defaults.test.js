@@ -88,8 +88,8 @@ describe('defaults.js', () => {
       assert.equal(DEFAULTS.copilotBackMaxTokens, 30);
     });
 
-    it('showMiniCopilotMode defaults to "on" so the Suggest button is visible', () => {
-      assert.equal(DEFAULTS.showMiniCopilotMode, 'on');
+    it('showMiniCopilotMode defaults to "off" for shortcut-based editing', () => {
+      assert.equal(DEFAULTS.showMiniCopilotMode, 'off');
     });
 
     it('ankiBaseUrl defaults to localhost:8765', () => {

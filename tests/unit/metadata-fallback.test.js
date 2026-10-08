@@ -3,9 +3,39 @@ const assert = require('node:assert/strict');
 
 const {
   classifyDomainTags,
+  getMetadataHostname,
+  metadataTextForAI,
   normalizeTagToken,
   sanitizeAiSuggestedTags,
 } = require('../../metadata-fallback.js');
+
+describe('automatic metadata site privacy', () => {
+  it('reduces web URLs to hostname without credentials, port, path, query or fragment', () => {
+    const url = 'https://user:secret@WWW.Example.test:8443/private/account?token=fixture#:~:text=private-selection';
+    assert.equal(getMetadataHostname(url), 'www.example.test');
+    assert.equal(getMetadataHostname('http://[::1]:8765/private?key=fixture#part'), '[::1]');
+    assert.equal(getMetadataHostname('https://café.fr/private'), 'xn--caf-dma.fr');
+  });
+
+  it('fails closed for invalid URLs and non-web schemes', () => {
+    for (const url of [null, undefined, {}, 123, '', 'example.test/private', '//example.test/private',
+      'https://', 'https://bad host/private', 'about:blank', 'file:///private/fixture.pdf',
+      'chrome://settings', 'chrome-extension://fixture/panel.html', 'data:text/plain,fixture',
+      'javascript:alert(1)', 'ftp://example.test/private', 'blob:https://example.test/private']) {
+      assert.equal(getMetadataHostname(url), '');
+    }
+  });
+
+  it('keeps harvested descriptive text but removes full URLs embedded in it', () => {
+    assert.equal(metadataTextForAI('Reading https://user:secret@example.test:8443/private?token=fixture#:~:text=selection today'),
+      'Reading example.test today');
+    assert.equal(metadataTextForAI('See https://a.test/private and http://b.test/secret'), 'See a.test and b.test');
+    assert.equal(metadataTextForAI('A title: with useful punctuation'), 'A title: with useful punctuation');
+    assert.equal(metadataTextForAI('file:///private/fixture.pdf'), '');
+    assert.equal(metadataTextForAI('about:blank'), '');
+    assert.equal(metadataTextForAI({ url: 'https://example.test/private' }), '');
+  });
+});
 
 describe('deterministic metadata fallback', () => {
   it('classifies an unambiguous AI card into the existing controlled taxonomy', () => {

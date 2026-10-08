@@ -124,8 +124,8 @@ describe('copilot fact picker', () => {
 
   it('drops the picker on every editor-reset path (no cross-card contamination)', () => {
     assert.match(extractFunction(panelJs, 'resetCopilotLocks'), /hideCopilotFactPicker\(\)/);
-    assert.match(extractFunction(panelJs, 'clearEditorFields'), /hideCopilotFactPicker\(\)/);
-    assert.match(extractFunction(panelJs, 'renderEditor'), /hideCopilotFactPicker\(\)/);
+    assert.match(extractFunction(panelJs, 'clearFrontBackFields'), /resetCopilotLocks\(\)/);
+    assert.match(extractFunction(panelJs, 'addCurrentCardToAnki'), /hideCopilotFactPicker\(\)/);
   });
 
   it('never persists an empty/failed extraction and dedupes concurrent calls', () => {

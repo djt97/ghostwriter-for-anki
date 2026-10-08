@@ -279,7 +279,7 @@ function isLikelyMobileDevice() {
 
 function focusFrontAtEnd() {
   const el = document.querySelector("#front");
-  if (!el || hasPendingTriageCards()) return;
+  if (!el) return;
 
   // On likely mobile/touch devices, avoid auto-focusing to prevent zoom-on-focus
   if (isLikelyMobileDevice()) return;
@@ -336,8 +336,7 @@ async function anki(action, params = {}) {
 
   try {
     if (action !== "requestPermission" && !ankiSessionCache.permissionGranted) {
-      await sendAnkiConnectRequest("requestPermission");
-      ankiSessionCache.permissionGranted = true;
+      await anki("requestPermission");
     }
 
     if (action === "requestPermission" && ankiSessionCache.permissionGranted) {
@@ -356,7 +355,17 @@ async function anki(action, params = {}) {
     }
 
     const result = await sendAnkiConnectRequest(action, params);
-    if (action === "requestPermission") ankiSessionCache.permissionGranted = true;
+    if (action === "requestPermission") {
+      if (result?.permission !== "granted") {
+        const denied = result?.permission === "denied";
+        throw Object.assign(new Error(denied
+          ? "Anki denied the connection. In Anki, allow Ghostwriter when AnkiConnect asks, or add this extension to AnkiConnect's webCorsOriginList."
+          : "AnkiConnect did not confirm permission. Check that AnkiConnect is up to date, then try again."), {
+          name: "AnkiConnectError", kind: "refused", raw: denied ? "permission denied" : "invalid permission response",
+        });
+      }
+      ankiSessionCache.permissionGranted = true;
+    }
     if (invalidatesAnkiSetupCache(action)) clearAnkiSessionCache({ keepPermission: true });
     return result;
   } catch (err) {
@@ -467,7 +476,8 @@ async function getPageContext() {
       sourceLabel: "",
     };
   }
-  const fallback = emptyPageContextFromTab(tab);
+  const fallback = { ...emptyPageContextFromTab(tab), needsTabPermission: !tab.url };
+  updatePageSourcePermissionUI(fallback);
   if (!canRequestTabPageContext(tab)) {
     return fallback;
   }
@@ -2034,7 +2044,6 @@ const copilot = {
   pageCtx: null,
   prompts: { front: null, back: null, frontFromBack: null, cloze: null },
   _userPromptBuilder: null,
-  manualOnly: (window.GHOSTWRITER_DEFAULTS || {}).manualCopilotOnly !== false,
   triggerShortcut: (window.GHOSTWRITER_DEFAULTS || {}).copilotShortcut || "Cmd+Shift+X",
   triggerShortcutSpec: null,
   // tuning (defaults; overridden by options)
@@ -2045,8 +2054,6 @@ const copilot = {
   minIntervalMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotMinIntervalMs || 1200,
   timeoutMs: (window.GHOSTWRITER_DEFAULTS || {}).copilotTimeoutMs || 30000,
   pauseUntil: 0,
-  frontDebounceMs: 650,
-  backDebounceMs: 450,
   frontMinChars: 6,
   backMinChars: 2,
   _lastAt: 0,
@@ -2084,8 +2091,6 @@ const COPILOT_ABORT_TIMEOUT = "ghostwriter-copilot-timeout";
 const COPILOT_ABORT_EARLY_STOP = "ghostwriter-copilot-early-stop";
 
 copilot.autoFillBack = true; // default behavior: fill Back when Front is accepted
-copilot.backCooldownMs = 1500;      // min time between back drafts while typing front
-copilot._lastBackAt = 0;
 copilot.locks = { frontAccepted: false, backAccepted: false, allSuspended: false };
 
 function renderPromptTemplate(template) {
@@ -2793,6 +2798,7 @@ async function seedCopilotPageContext() {
     applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
   }
   refreshDebugSource();
+  updatePageSourcePermissionUI(liveCtx);
 }
 
 // Listen for overlay push (content.js posts this to the panel iframe)
@@ -2859,7 +2865,7 @@ window.addEventListener("message", async (event) => {
     resetCopilotLocks();
     setCopilotStatus("Copilot ready.");
   }
-  if (type === "quickflash:queueCurrentCard") {
+  if (type === "quickflash:addCurrentCard") {
     if (!sameOriginMessage) return;
     await addToAnki();
   }
@@ -2940,7 +2946,6 @@ function showLiteFallbackToast(message = "Used lite fallback") {
 
 function cancelCopilotRequests() {
   for (const state of copilot.fields.values()) {
-    if (state.timer) { clearTimeout(state.timer); state.timer = null; }
     if (state.controller) { abortCopilotController(state.controller); state.controller = null; }
     clearSuggestionUI(state, { removeClasses: true, mirrorValue: state.textarea?.value || "" });
     if (state.workingEl) {
@@ -2975,29 +2980,12 @@ function setCopilotEnabled(nextEnabled, { persist = false } = {}) {
 
   if (!enabled) {
     cancelCopilotRequests();
-    setCopilotStatus("Copilot autocomplete off. Exact source assists remain available.");
+    setCopilotStatus("Copilot Suggest off. Exact source assists remain available.");
   } else if (!copilot.apiConfigured) {
     cancelCopilotRequests();
     setCopilotStatus("Exact source assists remain available. Connect a provider or enable Chrome AI in Settings.");
   } else {
-    if (copilot.manualOnly) {
-      setCopilotStatus(`Manual Copilot autocomplete: press ${formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut} or Suggest`);
-    } else {
-      setCopilotStatus("Copilot ready.");
-      try {
-        const msg = `front ≤${copilot.frontWordCap}w/${copilot.frontMaxTokens}t • back ≤${copilot.backWordCap}w • ≥${copilot.minIntervalMs}ms`;
-        if (!copilot.lastStatus || /ready\.$/i.test(copilot.lastStatus)) {
-          setCopilotStatus(`Copilot ready (${msg}).`);
-        }
-      } catch {}
-    }
-    if (!copilot.manualOnly) {
-      for (const state of copilot.fields.values()) {
-        if (state.textarea?.value.trim()) {
-          scheduleCopilot(state, { delay: 200, force: true });
-        }
-      }
-    }
+    setCopilotStatus(`Ready: press ${formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut} or Suggest`);
   }
 
   if (persist) {
@@ -5319,15 +5307,7 @@ function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
   return lines.join("\n");
 }
 
-function maybeRequestBackDraft(frontForBack) {
-  if (copilot.manualOnly) return;
-  if (!frontForBack) return;
-  const now = Date.now();
-  const okByTime = now - (copilot._lastBackAt || 0) >= copilot.backCooldownMs;
-  if (!okByTime) return;
-  copilot._lastBackAt = now;
-  requestBackDraftFromFront(frontForBack);
-}
+
 
 function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = false } = {}) {
   const backState = copilot.fields.get("back");
@@ -5347,7 +5327,6 @@ function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = fal
 
   abortCopilotController(backState.controller);
   backState.controller = null;
-  if (backState.timer) { clearTimeout(backState.timer); backState.timer = null; }
   resetRejectedCopilotDraft(backState);
   backState.suggestion = suggestion;
   backState._sourceSplitOwnedByFront = true;
@@ -5371,7 +5350,7 @@ function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = fal
 }
 
 async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
-  if (copilot.manualOnly && !force) return;
+  if (!force) return;
   // Cloze cards carry their answer inside {{c1::...}}; don't auto-draft a Q&A "back".
   if (isClozeCopilotActive(frontForBack)) return;
   const backState = copilot.fields.get("back");
@@ -5620,7 +5599,6 @@ function applyCopilotSuggestion(state, { allowRejected = false } = {}) {
   }
   state.lastValue = area.value.trim();
   if (state.controller) { abortCopilotController(state.controller); state.controller = null; }
-  if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   state.suggestion = "";
   resetRejectedCopilotDraft(state);
   clearStemSplitUI(state);
@@ -6091,7 +6069,6 @@ function rejectCopilotSuggestion(state, { skipSourcePair = false } = {}) {
   const rejectOwningFront = !skipSourcePair && state.fieldId === "back" && !!state._sourceSplitOwnedByFront;
   abortCopilotController(state.controller);
   state.controller = null;
-  if (state.timer) { clearTimeout(state.timer); state.timer = null; }
   state.suggestion = "";
   resetRejectedCopilotDraft(state);
   clearStemSplitUI(state);
@@ -6139,18 +6116,7 @@ function clearFrontBackFields() {
   setCopilotStatus("Cleared.", false);
 }
 
-function scheduleCopilot(state, { delay = 600, force = false } = {}) {
-  if (!copilot.enabled) return;
-  if (copilot.manualOnly) return;
-  if (copilot.locks.allSuspended) return;
-  if (state.fieldId === "front" && copilot.locks.frontAccepted && !force) return;
-  const dflt = state.fieldId === "front" ? copilot.frontDebounceMs : copilot.backDebounceMs;
-  const ms = typeof delay === "number" ? delay : dflt;
-  if (state.timer) clearTimeout(state.timer);
-  state.timer = setTimeout(() => {
-    requestCopilot(state, { force });
-  }, ms);
-}
+
 
 // A suggestion that arrives after the user kept typing was written for older text: showing it
 // would let Tab insert a completion that no longer fits.
@@ -6161,8 +6127,7 @@ function dropSuggestionAfterUserEdit(state) {
 }
 
 async function requestCopilot(state, { force = false, withOther = false, localOnly = false } = {}) {
-  if (state.timer) { clearTimeout(state.timer); state.timer = null; }
-  if (copilot.manualOnly && !force) return;
+  if (!force) return;
   if (copilot.locks.allSuspended && !force) return;
   if (state.fieldId === "front" && copilot.locks.frontAccepted && !force) return;
   if (!copilot.enabled && !force) return;
@@ -6491,8 +6456,6 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
           // comes back empty — never silently drop the user's intent behind cooldowns.
           copilot._skipRateLimit = true;
           requestBackDraftFromFront(frontForBack, { force: true });
-        } else {
-          maybeRequestBackDraft(frontForBack);
         }
       }
       // "Several facts" is only true when nothing was generated at all. A guard suppression has a
@@ -6546,8 +6509,6 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       if (withOther && backIsBlank && frontForBack) {
         copilot._skipRateLimit = true; // bypass local limiter for speed
         requestBackDraftFromFront(frontForBack, { force: true }); // already passes Front + Source + Notes
-      } else {
-        maybeRequestBackDraft(frontForBack);
       }
     } else if (state.fieldId === "back" && withOther) {
       const frontBlank = !((document.querySelector("#front")?.value || "").trim());
@@ -6694,7 +6655,6 @@ function setupCopilotField(fieldId) {
     hintEl,
     acceptBtn,
     refreshBtn,
-    timer: null,
     controller: null,
     lastValue: "",
     suggestion: "",
@@ -6742,12 +6702,6 @@ function setupCopilotField(fieldId) {
       state.ghostEl.hidden = true;
       if (state.ghostTextEl) state.ghostTextEl.textContent = "";
     }
-    const baseDelay = state.fieldId === "front" ? copilot.frontDebounceMs : copilot.backDebounceMs;
-    if (copilot.enabled) scheduleCopilot(state, { delay: baseDelay });
-  });
-  textarea.addEventListener("focus", () => {
-    if (!copilot.enabled) return;
-    if (textarea.value.trim()) scheduleCopilot(state, { delay: 300, force: true });
   });
   textarea.addEventListener("blur", () => {
     if (!textarea.value.trim()) {
@@ -6792,9 +6746,6 @@ function setupCopilotField(fieldId) {
     });
   }
 
-  if (fieldId !== "back" && copilot.enabled && textarea.value.trim()) {
-    scheduleCopilot(state, { delay: 400, force: true });
-  }
 }
 
 async function configureCopilotModelBackend(opts = {}) {
@@ -6855,7 +6806,6 @@ async function initCopilot() {
     };
     copilot.showSourceModePill = opts.showSourceModePill !== false;
     const D = window.GHOSTWRITER_DEFAULTS || {};
-    copilot.manualOnly = opts.manualCopilotOnly ?? D.manualCopilotOnly ?? true;
     const shortcut = typeof opts.copilotShortcut === "string" ? opts.copilotShortcut.trim() : "";
     copilot.triggerShortcut = shortcut || D.copilotShortcut || "Cmd+Shift+X";
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut) || parseShortcutSpec("Cmd+Shift+X");
@@ -6871,7 +6821,6 @@ async function initCopilot() {
 	    copilot.provider = "openai";
     copilot.enabled = false;
     copilot.prompts = { front: null, back: null, frontFromBack: null, cloze: null };
-    copilot.manualOnly = false;
     copilot.triggerShortcut = "Cmd+Shift+X";
     copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut);
     copilot.backMaxTokens = 30;
@@ -6905,7 +6854,6 @@ async function initCopilot() {
           frontFromBack: basePromptDefaults.frontFromBack || null,
           cloze: basePromptDefaults.cloze || null,
         };
-        copilot.manualOnly = next.manualCopilotOnly !== false;
         const nextShortcut = typeof next.copilotShortcut === "string" ? next.copilotShortcut.trim() : "";
         copilot.triggerShortcut = nextShortcut || "Cmd+Shift+X";
         copilot.triggerShortcutSpec = parseShortcutSpec(copilot.triggerShortcut) || parseShortcutSpec("Cmd+Shift+X");
@@ -6931,231 +6879,15 @@ async function initCopilot() {
   }
 }
 
-// ------- JSON triage import -------
-const outbox = { cards: [], lastSend: { noteIds: [], cards: [] } };
-const triage = {
-  cards: [],
-  i: 0,
-  accepted: [],
-  skipped: [],
-  fingerprints: new Set(),
-  deck: null,
-};
-const TRIAGE_UNDO_LIMIT = 50;
-const triageUndoStack = [];
-
-const triageFooter = document.getElementById('triageFooter');
-const triageMetaEl = document.getElementById('triageMeta');
-const editorStatusEl = document.getElementById('editorStatus');
-const editorNavButtons = document.getElementById('editorNavButtons');
-const triageResumeBtn = document.getElementById('triageResume');
-const triageFooterPrev = document.getElementById('triageFooterPrev');
-const triageFooterNext = document.getElementById('triageFooterNext');
-const triagePrevBtn = document.getElementById('triagePrev');
-const triageNextBtn = document.getElementById('triageNext');
-const triageToolbar = document.getElementById('triageToolbar');
-const triageToolbarPrev = document.getElementById('triageToolbarPrev');
-const triageToolbarNext = document.getElementById('triageToolbarNext');
-const triageToolbarAccept = document.getElementById('triageToolbarAccept');
-const triageToolbarSkip = document.getElementById('triageToolbarSkip');
-
-let triageActive = false; // "triage keyboard mode" on/off
-let triageHintShown = false;
-
-function isProbablyMobileViewport() {
-  const view = (document.documentElement.dataset && document.documentElement.dataset.editorView) ||
-               document.documentElement.getAttribute("data-editor-view") ||
-               "";
-  if (view === "mobile") return true;
-  if (view === "desktop") return false;
-  const w = window.innerWidth || document.documentElement.clientWidth || 0;
-  return w <= 720;
-}
-
-async function maybeShowTriageHintOnce() {
-  if (triageHintShown) return;
-  if (!isProbablyMobileViewport()) return;
-  const hintEl = document.getElementById("triageHint");
-  const dismissBtn = document.getElementById("triageHintDismiss");
-  if (!hintEl || !dismissBtn) return;
-
-  const prefs = await loadManualPrefs();
-  if (prefs && prefs.triageHintSeen) {
-    triageHintShown = true;
-    return;
-  }
-
-  hintEl.hidden = false;
-  triageHintShown = true;
-
-  dismissBtn.addEventListener("click", async () => {
-    hintEl.hidden = true;
-    await saveManualPrefs({ triageHintSeen: true });
-  }, { once: true });
-}
-
-function hasTriageQueue() {
-  return Array.isArray(triage.cards) && triage.cards.length > 0;
-}
-
-function isTextField(el) {
-  if (!el) return false;
-  if (el.isContentEditable) return true;
-  if (el.tagName === 'TEXTAREA') return true;
-
-  if (el.tagName === 'INPUT') {
-    const type = (el.type || '').toLowerCase();
-    return [
-      'text', 'search', 'url', 'email',
-      'number', 'password', 'tel'
-    ].includes(type);
-  }
-  return false;
-}
-
-function setTriageActive(on) {
-  const hasPending = hasPendingTriageCards();
-  const wantOn = !!on && hasTriageQueue() && hasPending;
-  const typing = isTextField(document.activeElement);
-  const next = wantOn && !typing;
-  if (wantOn) triageState.active = true;
-  else triageState.active = false;
-  triageActive = next;
-
-  document.body.dataset.triageActive = next ? "true" : "false";
-
-  if (triageToolbar) {
-    triageToolbar.hidden = !next;
-  }
-  if (triageFooter) {
-    triageFooter.hidden = !next;
-  }
-
-  updateTriageUI();
-  updateShortcutCoach();
-}
-
-const triageState = {
-  active: false,
-  index: 0,
-  total: 0,
-};
-
-function isTriageModeActive() {
-  return triageState.active && hasTriageQueue();
-}
-
-function syncTriageState({ activateIfCards = false } = {}) {
-  const wasActive = triageState.active;
-  triageState.total = triage.cards.length;
-  triageState.index = triageState.total ? Math.min(triage.i, triageState.total - 1) : 0;
-  if (triageState.total === 0) {
-    triageState.active = false;
-    setTriageActive(false);
-    return;
-  } else if (activateIfCards) {
-    triageState.active = true;
-  } else {
-    triageState.active = triageState.active && triageState.total > 0;
-  }
-  if (triageState.active && activateIfCards && (!triageActive || !wasActive)) {
-    setTriageActive(true);
-    return;
-  }
-  updateTriageUI();
-}
-
-function updateTriageUI() {
-  const { index, total } = triageState;
-  const pending = triage.cards.filter((c) => getCardReviewStatus(c) === "pending").length;
-  const flagged = outbox.cards.filter((c) => c._duplicateState === "possible" && !c.allowDuplicate).length;
-  const hasQueue = hasTriageQueue();
-  const triageOn = triageActive && hasQueue;
-
-  // Body flags for CSS styling
-  document.body.dataset.triageActive = triageOn ? "true" : "false";
-  if (hasQueue && pending > 0 && !triageOn) document.body.dataset.triagePaused = "true";
-  else delete document.body.dataset.triagePaused;
-
-  // Footer + nav buttons are only useful when there is something to triage
-  const disableNav = total <= 1 || pending === 0;
-  if (triageFooter) triageFooter.hidden = !triageOn;
-  if (editorNavButtons) editorNavButtons.hidden = !triageOn || disableNav;
-  if (triagePrevBtn) triagePrevBtn.disabled = disableNav || !triageOn;
-  if (triageNextBtn) triageNextBtn.disabled = disableNav || !triageOn;
-  if (triageFooterPrev) triageFooterPrev.disabled = disableNav || !triageOn;
-  if (triageFooterNext) triageFooterNext.disabled = disableNav || !triageOn;
-
-  // Compact triage toolbar between Front & Back (mainly for mobile view)
-  if (triageToolbar) {
-    triageToolbar.hidden = !triageOn;
-    const navDisabled = disableNav || !triageOn;
-    if (triageToolbarPrev) triageToolbarPrev.disabled = navDisabled;
-    if (triageToolbarNext) triageToolbarNext.disabled = navDisabled;
-
-    const noPending = !triageOn || pending === 0;
-    if (triageToolbarAccept) triageToolbarAccept.disabled = noPending;
-    if (triageToolbarSkip) triageToolbarSkip.disabled = noPending;
-  }
-
-  // Status line: show both "mode" and whether shortcuts are live
-  if (editorStatusEl) {
-    if (triageOn) {
-      editorStatusEl.textContent = "Review mode – shortcuts on";
-    } else {
-      editorStatusEl.textContent = "Card details";
-    }
-  }
-
-  let metaText = "";
-  if (triageOn && pending > 0 && total) {
-    metaText = `Pending ${pending} | Accepted ${triage.accepted.length} | Rejected ${triage.skipped.length} | Card ${index + 1}/${total}`;
-    if (flagged) metaText += ` | Outbox dup flagged ${flagged}`;
-  } else if (triageOn && total && pending === 0) {
-    metaText = `Review complete · Accepted ${triage.accepted.length} · Rejected ${triage.skipped.length}`;
-    if (flagged) metaText += ` · Outbox dup flagged ${flagged}`;
-  }
-  if (triageMetaEl) triageMetaEl.textContent = metaText;
-
-  if (triageResumeBtn) {
-    triageResumeBtn.hidden = true;
-  }
-  // First‑time mobile triage hint
-  if (triageOn) {
-    // Fire and forget; we only care that it runs at least once
-    maybeShowTriageHintOnce();
-  }
-
-  updateCompactCopilotVisibility?.();
-}
-
-function resumeTriage() {
-  if (!triage.cards.length) return;
-  triageState.active = true;
-  triage.i = Math.min(triage.i, triage.cards.length - 1);
-  setTriageActive(true);
-  renderEditor();
-}
-
-const STORAGE_KEYS = {
-  triage: "quickflash_triage_v1",
-  outbox: "quickflash_outbox_v1",
-  metrics: "ghostwriter_metrics_v1",
-};
-
-const ARCHIVE_KEY = "quickflash_archive_v1";
-const ARCHIVE_BACKUP_KEY = "quickflash_archive_backup_v1";
+const STORAGE_KEYS = { metrics: "ghostwriter_metrics_v1" };
 
 const MANUAL_PREFS_KEY = "quickflash_manualPrefs_v1";
 const MANUAL_DRAFT_KEY = "quickflash_manual_draft_v1";
 const SHORTCUT_COACH_KEY = "ghostwriter_onboarding_v1";
 const IMAGE_STORE_KEY = "quickflash_image_store_v1";
-const DEFAULT_QUEUE_SHORTCUT = "Meta+Shift+A";
+const DEFAULT_ADD_SHORTCUT = "Meta+Shift+A";
 const AI_SOURCE_MAX_INPUT_TOKENS = 1500;
 
-let pageContextCache = null;
-const preflightTimers = new Map();
-let activeModal = null;
 
 let manualPrefsCache = null;
 let addShortcutConfig = null;
@@ -7260,22 +6992,6 @@ function getCurrentSourceLabel() {
   return "";
 }
 
-function getReviewQueueCount() {
-  const pendingReview = triage.cards.filter((card) => {
-    const reviewStatus = getCardReviewStatus(card);
-    return reviewStatus === "pending" || reviewStatus === "accepted";
-  }).length;
-  return pendingReview + outbox.cards.length;
-}
-
-function updateOverlayQueueBadge() {
-  const badge = $("#overlayReviewBadge");
-  if (!badge) return;
-  const count = getReviewQueueCount();
-  badge.textContent = String(count);
-  badge.hidden = count <= 0;
-}
-
 function normalizeSourceDisplayMode(mode) {
   return mode === "source" ? "source" : "rendered";
 }
@@ -7368,6 +7084,7 @@ function updateOverlaySourceChrome() {
   const sourceText = ($("#source")?.value || getContextSourceText(copilot?.pageCtx) || "").trim();
   const sourceIssue = sourceText ? "" : getClipboardFallbackIssue();
   updateLongSourceNotice(sourceText);
+  if (sourceText || copilot?.pageCtx?.url) $("#allowPageSourceAccess")?.setAttribute("hidden", "");
   const preview = $("#sourcePreviewText");
   if (preview) {
     preview.textContent = sourceText
@@ -7381,7 +7098,6 @@ function updateOverlaySourceChrome() {
       || (sourceText ? "Selected source" : (sourceIssue ? "Clipboard source blocked" : "No source captured"));
     headerSource.title = sourceIssue || "";
   }
-  updateOverlayQueueBadge();
   updateCardDetailsSummary();
   updateSourceRenderedPreview().catch((err) => {
     console.warn("Source preview update failed", err);
@@ -7481,25 +7197,9 @@ function bumpMetric(metrics, key, amount = 1) {
   metrics[key] = (Number(metrics[key]) || 0) + amount;
 }
 
-function setCardReviewStatus(card, status) {
-  if (!card) return card;
-  const normalized = ["pending", "accepted", "skipped", "deleted", "sent"].includes(status)
-    ? status
-    : "pending";
-  card.review_status = normalized;
-  if (normalized === "pending") delete card._status;
-  else card._status = normalized;
-  return card;
-}
 
-function getCardReviewStatus(card) {
-  if (!card) return "pending";
-  if (["pending", "accepted", "skipped", "deleted", "sent"].includes(card.review_status)) {
-    return card.review_status;
-  }
-  if (["accepted", "skipped", "deleted", "sent"].includes(card._status)) return card._status;
-  return "pending";
-}
+
+
 
 function getManualDraftPayload() {
   const front = $("#front")?.value ?? "";
@@ -7522,7 +7222,6 @@ function hasManualDraftContent(payload) {
 }
 
 async function persistManualDraftFromInputs() {
-  if (isTriageActive()) return;
   const payload = getManualDraftPayload();
   try {
     if (hasManualDraftContent(payload)) {
@@ -7534,7 +7233,6 @@ async function persistManualDraftFromInputs() {
 }
 
 function scheduleManualDraftSave() {
-  if (isTriageActive()) return;
   if (manualDraftSaveTimer) clearTimeout(manualDraftSaveTimer);
   manualDraftSaveTimer = setTimeout(() => {
     manualDraftSaveTimer = null;
@@ -7549,7 +7247,6 @@ async function clearManualDraftStorage() {
 }
 
 async function restoreManualDraftFromStorage() {
-  if (triageState.active || hasTriageQueue()) return;
   try {
     const stored = await chrome.storage.local.get(MANUAL_DRAFT_KEY);
     const draft = stored?.[MANUAL_DRAFT_KEY];
@@ -7642,7 +7339,7 @@ function hasVisibleCopilotSuggestion(fieldId) {
   return false;
 }
 
-function canQueueCurrentEditorCard() {
+function canAddCurrentEditorCard() {
   const front = ($("#front")?.value || "").trim();
   const back = ($("#back")?.value || "").trim();
   if (!front) return false;
@@ -7650,7 +7347,7 @@ function canQueueCurrentEditorCard() {
 }
 
 function shortcutCoachMessageForField(fieldId) {
-  if (!fieldId || isTriageActive()) return "";
+  if (!fieldId) return "";
   if (hasVisibleCopilotSuggestion(fieldId)) {
     return "Tab to accept · Esc to dismiss";
   }
@@ -7658,14 +7355,14 @@ function shortcutCoachMessageForField(fieldId) {
   const activeValue = ($(`#${fieldId}`)?.value || "").trim();
   if (!activeValue) return "";
 
-  if (canQueueCurrentEditorCard()) {
+  if (canAddCurrentEditorCard()) {
     const addShortcut = formatShortcutSpec(addShortcutConfig);
     return addShortcut ? `Use ${addShortcut} to add card.` : "";
   }
 
   if (copilot.enabled && copilot.apiConfigured) {
     const suggestionShortcut = formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut || "";
-    return suggestionShortcut ? `Use ${suggestionShortcut} for Copilot autocomplete.` : "";
+    return suggestionShortcut ? `Use ${suggestionShortcut} for Copilot Suggest.` : "";
   }
 
   return "";
@@ -7831,8 +7528,8 @@ function applyShortcutSetting(spec) {
   const stored = parseShortcutSpec(spec);
   const isLegacyDefault = stored?.meta && stored?.shift && !stored?.ctrl && !stored?.alt && ["a", "q"].includes(stored?.key);
   const parsed = isLegacyDefault
-    ? parseShortcutSpec(DEFAULT_QUEUE_SHORTCUT)
-    : (stored || parseShortcutSpec(DEFAULT_QUEUE_SHORTCUT));
+    ? parseShortcutSpec(DEFAULT_ADD_SHORTCUT)
+    : (stored || parseShortcutSpec(DEFAULT_ADD_SHORTCUT));
   addShortcutConfig = parsed || null;
 }
 
@@ -7846,8 +7543,8 @@ function updateShortcutHelpText() {
   if (addShortcutEl) {
     addShortcutEl.textContent = text;
   }
-  const queueButtonHint = $("#queueShortcutButtonHint");
-  if (queueButtonHint) queueButtonHint.textContent = text;
+  const addButtonHint = $("#addShortcutButtonHint");
+  if (addButtonHint) addButtonHint.textContent = text;
   const copilotShortcutEl = $("#shortcutCopilot");
   if (copilotShortcutEl) {
     const spec = parseShortcutSpec(copilot.triggerShortcut);
@@ -7855,557 +7552,6 @@ function updateShortcutHelpText() {
     copilotShortcutEl.textContent = text;
   }
   updateShortcutCoach();
-}
-
-function updateOutboxMeta() {
-  const meta = $("#outboxMeta");
-  const sendBtn = $("#sendOutbox");
-  const undoBtn = $("#undoLastSend");
-  const staged = outbox.cards.length;
-  const flagged = outbox.cards.filter((c) => c._duplicateState === "possible" && !c.allowDuplicate).length;
-  const forced = outbox.cards.filter((c) => c.allowDuplicate).length;
-  const undoable = (outbox.lastSend?.noteIds?.length || 0) + (outbox.lastSend?.cards?.length || 0);
-  if (meta) {
-    let text = `${staged} card${staged === 1 ? "" : "s"} ready to send`;
-    const bits = [];
-    if (flagged) bits.push(`${flagged} dup flagged`);
-    if (forced) bits.push(`${forced} force add`);
-    if (bits.length) text += ` (${bits.join(", ")})`;
-    if (undoable) text += ` | Undoable: ${undoable}`;
-    if (triage.cards.length) {
-      const pending = triage.cards.filter((c) => getCardReviewStatus(c) === "pending").length;
-      let reviewHint = "";
-      if (pending > 0 && triageActive && triageState.active) {
-        reviewHint = `Reviewing: ${pending} pending of ${triage.cards.length}`;
-      } else if (pending > 0) {
-        reviewHint = `Paused - ${pending} card${pending === 1 ? "" : "s"} waiting for review`;
-      } else {
-        const accepted = triage.accepted.length;
-        const skipped = triage.skipped.length;
-        reviewHint = `Review complete – accepted ${accepted}, rejected ${skipped}`;
-      }
-      text += ` | ${reviewHint}`;
-    }
-    meta.textContent = text;
-  }
-  if (sendBtn) {
-    sendBtn.disabled = staged === 0;
-    sendBtn.title = staged === 0 && triage.cards.length
-      ? "Review or mark cards ready before sending to Anki."
-      : "";
-  }
-  if (undoBtn) undoBtn.disabled = !undoable;
-  updateOverlayQueueBadge();
-}
-
-function hasPendingTriageCards() {
-  return triage.cards.some((c) => getCardReviewStatus(c) === "pending");
-}
-
-function maybeCompleteTriage({ showPrompt = true } = {}) {
-  if (hasPendingTriageCards()) return;
-
-  const acceptedCount = triage.accepted.length;
-  const skippedCount = triage.skipped.length;
-
-  // End triage mode but keep cards (for undo/edit)
-  triageState.active = false;
-  setTriageActive(false);
-
-  // Re-render in manual mode (clears fields, hides footer, updates meta)
-  renderEditor();
-
-  if (!showPrompt) return;
-
-  if (acceptedCount > 0) {
-    const staged = outbox.cards.length;
-    if (staged > 0) {
-      status(
-        `Review complete: accepted ${acceptedCount} card${acceptedCount === 1 ? "" : "s"}, rejected ${skippedCount}. ` +
-        `Click "Send to Anki" when ready.`,
-        true
-      );
-    } else {
-      status(
-        `Review complete: accepted ${acceptedCount} card${acceptedCount === 1 ? "" : "s"}, rejected ${skippedCount}.`,
-        true
-      );
-    }
-  } else if (skippedCount > 0) {
-    status(
-      `Review complete: all ${skippedCount} card${skippedCount === 1 ? "" : "s"} rejected.`,
-      true
-    );
-  } else {
-    status("Review complete: no cards to send.", true);
-  }
-}
-
-function stageCardInOutbox(card, { silent } = {}) {
-  if (!card) return null;
-  const clone = cloneCard(card);
-  let idx = outbox.cards.findIndex((c) => c.id === clone.id);
-  if (idx !== -1) {
-    if (outbox.cards[idx]?.allowDuplicate) clone.allowDuplicate = true;
-    outbox.cards[idx] = clone;
-  } else {
-    outbox.cards.push(clone);
-    idx = outbox.cards.length - 1;
-  }
-  const stored = outbox.cards[idx];
-  if (stored) {
-    if (stored.allowDuplicate) stored._duplicateState = "forced";
-    else delete stored._duplicateState;
-    delete stored._duplicateError;
-  }
-  if (!silent) {
-    renderOutboxList();
-    updateOutboxMeta();
-  }
-  persistOutboxState();
-  return stored;
-}
-
-function removeFromOutbox(cardId, { silent } = {}) {
-  const idx = outbox.cards.findIndex((c) => c.id === cardId);
-  if (idx !== -1) outbox.cards.splice(idx, 1);
-  if (preflightTimers.has(cardId)) {
-    clearTimeout(preflightTimers.get(cardId));
-    preflightTimers.delete(cardId);
-  }
-  if (!silent) {
-    renderOutboxList();
-    updateOutboxMeta();
-  }
-  persistOutboxState();
-}
-
-function queueOutboxPreflight(cardId, delay = 400) {
-  if (!cardId) return;
-  if (preflightTimers.has(cardId)) {
-    clearTimeout(preflightTimers.get(cardId));
-  }
-  const handle = setTimeout(() => {
-    preflightTimers.delete(cardId);
-    const outboxCard = outbox.cards.find((c) => c.id === cardId);
-    if (outboxCard) {
-      preflightCard(outboxCard).catch((e) => console.warn("Preflight failed", e));
-    }
-  }, delay);
-  preflightTimers.set(cardId, handle);
-}
-
-function closeActiveModal() {
-  if (activeModal) {
-    activeModal.remove();
-    activeModal = null;
-  }
-}
-
-async function getNoteBuildContext({ forcePageContext } = {}) {
-  const deckSel = $("#deck");
-  const modelSel = $("#model");
-  const deckName = deckSel?.value || "All Decks";
-  const modelName = modelSel?.value || "Basic";
-  const includeBackLink = $("#includeBackLink")?.checked ?? false;
-  const fillSourceField = $("#fillSourceField")?.checked ?? false;
-
-  if (forcePageContext) pageContextCache = null;
-
-  let url = "";
-  let title = "";
-  try {
-    if (!pageContextCache) pageContextCache = await getPageContext();
-    url = pageContextCache?.url || "";
-    title = pageContextCache?.title || "";
-  } catch {
-    url = "";
-    title = "";
-  }
-
-  return { deckName, modelName, includeBackLink, fillSourceField, url, title };
-}
-
-async function preflightCard(card, { context, silent } = {}) {
-  if (!card) return;
-  const ctx = context || await getNoteBuildContext();
-  card._duplicateState = "checking";
-  delete card._duplicateError;
-  if (!silent) {
-    renderOutboxList();
-    updateOutboxMeta();
-  }
-
-  try {
-    const note = await cardToAnkiNote(
-      card,
-      ctx.deckName,
-      ctx.modelName,
-      ctx.includeBackLink,
-      ctx.url,
-      ctx.title,
-      ctx.fillSourceField
-    );
-    const result = await anki("canAddNotes", { notes: [note] });
-    const allowed = Array.isArray(result) ? !!result[0] : true;
-    if (!allowed && !card.allowDuplicate) {
-      card._duplicateState = "possible";
-    } else if (card.allowDuplicate) {
-      card._duplicateState = "forced";
-    } else {
-      card._duplicateState = "clear";
-    }
-  } catch (e) {
-    card._duplicateState = "error";
-    card._duplicateError = e.message || String(e);
-  }
-
-  if (!silent) {
-    renderOutboxList();
-    updateOutboxMeta();
-  }
-  persistOutboxState();
-}
-
-async function ensureOutboxPreflight({ force } = {}) {
-  if (!outbox.cards.length) return;
-  const context = await getNoteBuildContext();
-  for (const card of outbox.cards) {
-    if (card.allowDuplicate && !force) continue;
-    const needs =
-      force ||
-      !card._duplicateState ||
-      card._duplicateState === "error" ||
-      card._duplicateState === "checking";
-    if (needs) {
-      await preflightCard(card, { context, silent: true });
-    }
-  }
-  renderOutboxList();
-  updateOutboxMeta();
-  persistOutboxState();
-}
-
-async function compareExistingNotes(card) {
-  if (!card) return;
-  try {
-    const ctx = await getNoteBuildContext();
-    const deckName = ctx.deckName || "";
-    const front = collapseWhitespace(stripHTML(card.front || ""));
-    if (!front) {
-      status("No front text to compare.");
-      return;
-    }
-    const escapedDeck = deckName.replace(/"/g, '\\"');
-    const escapedFront = front.replace(/"/g, '\\"');
-    const queryParts = [];
-    if (deckName) queryParts.push(`deck:"${escapedDeck}"`);
-    queryParts.push(`"${escapedFront}"`);
-    const query = queryParts.join(" ");
-    const noteIds = await anki("findNotes", { query });
-    if (!Array.isArray(noteIds) || !noteIds.length) {
-      await showComparisonModal(deckName, front, []);
-      return;
-    }
-    const ids = noteIds.slice(0, 5);
-    const notes = await anki("notesInfo", { notes: ids });
-    await showComparisonModal(deckName, front, Array.isArray(notes) ? notes : []);
-  } catch (e) {
-    status(`Compare failed: ${e.message}`);
-  }
-}
-
-async function showComparisonModal(deckName, front, notes) {
-  closeActiveModal();
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  const modal = document.createElement("div");
-  modal.className = "modal";
-
-  const header = document.createElement("header");
-  const title = document.createElement("h2");
-  title.textContent = deckName ? `Matches in ${deckName}` : "Matching notes";
-  header.appendChild(title);
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.textContent = "×";
-  closeBtn.addEventListener("click", closeActiveModal);
-  header.appendChild(closeBtn);
-  modal.appendChild(header);
-
-  const body = document.createElement("div");
-  body.className = "modal-body";
-
-  const frontInfo = document.createElement("div");
-  frontInfo.className = "small";
-  frontInfo.textContent = `Front searched: ${front}`;
-  body.appendChild(frontInfo);
-
-  if (!notes || !notes.length) {
-    const empty = document.createElement("div");
-    empty.textContent = "No existing notes found.";
-    body.appendChild(empty);
-  } else {
-    for (const note of notes) {
-      const preview = document.createElement("div");
-      preview.className = "note-preview";
-      const noteDeck = document.createElement("div");
-      noteDeck.className = "small";
-      noteDeck.textContent = note.deckName ? `Deck: ${note.deckName}` : "";
-      if (noteDeck.textContent) preview.appendChild(noteDeck);
-
-      const frontValue = stripHTML(
-        (note.fields?.Front?.value) ||
-        (note.fields?.Text?.value) ||
-        ""
-      );
-      const backValue = stripHTML(
-        (note.fields?.Back?.value) ||
-        (note.fields?.Extra?.value) ||
-        ""
-      );
-
-      const frontLabel = document.createElement("div");
-      frontLabel.className = "small label";
-      frontLabel.textContent = "Front";
-      preview.appendChild(frontLabel);
-
-      const frontRow = document.createElement("iframe");
-      frontRow.className = "markdown-render preview-frame";
-      frontRow.title = "Front preview";
-      await renderPreviewElement(frontRow, frontValue || "(empty)");
-      preview.appendChild(frontRow);
-
-      const backLabel = document.createElement("div");
-      backLabel.className = "small label";
-      backLabel.textContent = "Back";
-      preview.appendChild(backLabel);
-
-      const backRow = document.createElement("iframe");
-      backRow.className = "markdown-render preview-frame";
-      backRow.title = "Back preview";
-      await renderPreviewElement(backRow, backValue || "(empty)");
-      preview.appendChild(backRow);
-
-      await hydratePreviewImages(preview);
-      typesetMath(preview);
-      body.appendChild(preview);
-    }
-  }
-
-  modal.appendChild(body);
-  overlay.appendChild(modal);
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) closeActiveModal();
-  });
-  document.body.appendChild(overlay);
-  activeModal = overlay;
-}
-
-function showOutboxSendFailureModal(detail) {
-  closeActiveModal();
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  const modal = document.createElement("div");
-  modal.className = "modal";
-
-  const header = document.createElement("header");
-  const title = document.createElement("h2");
-  title.textContent = "Send failed";
-  header.appendChild(title);
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.textContent = "×";
-  closeBtn.addEventListener("click", closeActiveModal);
-  header.appendChild(closeBtn);
-  modal.appendChild(header);
-
-  const body = document.createElement("div");
-  body.className = "modal-body";
-  const message = document.createElement("div");
-  message.textContent = "Could not send the outbox. Please check that Anki is open and AnkiConnect is active (on mobile, ensure the AnkiConnect service is running).";
-  body.appendChild(message);
-
-  if (detail) {
-    const detailEl = document.createElement("div");
-    detailEl.className = "small";
-    detailEl.textContent = `Details: ${detail}`;
-    body.appendChild(detailEl);
-  }
-
-  modal.appendChild(body);
-  overlay.appendChild(modal);
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) closeActiveModal();
-  });
-  document.body.appendChild(overlay);
-  activeModal = overlay;
-}
-
-function syncOutboxCard(card) {
-  if (!card) return;
-  const idx = outbox.cards.findIndex((c) => c.id === card.id);
-  if (idx !== -1) {
-    const updated = cloneCard(card);
-    const prev = outbox.cards[idx];
-    if (prev?.allowDuplicate) updated.allowDuplicate = true;
-    outbox.cards[idx] = updated;
-  }
-  persistOutboxState();
-}
-
-function resetTriage() {
-  triage.cards = [];
-  triage.i = 0;
-  triage.accepted = [];
-  triage.skipped = [];
-  triage.fingerprints = new Set();
-  triage.deck = null;
-  clearTriageUndoHistory();
-  triageState.active = false;
-  setTriageActive(false);
-  renderEditor();
-  persistTriageState();
-}
-
-function cloneCard(card) {
-  if (!card) return null;
-  const { _status, ...rest } = card;
-  return JSON.parse(JSON.stringify(rest));
-}
-
-function deepClone(obj) {
-  if (obj === undefined || obj === null) return obj;
-  return JSON.parse(JSON.stringify(obj));
-}
-
-async function saveTriageState() {
-  const payload = {
-    cards: triage.cards.map((card) => deepClone(card)),
-    i: triage.i,
-    acceptedIds: triage.accepted.map((c) => c.id),
-    skippedIds: triage.skipped.map((c) => c.id),
-    deck: triage.deck,
-    fingerprints: Array.from(triage.fingerprints || []),
-  };
-  try {
-    await chrome.storage.local.set({ [STORAGE_KEYS.triage]: payload });
-  } catch (e) {
-    console.warn("Failed to persist triage state", e);
-  }
-}
-
-function persistTriageState() {
-  saveTriageState();
-}
-
-async function saveOutboxState() {
-  const payload = {
-    cards: outbox.cards.map((card) => deepClone(card)),
-    lastSend: {
-      noteIds: Array.isArray(outbox.lastSend?.noteIds) ? [...outbox.lastSend.noteIds] : [],
-      cards: Array.isArray(outbox.lastSend?.cards) ? outbox.lastSend.cards.map((card) => deepClone(card)) : [],
-    },
-  };
-  try {
-    await chrome.storage.local.set({ [STORAGE_KEYS.outbox]: payload });
-  } catch (e) {
-    console.warn("Failed to persist outbox state", e);
-  }
-}
-
-function persistOutboxState() {
-  saveOutboxState();
-}
-
-function normalizeArchiveState(raw) {
-  if (!raw || typeof raw !== "object") return { byId: {} };
-  if (raw.byId && typeof raw.byId === "object") return { byId: { ...raw.byId } };
-  if (Array.isArray(raw.cards)) {
-    const byId = {};
-    raw.cards.forEach((card) => {
-      if (!card || !card.id) return;
-      byId[card.id] = { ...card };
-    });
-    return { byId };
-  }
-  return { byId: {} };
-}
-
-async function loadArchiveState() {
-  try {
-    const stored = await chrome.storage.local.get(ARCHIVE_KEY);
-    return normalizeArchiveState(stored?.[ARCHIVE_KEY]);
-  } catch (err) {
-    console.warn("Failed to load archive", err);
-    return { byId: {} };
-  }
-}
-
-async function saveArchiveState(state) {
-  try {
-    await chrome.storage.local.set({ [ARCHIVE_KEY]: normalizeArchiveState(state) });
-  } catch (err) {
-    console.warn("Failed to persist archive", err);
-  }
-}
-
-async function backupArchiveOnce() {
-  try {
-    const existing = await chrome.storage.local.get(ARCHIVE_BACKUP_KEY);
-    if (existing && existing[ARCHIVE_BACKUP_KEY]) return existing[ARCHIVE_BACKUP_KEY];
-    const current = await loadArchiveState();
-    await chrome.storage.local.set({ [ARCHIVE_BACKUP_KEY]: { snapshotAt: Date.now(), data: current } });
-    return current;
-  } catch (err) {
-    console.warn("Could not create archive backup", err);
-    return null;
-  }
-}
-
-async function archiveGetAll() {
-  const state = await loadArchiveState();
-  return Object.values(state.byId || {}).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
-}
-
-async function archiveGetById(id) {
-  if (!id) return null;
-  const state = await loadArchiveState();
-  return state.byId?.[id] || null;
-}
-
-async function archiveUpsertCards(entries = [], context = {}) {
-  if (!entries.length) return;
-  const state = await loadArchiveState();
-  const now = Date.now();
-  for (const entry of entries) {
-    if (!entry || !entry.card || !entry.card.id) continue;
-    const card = entry.card;
-    const tags = Array.isArray(card.tags) ? [...new Set(card.tags.filter(Boolean))] : [];
-    const previous = state.byId?.[card.id] || {};
-    const sourceUrl = card.source_url || context.url || previous.source_url || "";
-    const sourceLabel = card.source_label || context.sourceLabel || previous.source_label || context.title || previous.source_title || "";
-    // Merge with any previously stored card state
-    state.byId[card.id] = {
-      ...previous,
-      id: card.id,
-      front: card.front || previous.front || "",
-      back: card.back || previous.back || "",
-      tags,
-      source_url: sourceUrl,
-      source_title: context.title || previous.source_title || "",
-      source_label: sourceLabel,
-      context: card.context || context.context || previous.context || "",
-      source_excerpt: card.source_excerpt || previous.source_excerpt || "",
-      meta: context.meta || previous.meta || null,
-      anki_note_id: entry.noteId || previous.anki_note_id || null,
-      updated_at: now,
-      status: "active",
-      lapses: previous.lapses ?? null,
-      factor: previous.factor ?? null,
-    };
-  }
-  await saveArchiveState(state);
 }
 
 function stripHTML(text) {
@@ -8726,420 +7872,37 @@ function normalizeImportedCards(parsed) {
   return { cards: result, deck, fingerprints: seen };
 }
 
-function syncAcceptedCard(card) {
-  const idx = triage.accepted.findIndex((c) => c.id === card.id);
-  if (idx !== -1) triage.accepted[idx] = cloneCard(card);
-  syncOutboxCard(card);
-  persistTriageState();
-}
-
-function renderOutboxList() {
-  const list = $("#outboxList");
-  if (!list) return;
-  list.innerHTML = "";
-  if (!outbox.cards.length) {
-    const empty = document.createElement("div");
-    empty.className = "small";
-    empty.textContent = "No cards queued.";
-    list.appendChild(empty);
-    return;
-  }
-
-  for (const card of outbox.cards) {
-    const item = document.createElement("div");
-    item.className = "outbox-card";
-
-    const header = document.createElement("div");
-    header.className = "outbox-card-header";
-
-    const title = document.createElement("div");
-    title.className = "outbox-card-title";
-    const frontText = summarizeText(card.front || "");
-    title.textContent = frontText || "[No front]";
-    header.appendChild(title);
-
-    const flag = document.createElement("span");
-    let showFlag = false;
-    let flagClass = "";
-    let flagText = "";
-    switch (card._duplicateState) {
-      case "checking":
-        flagText = "Checking duplicates…";
-        showFlag = true;
-        break;
-      case "possible":
-        flagText = "Possible duplicate";
-        showFlag = true;
-        break;
-      case "forced":
-        flagText = "Force add";
-        flagClass = "forced";
-        showFlag = true;
-        break;
-      case "error":
-        flagText = "Duplicate check failed";
-        flagClass = "error";
-        showFlag = true;
-        break;
-      case "clear":
-        showFlag = false;
-        break;
-      default:
-        if (!card.allowDuplicate) {
-          flagText = "Needs duplicate check";
-          showFlag = true;
-        }
-    }
-    if (showFlag) {
-      flag.className = `outbox-flag${flagClass ? ` ${flagClass}` : ""}`;
-      flag.textContent = flagText;
-      header.appendChild(flag);
-    }
-
-    item.appendChild(header);
-
-    const meta = document.createElement("div");
-    meta.className = "outbox-card-meta";
-    const parts = [];
-    if (card.type) parts.push(`Type: ${card.type}`);
-    const backText = summarizeText(card.back || "");
-    if (backText) parts.push(`Back: ${backText}`);
-    if (card.tags && card.tags.length) parts.push(`Tags: ${card.tags.join(" ")}`);
-    if (parts.length) meta.textContent = parts.join(" • ");
-    else meta.textContent = "(no additional fields)";
-    item.appendChild(meta);
-
-    if (card._duplicateError) {
-      const err = document.createElement("div");
-      err.className = "small";
-      err.textContent = card._duplicateError;
-      item.appendChild(err);
-    }
-
-    const actions = document.createElement("div");
-    actions.className = "outbox-card-actions outbox-card-buttons";
-
-    const needsCheck = !card.allowDuplicate && (!card._duplicateState || card._duplicateState === "error");
-    const isFlagged = card._duplicateState === "possible" && !card.allowDuplicate;
-
-    if (needsCheck) {
-      const retryBtn = document.createElement("button");
-      retryBtn.type = "button";
-      retryBtn.textContent = "Check duplicates";
-      retryBtn.addEventListener("click", () => {
-        preflightCard(card).catch((e) => status(`Duplicate check failed: ${e.message}`, false));
-      });
-      actions.appendChild(retryBtn);
-    }
-
-    if (isFlagged) {
-      const retryBtn = document.createElement("button");
-      retryBtn.type = "button";
-      retryBtn.textContent = "Recheck";
-      retryBtn.addEventListener("click", () => {
-        preflightCard(card).catch((e) => status(`Duplicate check failed: ${e.message}`, false));
-      });
-      actions.appendChild(retryBtn);
-
-      const forceBtn = document.createElement("button");
-      forceBtn.type = "button";
-      forceBtn.textContent = "Force add";
-      forceBtn.addEventListener("click", () => {
-        card.allowDuplicate = true;
-        card._duplicateState = "forced";
-        delete card._duplicateError;
-        renderOutboxList();
-        updateOutboxMeta();
-        persistOutboxState();
-        status("Card will be added even if duplicate.", true);
-      });
-      actions.appendChild(forceBtn);
-
-      const compareBtn = document.createElement("button");
-      compareBtn.type = "button";
-      compareBtn.textContent = "Compare";
-      compareBtn.addEventListener("click", () => {
-        compareExistingNotes(card);
-      });
-      actions.appendChild(compareBtn);
-    }
-
-    const editBtn = document.createElement("button");
-    editBtn.type = "button";
-    editBtn.textContent = "Edit";
-    editBtn.addEventListener("click", () => {
-      const idx = outbox.cards.findIndex((c) => c.id === card.id);
-      if (idx !== -1) {
-        const [restored] = outbox.cards.splice(idx, 1);
-        triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
-        triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
-        if (restored) {
-          setCardReviewStatus(restored, "pending");
-          triage.cards.splice(triage.i, 0, restored);
-        }
-        renderEditor();
-        persistOutboxState();
-        persistTriageState();
-      }
-    });
-    actions.appendChild(editBtn);
-
-    if (actions.children.length) item.appendChild(actions);
-    list.appendChild(item);
-  }
-}
-
-function isTriageActive() {
-  return triageState.active && hasTriageQueue();
-}
-
-function clearEditorFields() {
-  const ids = ["front", "back", "tags", "notes", "context", "source"];
-  for (const id of ids) {
-    const el = document.getElementById(id);
-    if (el) {
-      el.value = "";
-      if (id === "source") delete el.dataset.autoClipboard;
-    }
-  }
-  updateFrontDetection("");
-  updateOverlaySourceChrome();
-  hideCopilotFactPicker(); // clearing the editor invalidates any open fact picker/proposal
-  clearManualDraftStorage().catch(() => {});
-}
-
 function setPrimaryActionButton(label, { showShortcut = false } = {}) {
   const addBtn = $("#add");
   if (!addBtn) return;
   const labelEl = addBtn.querySelector(".button-label");
   if (labelEl) labelEl.textContent = label;
   else addBtn.textContent = label;
-  const hintEl = addBtn.querySelector("#queueShortcutButtonHint");
+  const hintEl = addBtn.querySelector("#addShortcutButtonHint");
   if (hintEl) hintEl.hidden = !showShortcut || !addShortcutConfig;
 }
 
-function renderEditor({ persist = true } = {}) {
-  hideCopilotFactPicker(); // switching the editor to another card invalidates any open picker/proposal
-  syncTriageState({ activateIfCards: triageState.active });
-  const navButtons = $("#editorNavButtons");
-  const prevBtn = $("#triagePrev");
-  const nextBtn = $("#triageNext");
-  const skipBtn = $("#triageSkip");
-  const addBtn = $("#add");
-  const altWrap = $("#altAnswers");
-  const triageFooter = $("#triageFooter");
-
-  updateOutboxMeta();
-  renderOutboxList();
-
-  const hadTriage = renderEditor.lastMode === "triage";
-  const hasCards = triageState.active && triage.cards.length > 0;
-
-  if (!hasCards) {
-    if (navButtons) navButtons.hidden = true;
-    if (prevBtn) prevBtn.disabled = true;
-    if (nextBtn) nextBtn.disabled = true;
-    if (skipBtn) {
-      skipBtn.hidden = true;
-      skipBtn.disabled = true;
-    }
-    if (altWrap) {
-      altWrap.innerHTML = "";
-      altWrap.hidden = true;
-    }
-    if (triageFooter) triageFooter.hidden = true;
-    if (triageToolbar) triageToolbar.hidden = true;
-    if (addBtn) setPrimaryActionButton("Add to Anki", { showShortcut: true });
-    if (hadTriage) {
-      clearEditorFields();
-      focusFrontAtEnd();
-    }
-    applyInlinePreviewAfterEditorRender({ refresh: true });
-    updateMarkdownPreview();
-    updateOverlaySourceChrome();
-    renderEditor.lastMode = "manual";
-    updateTriageUI();
-    return;
-  }
-
-  if (triage.i >= triage.cards.length) triage.i = Math.max(0, triage.cards.length - 1);
-  const card = triage.cards[triage.i];
-  if (!card) {
-    renderEditor.lastMode = "triage";
-    updateTriageUI();
-    return;
-  }
-
-  if (navButtons) navButtons.hidden = false;
-  if (skipBtn) {
-    skipBtn.hidden = false;
-    skipBtn.disabled = false;
-  }
-  if (triageFooter) triageFooter.hidden = false;
-  if (triageToolbar) triageToolbar.hidden = false;
-  if (addBtn) setPrimaryActionButton("Accept");
-
-  const frontEl = $("#front");
-  const backEl = $("#back");
-  const tagsEl = $("#tags");
-  const contextEl = $("#context");
-  const notesEl = $("#notes");
-  const sourceEl = $("#source");
-
-  if (frontEl) frontEl.value = card.front || "";
-  updateFrontDetection(frontEl?.value || "");
-  if (backEl) backEl.value = card.back || "";
-  if (tagsEl) tagsEl.value = (card.tags || []).join(" ");
-  const contextValue = Array.isArray(card.context) ? card.context.join(" | ") : (card.context || "");
-  if (contextEl) contextEl.value = contextValue;
-  if (notesEl) notesEl.value = card.extra || "";
-  if (sourceEl) {
-    delete sourceEl.dataset.autoClipboard;
-    sourceEl.value = card.source_excerpt || "";
-  }
-
+function renderEditor() {
+  setPrimaryActionButton("Add to Anki", { showShortcut: true });
   applyInlinePreviewAfterEditorRender({ refresh: true });
-  updateOverlaySourceChrome();
-
-  if (altWrap) {
-    altWrap.innerHTML = "";
-    const answers = Array.isArray(card.alt_answers) ? card.alt_answers.filter((ans) => !!ans) : [];
-    if (!answers.length) {
-      altWrap.hidden = true;
-    } else {
-      altWrap.hidden = false;
-      const heading = document.createElement("div");
-      heading.className = "small";
-      heading.textContent = "Alternative answers";
-      altWrap.appendChild(heading);
-      for (const ans of answers) {
-        const row = document.createElement("div");
-        row.className = "alt-answer";
-
-        const text = document.createElement("div");
-        text.className = "alt-text";
-        text.textContent = ans;
-        row.appendChild(text);
-
-        const actions = document.createElement("div");
-        actions.className = "alt-actions";
-
-        const useBtn = document.createElement("button");
-        useBtn.type = "button";
-        useBtn.textContent = "Use as answer";
-        useBtn.addEventListener("click", () => {
-          card.back = ans;
-          syncAcceptedCard(card);
-          renderEditor();
-        });
-        actions.appendChild(useBtn);
-
-        const addBtn = document.createElement("button");
-        addBtn.type = "button";
-        addBtn.textContent = "Add as new card";
-        addBtn.addEventListener("click", () => {
-          insertAltAnswerCard(card, ans);
-        });
-        actions.appendChild(addBtn);
-
-        row.appendChild(actions);
-        altWrap.appendChild(row);
-      }
-    }
-  }
-
   updateMarkdownPreview();
   updateOverlaySourceChrome();
-  renderEditor.lastMode = "triage";
-  updateTriageUI();
-  if (persist) persistTriageState();
 }
-renderEditor.lastMode = "manual";
 
-function mutateActiveTriageCard(updater) {
-  if (typeof updater !== "function") return;
-  if (!triage.cards.length) return;
-  if (triage.i >= triage.cards.length) triage.i = Math.max(0, triage.cards.length - 1);
-  const card = triage.cards[triage.i];
-  if (!card) return;
-  updater(card);
-  syncAcceptedCard(card);
-  if (card.id) queueOutboxPreflight(card.id);
-}
+
+
 
 function bindUnifiedEditorInputs() {
-  const frontEl = $("#front");
-  if (frontEl) frontEl.addEventListener("input", () => {
-    updateFrontDetection(frontEl.value);
-    if (isTriageActive()) {
-      mutateActiveTriageCard((card) => { card.front = frontEl.value; });
-      return;
-    }
-    scheduleManualDraftSave();
-  });
-
-  const backEl = $("#back");
-  if (backEl) backEl.addEventListener("input", () => {
-    if (isTriageActive()) {
-      mutateActiveTriageCard((card) => { card.back = backEl.value; });
-      return;
-    }
-    scheduleManualDraftSave();
-  });
-
-  const tagsEl = $("#tags");
-  if (tagsEl) tagsEl.addEventListener("input", () => {
-    updateCardDetailsSummary();
-    if (isTriageActive()) {
-      const parts = tagsEl.value.split(/\s+/).map((s) => s.trim()).filter(Boolean);
-      mutateActiveTriageCard((card) => { card.tags = parts; });
-      return;
-    }
-    scheduleManualDraftSave();
-  });
-
-  const contextEl = $("#context");
-  if (contextEl) contextEl.addEventListener("input", () => {
-    updateCardDetailsSummary();
-    if (isTriageActive()) {
-      const val = contextEl.value.trim();
-      mutateActiveTriageCard((card) => {
-        if (val) card.context = val;
-        else delete card.context;
-      });
-      return;
-    }
-    scheduleManualDraftSave();
-  });
-
-  const notesEl = $("#notes");
-  if (notesEl) notesEl.addEventListener("input", () => {
-    updateCardDetailsSummary();
-    if (isTriageActive()) {
-      const val = notesEl.value.trim();
-      mutateActiveTriageCard((card) => {
-        if (val) card.extra = val;
-        else delete card.extra;
-      });
-      return;
-    }
-    scheduleManualDraftSave();
-  });
-
-  const sourceEl = $("#source");
-  if (sourceEl) sourceEl.addEventListener("input", () => {
-    delete sourceEl.dataset.autoClipboard;
-    updateOverlaySourceChrome();
-    if (isTriageActive()) {
-      const val = sourceEl.value.trim();
-      mutateActiveTriageCard((card) => {
-        if (val) card.source_excerpt = val;
-        else delete card.source_excerpt;
-      });
-      return;
-    }
-    scheduleManualDraftSave();
-  });
+  for (const id of ["front", "back", "tags", "context", "notes", "source"]) {
+    const el = $("#" + id);
+    if (!el) continue;
+    el.addEventListener("input", () => {
+      if (id === "front") updateFrontDetection(el.value);
+      if (["tags", "context", "notes"].includes(id)) updateCardDetailsSummary();
+      if (id === "source") { delete el.dataset.autoClipboard; updateOverlaySourceChrome(); }
+      scheduleManualDraftSave();
+    });
+  }
 }
 
 const markdownPreviewState = {
@@ -9496,22 +8259,18 @@ async function hydratePreviewImages(target) {
   }
 }
 
-async function saveImageStore(store) {
-  imageStoreCache = store;
-  try {
-    await chrome.storage.local.set({ [IMAGE_STORE_KEY]: store });
-  } catch {}
-}
+
 
 async function addImageToStore({ filename, data, type }) {
-  if (!filename || !data) return null;
-  const store = await loadImageStore();
-  store[filename] = {
-    data,
-    type: type || "image/png",
-    updatedAt: Date.now(),
-  };
-  await saveImageStore(store);
+  if (!filename || !data) throw new Error("The pasted image has no image data.");
+  const response = await chrome.runtime.sendMessage({
+    type: "ghostwriter:storePastedImage", filename,
+    entry: { data, type: type || "image/png", updatedAt: Date.now() },
+  });
+  if (!response?.ok || !response.result?.ok) {
+    throw new Error(response?.result?.message || response?.error || "The pasted image could not be saved. Try again before adding the card.");
+  }
+  imageStoreCache = null;
   return filename;
 }
 
@@ -9581,7 +8340,7 @@ async function replaceInlineImages(text, { track = true } = {}) {
         next = next.replace(match[0], replacement);
         if (track) files.add(filename);
       }
-    } else if (track) {
+    } else if (track && !/^(?:https?:|chrome-extension:|data:|blob:)/i.test(src)) {
       files.add(src);
     }
   }
@@ -9604,7 +8363,7 @@ async function replaceInlineImages(text, { track = true } = {}) {
         next = next.replace(match[0], replacement);
         if (track) files.add(filename);
       }
-    } else if (track) {
+    } else if (track && !/^(?:https?:|chrome-extension:|data:|blob:)/i.test(src)) {
       files.add(src);
     }
   }
@@ -9625,17 +8384,35 @@ async function normalizeFieldsWithImages(fields) {
 }
 
 async function syncImagesToAnki(files) {
-  if (!files || !files.size) return;
+  if (!files || !files.size) return [];
   const store = await loadImageStore();
+  const uploaded = [];
   for (const filename of files) {
     const entry = store?.[filename];
-    if (!entry?.data) continue;
-    try {
-      await anki("storeMediaFile", { filename, data: entry.data });
-    } catch (err) {
-      console.warn("Failed to store media", filename, err);
-    }
+    if (!entry?.data) throw new Error("Image data is missing for " + filename + ". Paste the image again before adding this card.");
+    const storedFilename = await anki("storeMediaFile", { filename, data: entry.data });
+    if (storedFilename !== filename) throw new Error("AnkiConnect did not confirm the image upload for " + filename + ". The card was kept for retry.");
+    uploaded.push(filename);
   }
+  return uploaded;
+}
+
+async function retireUploadedImagesAfterAdd(filenames) {
+  if (!filenames?.length) return;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "ghostwriter:retireUploadedImages", filenames: [...new Set(filenames)],
+      liveDraftRefs: [getManualDraftPayload(), $("#source")?.value || "", copilot?.pageCtx || {}, {
+        text: $("#lpcgText")?.value || "", title: $("#lpcgTitle")?.value || "",
+        author: $("#lpcgAuthor")?.value || "", prompt: $("#lpcgPrompt")?.value || "",
+      }],
+    });
+    if (!response?.ok || !response.result?.ok) {
+      console.warn("Uploaded images were retained for recovery:", response?.result?.message || response?.error);
+      return;
+    }
+    if (response.result.retired?.length) imageStoreCache = null;
+  } catch (err) { console.warn("Uploaded images were retained for recovery:", err); }
 }
 
 function insertTextAtCursor(el, text) {
@@ -9666,8 +8443,7 @@ async function storeBlobUrlAsFilename(blobUrl) {
     await addImageToStore({ filename, data: base64, type: mime });
     return filename;
   } catch (err) {
-    console.warn("Failed to store blob image", err);
-    return null;
+    throw new Error("The image could not be saved: " + (err?.message || err));
   }
 }
 
@@ -9756,6 +8532,7 @@ async function handlePasteImage(event) {
     scheduleMarkdownPreviewUpdate();
   } catch (err) {
     console.warn("Failed to paste image", err);
+    status(err?.message || "The image could not be saved. Paste it again before adding the card.");
     if (plain) insertTextAtCursor(target, plain);
   }
 }
@@ -9985,8 +8762,7 @@ function initInlineMathPreview() {
 // Allow Esc inside the iframe to close the overlay when not triaging
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
-    if (isTriageActive()) return;
-    if (rejectFocusedCopilotSuggestion(event.target)) {
+      if (rejectFocusedCopilotSuggestion(event.target)) {
       event.preventDefault();
       return;
     }
@@ -10003,237 +8779,6 @@ document.addEventListener('keydown', (event) => {
   }
 }, { capture: true });
 
-function moveTriage(delta) {
-  if (!triageState.active || !triage.cards.length) return;
-  const len = triage.cards.length;
-  triage.i = (triage.i + delta + len) % len;
-  renderEditor();
-}
-
-function triggerTriagePrev() {
-  moveTriage(-1);
-}
-
-function triggerTriageNext() {
-  moveTriage(1);
-}
-
-function clearTriageUndoHistory() {
-  triageUndoStack.length = 0;
-}
-
-function pushTriageUndo(action) {
-  if (!action || !action.card) return;
-  triageUndoStack.push(action);
-  if (triageUndoStack.length > TRIAGE_UNDO_LIMIT) {
-    triageUndoStack.splice(0, triageUndoStack.length - TRIAGE_UNDO_LIMIT);
-  }
-}
-
-function undoLastTriageDecision() {
-  const action = triageUndoStack.pop();
-  if (!action) {
-    status("Nothing to undo.");
-    return;
-  }
-
-  const restoredCard = cloneCard(action.card);
-  if (!restoredCard) {
-    status("Could not restore the previous action.");
-    return;
-  }
-
-  setCardReviewStatus(restoredCard, "pending");
-  triage.accepted = triage.accepted.filter((c) => c.id !== restoredCard.id);
-  triage.skipped = triage.skipped.filter((c) => c.id !== restoredCard.id);
-
-  const insertIndex = Math.max(0, Math.min(action.index ?? triage.cards.length, triage.cards.length));
-  triage.cards.splice(insertIndex, 0, restoredCard);
-  triage.i = insertIndex;
-
-  const previousOutbox = action.outboxCard ? deepClone(action.outboxCard) : null;
-  if (previousOutbox) {
-    const idx = outbox.cards.findIndex((c) => c.id === previousOutbox.id);
-    if (idx !== -1) outbox.cards[idx] = previousOutbox;
-    else outbox.cards.push(previousOutbox);
-  } else {
-    removeFromOutbox(restoredCard.id, { silent: true });
-  }
-
-  triageState.active = true;
-  syncTriageState({ activateIfCards: true });
-  renderEditor();
-  renderOutboxList();
-  updateOutboxMeta();
-  persistTriageState();
-  persistOutboxState();
-  status("Undid last action.", true);
-}
-
-function focusNextPending(fromIndex) {
-  if (!triage.cards.length) return;
-  const len = triage.cards.length;
-  for (let offset = 1; offset <= len; offset++) {
-    const idx = (fromIndex + offset) % len;
-    if (!triage.cards[idx]._status) {
-      triage.i = idx;
-      return;
-    }
-  }
-  triage.i = fromIndex >= len ? Math.max(0, len - 1) : fromIndex;
-}
-
-function insertAltAnswerCard(baseCard, answer) {
-  if (!baseCard || !answer) return;
-  const newCard = cloneCard(baseCard);
-  newCard.id = `${baseCard.id || "card"}-alt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  newCard.back = answer;
-  setCardReviewStatus(newCard, "pending");
-  triage.accepted = triage.accepted.filter((c) => c.id !== newCard.id);
-  triage.skipped = triage.skipped.filter((c) => c.id !== newCard.id);
-  const baseIndex = triage.cards.findIndex((c) => c.id === baseCard.id);
-  const insertIndex = baseIndex === -1 ? triage.cards.length : baseIndex + 1;
-  triage.cards.splice(insertIndex, 0, newCard);
-  try { triage.fingerprints.add(makeFingerprint(newCard)); } catch {}
-  renderEditor();
-  status("Added alternate answer as a new card.", true);
-  persistTriageState();
-}
-
-async function acceptCurrentCard() {
-  if (!triageState.active) return;
-  const card = triage.cards[triage.i];
-  if (!card) return;
-  const cardBeforeAction = cloneCard(card);
-  const outboxBeforeAction = outbox.cards.find((c) => c.id === card.id);
-  const actionIndex = triage.i;
-  setCardReviewStatus(card, "accepted");
-  triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
-  triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
-  triage.accepted.push(cloneCard(card));
-  const staged = stageCardInOutbox(card);
-  try {
-    if (staged) await preflightCard(staged);
-  } catch (e) {
-    status(`Duplicate check failed: ${e.message}`);
-  }
-  const idx = triage.cards.findIndex((c) => c.id === card.id);
-  if (idx !== -1) {
-    triage.cards.splice(idx, 1);
-    if (triage.i >= triage.cards.length) {
-      triage.i = Math.max(0, triage.cards.length - 1);
-    }
-  }
-  pushTriageUndo({
-    type: "accept",
-    card: cardBeforeAction,
-    outboxCard: outboxBeforeAction ? deepClone(outboxBeforeAction) : null,
-    index: actionIndex,
-  });
-  renderEditor();
-  persistTriageState();
-  maybeCompleteTriage();
-}
-
-function skipCurrentCard() {
-  if (!triageState.active) return;
-  const card = triage.cards[triage.i];
-  if (!card) return;
-  const cardBeforeAction = cloneCard(card);
-  const outboxBeforeAction = outbox.cards.find((c) => c.id === card.id);
-  const actionIndex = triage.i;
-
-  // Mark it as skipped for stats / persistence
-  setCardReviewStatus(card, "skipped");
-  triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
-  triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
-  triage.skipped.push(cloneCard(card));
-
-  // Keep its fingerprint so future AI runs can avoid re-adding
-  try {
-    triage.fingerprints.add(makeFingerprint(card));
-  } catch {}
-
-  // Remove from outbox and from the *visible* triage queue
-  removeFromOutbox(card.id);
-  const idx = triage.cards.findIndex((c) => c.id === card.id);
-  if (idx !== -1) {
-    triage.cards.splice(idx, 1);
-    if (triage.i >= triage.cards.length) {
-      triage.i = Math.max(0, triage.cards.length - 1);
-    }
-  }
-
-  // If any cards remain, jump to the next pending one
-  if (triage.cards.length) {
-    focusNextPending(triage.i);
-  }
-
-  pushTriageUndo({
-    type: "skip",
-    card: cardBeforeAction,
-    outboxCard: outboxBeforeAction ? deepClone(outboxBeforeAction) : null,
-    index: actionIndex,
-  });
-
-  renderEditor();
-  persistTriageState();
-  maybeCompleteTriage();
-}
-
-function triggerTriageAccept() {
-  acceptCurrentCard();
-}
-
-function triggerTriageSkip() {
-  skipCurrentCard();
-}
-
-async function acceptAllPending() {
-  if (!triage.cards.length) return;
-  let added = 0;
-  let context = null;
-  try {
-    context = await getNoteBuildContext();
-  } catch (e) {
-    status(`Could not prepare duplicate checks: ${e.message}`);
-  }
-  const pending = triage.cards.slice();
-  for (const card of pending) {
-    setCardReviewStatus(card, "accepted");
-    triage.skipped = triage.skipped.filter((c) => c.id !== card.id);
-    triage.accepted = triage.accepted.filter((c) => c.id !== card.id);
-    triage.accepted.push(cloneCard(card));
-    const staged = stageCardInOutbox(card, { silent: true });
-    if (staged) {
-      try {
-        await preflightCard(staged, { context, silent: true });
-      } catch (e) {
-        staged._duplicateState = "error";
-        staged._duplicateError = e.message;
-      }
-    }
-    added++;
-  }
-  triage.cards = [];
-  triage.i = 0;
-  renderOutboxList();
-  updateOutboxMeta();
-  persistOutboxState();
-  persistTriageState();
-  if (added) status(`Marked ${added} card${added === 1 ? "" : "s"} ready to send.`, true);
-  renderEditor();
-  // If everything is now accepted, drop back to manual editor (no extra prompt).
-  maybeCompleteTriage({ showPrompt: false });
-}
-
-
-function clearTriageOnly() {
-  resetTriage();
-  status("Queue reset.");
-}
-
-// ------- UI init -------
 async function refreshMetaAndDefaults() {
   const opts = await getOptions();
   const manualPrefs = await loadManualPrefs();
@@ -10285,7 +8830,7 @@ async function refreshMetaAndDefaults() {
     manualPrefsCache = { ...(manualPrefsCache || {}), mathjaxPreview: mathjaxValue };
   }
 
-  applyShortcutSetting(typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_QUEUE_SHORTCUT);
+  applyShortcutSetting(typeof opts.addShortcut === "string" ? opts.addShortcut : DEFAULT_ADD_SHORTCUT);
   updateShortcutHelpText();
 
   // Test mode: populate essential form controls without hitting AnkiConnect
@@ -10335,7 +8880,6 @@ async function refreshMetaAndDefaults() {
         || models.find((name) => GHOSTWRITER_MODEL_REGEX.test(name));
       if (preferredGhostwriter) modelSel.value = preferredGhostwriter;
     }
-    if (triage.deck && decks.includes(triage.deck)) deckSel.value = triage.deck;
 
     await showGhostwriterModelInfoOnce();
 
@@ -10360,122 +8904,27 @@ async function refreshMetaAndDefaults() {
 
 }
 
-function applyStoredTriageData(triageData) {
-  clearTriageUndoHistory();
-  if (!triageData) {
-    triage.cards = [];
-    triage.i = 0;
-    triage.accepted = [];
-    triage.skipped = [];
-    triage.fingerprints = new Set();
-    triage.deck = null;
-    triageState.active = false;
-    setTriageActive(false);
-    syncTriageState({ activateIfCards: false });
-    return;
-  }
-
-  triage.cards = Array.isArray(triageData.cards) ? triageData.cards.map((card) => deepClone(card)) : [];
-  const maxIndex = triage.cards.length ? triage.cards.length - 1 : 0;
-  triage.i = Math.min(Math.max(Number(triageData.i) || 0, 0), maxIndex);
-  triage.deck = triageData.deck || null;
-  const acceptedIds = new Set(Array.isArray(triageData.acceptedIds) ? triageData.acceptedIds : []);
-  const skippedIds = new Set(Array.isArray(triageData.skippedIds) ? triageData.skippedIds : []);
-  triage.fingerprints = new Set(Array.isArray(triageData.fingerprints) ? triageData.fingerprints : []);
-  if (!triage.fingerprints.size && triage.cards.length) {
-    for (const card of triage.cards) {
-      try { triage.fingerprints.add(makeFingerprint(card)); } catch {}
-    }
-  }
-  triage.accepted = [];
-  triage.skipped = [];
-  for (const card of triage.cards) {
-    const storedStatus = getCardReviewStatus(card);
-    if (acceptedIds.has(card.id) || storedStatus === "accepted") {
-      setCardReviewStatus(card, "accepted");
-      triage.accepted.push(cloneCard(card));
-    } else if (skippedIds.has(card.id) || storedStatus === "skipped") {
-      setCardReviewStatus(card, "skipped");
-      triage.skipped.push(cloneCard(card));
-    } else if (storedStatus === "deleted" || storedStatus === "sent") {
-      setCardReviewStatus(card, storedStatus);
-    } else {
-      setCardReviewStatus(card, "pending");
-    }
-  }
-  triageState.active = false;
-  setTriageActive(false);
-  syncTriageState({ activateIfCards: false });
-}
-
-function applyStoredOutboxData(outboxData) {
-  if (!outboxData) {
-    outbox.cards = [];
-    outbox.lastSend = { noteIds: [], cards: [] };
-    return;
-  }
-  outbox.cards = Array.isArray(outboxData.cards)
-    ? outboxData.cards.map((card) => setCardReviewStatus(deepClone(card), getCardReviewStatus(card) === "pending" ? "accepted" : getCardReviewStatus(card)))
-    : [];
-  const lastSend = outboxData.lastSend || {};
-  outbox.lastSend = {
-    noteIds: Array.isArray(lastSend.noteIds) ? [...lastSend.noteIds] : [],
-    cards: Array.isArray(lastSend.cards) ? lastSend.cards.map((card) => deepClone(card)) : [],
-  };
-}
-
 let storageSyncBound = false;
 
 function bindStorageSync() {
   if (storageSyncBound) return;
   storageSyncBound = true;
-
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
-
-    let shouldRender = false;
-    if (STORAGE_KEYS.triage in changes) {
-      applyStoredTriageData(changes[STORAGE_KEYS.triage]?.newValue);
-      shouldRender = true;
-    }
-    if (STORAGE_KEYS.outbox in changes) {
-      applyStoredOutboxData(changes[STORAGE_KEYS.outbox]?.newValue);
-      shouldRender = true;
-    }
+    if (IMAGE_STORE_KEY in changes) imageStoreCache = null;
     if (LAST_MODEL_NAME_KEY in changes) {
       const modelName = changes[LAST_MODEL_NAME_KEY]?.newValue || "";
       const modelSel = $("#model");
-      if (modelSel && modelName) {
-        const hasModel = [...modelSel.options].some((opt) => opt.value === modelName);
-        if (hasModel && modelSel.value !== modelName) {
-          modelSel.value = modelName;
-          ensureOutboxPreflight({ force: true });
-          updateModelFieldWarning();
-          updateCardTypeUI();
-        }
+      if (modelSel && modelName && [...modelSel.options].some((opt) => opt.value === modelName) && modelSel.value !== modelName) {
+        modelSel.value = modelName;
+        updateModelFieldWarning();
+        updateCardTypeUI();
       }
-    }
-
-    if (shouldRender) {
-      renderEditor({ persist: false });
     }
   });
 }
 
-async function restoreSavedState() {
-  try {
-    const data = await chrome.storage.local.get([STORAGE_KEYS.triage, STORAGE_KEYS.outbox]);
-    const triageData = data?.[STORAGE_KEYS.triage];
-    applyStoredTriageData(triageData);
-    applyStoredOutboxData(data?.[STORAGE_KEYS.outbox]);
-  } catch (e) {
-    console.warn("Failed to restore saved state", e);
-  }
 
-  updateOutboxMeta();
-  renderOutboxList();
-  renderEditor({ persist: false });
-}
 
 // ------- Metadata suggestions -------
 const METADATA_MODEL_TIMEOUT_MS = 12000;
@@ -10516,7 +8965,8 @@ async function runMetadataModelWithTimeout(task, timeoutMs = METADATA_MODEL_TIME
 }
 
 async function aiSuggestTags(front, back, url, title) {
-  const hostname = (() => { try { return new URL(url).hostname; } catch { return ""; } })();
+  const hostname = window.GHOSTWRITER_METADATA_FALLBACK.getMetadataHostname(url);
+  const pageTitle = window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(title);
   const prompt = `Return ONLY valid JSON in this exact shape:
 {
   "domain": "<one canonical domain>",
@@ -10533,7 +8983,7 @@ Rules:
 CARD:
 Front: ${front}
 Back: ${back}
-Page: title="${title}", url="${url}", host="${hostname}"`;
+Page: title="${pageTitle}", host="${hostname}"`;
   try {
     const obj = await runMetadataModelWithTimeout((signal) => ultimateChatJSON(prompt, {
       parseArrayOrObject: true,
@@ -10566,16 +9016,17 @@ async function aiSuggestContext(front, back, url, title, meta) {
   } catch {}
 
   // 2) Fallback to LLM (provide lightweight meta hints)
-  const hostname = (() => { try { return new URL(url).hostname; } catch { return ""; } })();
+  const hostname = window.GHOSTWRITER_METADATA_FALLBACK.getMetadataHostname(url);
+  const pageTitle = window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(title);
   const hints = {
     host: hostname,
-    siteName: meta?.siteName || "",
-    ldType: meta?.ld?.type || "",
-    ldName: meta?.ld?.name || "",
-    ldIsPartOf: meta?.ld?.isPartOf || "",
-    author: meta?.author || meta?.ld?.author || "",
-    citationTitle: meta?.citationTitle || "",
-    citationJournal: meta?.citationJournal || meta?.citationConference || "",
+    siteName: window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(meta?.siteName || ""),
+    ldType: window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(meta?.ld?.type || ""),
+    ldName: window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(meta?.ld?.name || ""),
+    ldIsPartOf: window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(meta?.ld?.isPartOf || ""),
+    author: window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(meta?.author || meta?.ld?.author || ""),
+    citationTitle: window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(meta?.citationTitle || ""),
+    citationJournal: window.GHOSTWRITER_METADATA_FALLBACK.metadataTextForAI(meta?.citationJournal || meta?.citationConference || ""),
   };
   const baseSystem = `Return ONLY valid JSON. You are helping the user author flashcard Context lines.
 Task: produce a concise context label (≤6 words) so the learner remembers the source/work.
@@ -10599,8 +9050,7 @@ Avoid echoing the front/back text; avoid generic paraphrases.`;
     `Back: ${back}`,
     ``,
     `Page:`,
-    `title="${title}"`,
-    `url="${url}"`,
+    `title="${pageTitle}"`,
     `host="${hostname}"`,
     ``,
     `Meta hints (best-effort): ${JSON.stringify(hints)}`,
@@ -10848,16 +9298,6 @@ async function warnIfClozeModelMistyped(list) {
         `not hide their answers. Delete or rename it in Anki (Tools -> Manage Note Types), then ` +
         `reopen Ghostwriter to recreate it correctly.`
     );
-    try {
-      chrome.notifications?.create?.("ghostwriter-cloze-repair", {
-        type: "basic",
-        iconUrl: "icons/icon128.png",
-        title: "Ghostwriter: fix your Cloze note type",
-        message:
-          `Your "${clozeName}" note type was made by an older version and won't hide cloze answers. ` +
-          `In Anki: Tools -> Manage Note Types -> delete or rename it, then reopen Ghostwriter to recreate it.`,
-      });
-    } catch {}
     await chrome.storage.local.set({ [flagKey]: true }).catch(() => {});
   } catch (err) {
     console.warn("Cloze model health check failed:", err);
@@ -11399,7 +9839,7 @@ function applyLpcgToFront() {
 function initLpcgControls() {
   // For LPCG we now mimic the "Import Lyrics/Poetry" dialog:
   // the poem is entered directly in #lpcgText, and notes are generated
-  // from the full text when the user queues the card.
+  // from the full text when the user adds the card.
   //
   // All of the old word-bank / apply-to-front controls have been removed.
   applyLpcgDefaults();
@@ -11502,7 +9942,18 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
   const sourceLabel = (card.source_label || title || url || "").trim();
   const sourceUrl = url || "";
   const hasSourceLink = !!(sourceUrl && sourceLabel);
-  const backLink = includeBackLink && hasSourceLink ? makeBackLinkHTML(sourceUrl, sourceLabel) : "";
+  let sourceLink = hasSourceLink ? makeBackLinkHTML(sourceUrl, sourceLabel) : "";
+  if (!sourceLink && hasSourceLink) {
+    // Local files and PDF viewer provenance remain readable text; unsafe schemes never become links.
+    try {
+      const parsed = new URL(sourceUrl);
+      if (parsed.protocol === "file:" || (parsed.protocol === "chrome-extension:" && /\.pdf(?:[?#]|$)/i.test(sourceUrl))) {
+        sourceLink = `<div class="quickflash-source">Source: ${escapeHtml(sourceUrl)}</div>`;
+      }
+    } catch {}
+  }
+  const sourceInDedicatedField = !!(fillSourceField && "Source" in fields && sourceLink);
+  const backLink = (includeBackLink || !sourceInDedicatedField) ? sourceLink : "";
 
   if (isLpcg1) {
     const lpcgFields = buildLpcgFields(card);
@@ -11531,7 +9982,7 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
 
     // Optional extra metadata if the LPCG note type has these fields
     if (fillSourceField && "Source" in fields && hasSourceLink) {
-      fields.Source = convertLatexToAnki(`[${sourceLabel}](${sourceUrl})`);
+      fields.Source = sourceLink;
     }
     if ("Notes" in fields && sourceExcerpt) {
       fields.Notes = sourceExcerpt;
@@ -11552,7 +10003,7 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
     // Keep the source with the note (Source field is not shown on the back), so the excerpt the
     // user captured isn't lost for cloze cards: prefer the backlink, fall back to the raw excerpt.
     if (fillSourceField && "Source" in fields) {
-      if (hasSourceLink) fields.Source = convertLatexToAnki(`[${sourceLabel}](${sourceUrl})`);
+      if (hasSourceLink) fields.Source = sourceLink;
       else if (sourceExcerpt) fields.Source = sourceExcerpt;
     }
   } else {
@@ -11586,129 +10037,34 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
 
     if ("Notes" in fields && sourceExcerpt) fields.Notes = sourceExcerpt;
     if (fillSourceField && "Source" in fields && hasSourceLink) {
-      fields.Source = convertLatexToAnki(`[${sourceLabel}](${sourceUrl})`);
+      fields.Source = sourceLink;
     }
   }
 
-  const mediaFiles = await normalizeFieldsWithImages(fields);
-  if (syncMedia) {
-    await syncImagesToAnki(mediaFiles);
+  // Every known source retains its complete URL even when this note type has no Source field.
+  if (backLink && (isLpcg1 || (cardType === "cloze" && !fieldMap.extra))) {
+    const candidates = isLpcg1
+      ? ["Notes", "Context", "Title", fieldMap.extra, fieldMap.back, "Line"]
+      : ["Notes", fieldMap.text, fieldNames[0]];
+    const target = candidates.find((name) => name && name in fields);
+    if (target) fields[target] = fields[target] ? fields[target] + "\n\n" + backLink : backLink;
   }
+  const mediaFiles = await normalizeFieldsWithImages(fields);
+  const uploadedImages = syncMedia ? await syncImagesToAnki(mediaFiles) : [];
 
-  return {
+  const note = {
     deckName,
     modelName: effectiveModel,
     fields,
     options: { allowDuplicate: !!card.allowDuplicate, duplicateScope: "deck" },
     tags: uniqueTags,
   };
+  Object.defineProperty(note, "_uploadedImages", { value: uploadedImages, enumerable: false });
+  return note;
 }
 
-// ------- Queue for review -------
-async function queueCurrentCardForReview() {
-  const front = ($("#front")?.value || "").trim();
-  const back = ($("#back")?.value || "").trim();
-  const notesText = ($("#notes")?.value || "").trim();
-  const sourceText = ($("#source")?.value || "").trim();
-  const contextText = ($("#context")?.value || "").trim();
-  const tags = ($("#tags")?.value || "").trim().split(/\s+/).filter(Boolean);
-  const hasClozeDeletion = CLOZE_PATTERN.test(front);
-  if (!front) return status("Front is required.");
-  if (!back && !hasClozeDeletion) return status("Front and Back are required.");
+// ------- Direct Add -------
 
-  let page = copilot?.pageCtx || null;
-  try {
-    const ctx = await getPageContext();
-    page = normalizePageContext({ ...(ctx || {}), ...(page || {}) });
-  } catch {}
-  const mode = await getSourceMode();
-  const sourceUrl = (mode === "clipboard" || page?.usingClipboard)
-    ? (page?.url || "")
-    : (page?.sourceUrl || page?.url || "");
-  const textFragmentUrl = (mode === "clipboard" || page?.usingClipboard)
-    ? ""
-    : (page?.sourceUrl || "");
-  const sourceTitle = (page?.title || "").trim();
-  const sourceLabel = (page?.sourceLabel || sourceTitle || sourceUrl || "").trim();
-  const deck = $("#deck")?.value || "";
-  const model = $("#model")?.value || "";
-  const aiSuggestionCount = copilot.acceptedCount || 0;
-  const draftOrigin = aiSuggestionCount > 0
-    ? "ai_assisted"
-    : (sourceText ? "highlight_triggered" : "user_written");
-
-  const card = {
-    id: `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    type: hasClozeDeletion ? "cloze" : "basic",
-    front,
-    back,
-    tags,
-    source_highlight: sourceText || undefined,
-    source_title: sourceTitle || undefined,
-    source_url: sourceUrl || undefined,
-    source_text_fragment_url: textFragmentUrl || undefined,
-    source_label: sourceLabel || undefined,
-    captured_at: new Date().toISOString(),
-    deck: deck || undefined,
-    model: model || undefined,
-    editor_surface: getEditorSurface(),
-    draft_origin: draftOrigin,
-    review_status: "pending",
-    ai_suggestion_count: aiSuggestionCount,
-    created_note_ids: [],
-  };
-  if (notesText) card.extra = notesText;
-  if (sourceText) card.source_excerpt = sourceText;
-  if (contextText) card.context = contextText;
-  if (page?.selectionKind) card.selection_kind = page.selectionKind;
-  if (Array.isArray(page?.selectedImages) && page.selectedImages.length) {
-    card.selected_images = page.selectedImages;
-  }
-
-  setCardReviewStatus(card, "pending");
-  triage.cards.push(card);
-  try { triage.fingerprints.add(makeFingerprint(card)); } catch {}
-  if (!triage.cards.length) triage.i = 0;
-  triage.i = Math.max(0, Math.min(triage.i, triage.cards.length - 1));
-  await updateLocalMetrics((metrics) => {
-    markMetricOnce(metrics, "first_card_queued_at");
-    bumpMetric(metrics, "cards_queued");
-    const week = new Date().toISOString().slice(0, 10);
-    const days = new Set(Array.isArray(metrics.weekly_active_writer_dates) ? metrics.weekly_active_writer_dates : []);
-    days.add(week);
-    metrics.weekly_active_writer_dates = Array.from(days).sort();
-    return metrics;
-  });
-  await recordShortcutCoachEvent("cardQueued");
-
-  $("#front").value = "";
-  $("#back").value = "";
-  $("#notes").value = "";
-  const contextEl = $("#context");
-  if (contextEl && !isStickyContextEnabled()) contextEl.value = "";
-  const sourceEl = $("#source");
-  if (sourceEl) {
-    sourceEl.value = "";
-    delete sourceEl.dataset.autoClipboard;
-  }
-  const tagsEl = $("#tags");
-  if (tagsEl) tagsEl.value = "";
-  resetCopilotLocks();
-  cancelCopilotRequests();
-  await clearManualDraftStorage();
-  setTriageActive(false);
-  renderEditor();
-  updateOutboxMeta();
-  focusFrontAtEnd();
-  persistTriageState();
-  status("Queued for review. Open Review Queue or mark it ready before sending.", true);
-  const opts = await getOptions();
-  if (getEditorSurface() === "overlay" && opts.closeOverlayAfterQueue === true) {
-    setTimeout(() => {
-      try { window.parent?.postMessage({ type: "quickflash:closeOverlay" }, "*"); } catch {}
-    }, 80);
-  }
-}
 
 async function maybeCloseOverlayAfterAdd() {
   try {
@@ -11749,7 +10105,10 @@ async function addCurrentCardToAnki() {
     back: $("#back").value || "",
     notes: $("#notes").value || "",
     source: $("#source")?.value || "",
+    tags: $("#tags")?.value || "",
+    lpcgText: $("#lpcgText")?.value || "",
   };
+  let tagsAfterAdd = typedAtStart.tags;
   let contextAfterAdd = $("#context")?.value || ""; // updated when auto-context fills it
   // Show the generated context in the field, unless the user has edited it since Add was pressed.
   const showAutoContext = (value) => {
@@ -11935,7 +10294,10 @@ async function addCurrentCardToAnki() {
       const combined = [...new Set([...typedTags, ...aiTags])];
       card.tags = combined;
       const tagsInput = $("#tags");
-      if (tagsInput) tagsInput.value = combined.join(" ");
+      if (tagsInput && (tagsInput.value || "") === tagsAfterAdd) {
+        tagsAfterAdd = combined.join(" ");
+        tagsInput.value = tagsAfterAdd;
+      }
     }
   }
 
@@ -11946,17 +10308,16 @@ async function addCurrentCardToAnki() {
     } catch {}
   }
 
-  // Ensure card has a stable local id so it can be archived & graphed
-  if (!card.id) {
-    card.id = `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
-  }
 
   const resetManualFields = async () => {
-    const tagsEl = document.querySelector("#tags");
-    if (tagsEl) tagsEl.value = ""; // ← important: prevent tag accumulation
     // Clear each field that still holds what was just sent. A field the user changed during
     // the add belongs to the next card and is kept.
     const kept = [];
+    const tagsEl = document.querySelector("#tags");
+    if (tagsEl) {
+      if ((tagsEl.value || "") === tagsAfterAdd) tagsEl.value = "";
+      else kept.push("tags");
+    }
     for (const id of ["front", "back", "notes"]) {
       const el = $(`#${id}`);
       if (!el) continue;
@@ -11974,7 +10335,10 @@ async function addCurrentCardToAnki() {
       delete sourceEl.dataset.autoClipboard;
     }
     const lpcgTextEl = document.querySelector("#lpcgText");
-    if (lpcgTextEl) lpcgTextEl.value = "";
+    if (lpcgTextEl) {
+      if ((lpcgTextEl.value || "") === typedAtStart.lpcgText) lpcgTextEl.value = "";
+      else kept.push("lpcgText");
+    }
     lpcgState.tokens = [];
     lpcgState.selected.clear();
     const lpcgBank = document.querySelector("#lpcgWordBank");
@@ -11986,8 +10350,7 @@ async function addCurrentCardToAnki() {
       cancelCopilotRequests();
       await clearManualDraftStorage();
     }
-    // Keep the source drawer coherent after the fields clear — the queue path gets this
-    // via renderEditor(); without it the summary preview and rendered iframe diverge.
+    await persistManualDraftFromInputs();
     updateOverlaySourceChrome();
   };
 
@@ -12003,7 +10366,7 @@ async function addCurrentCardToAnki() {
       for (let sequence = 1; sequence <= maxSequence; sequence += 1) {
         const lpcgCard = {
           ...card,
-          id: `${card.id}-lpcg-${sequence}`,
+          id: `lpcg-${sequence}`,
           front: forceSequenceLines ? "" : card.front,
           back: forceSequenceLines ? "" : card.back,
           lpcg: {
@@ -12084,16 +10447,11 @@ async function addCurrentCardToAnki() {
       });
       await recordShortcutCoachEvent("cardAdded");
 
-      try {
-        await archiveUpsertCards(
-          added,
-          { url: source_url, title, sourceLabel: source_label, meta, context: card.context || "" }
-        );
-      } catch (e) {
-        console.warn("Archive upsert failed:", e);
+      if (failedCount === 0) {
+        await resetManualFields();
+        await retireUploadedImagesAfterAdd(notePairs.flatMap((pair) => pair.note._uploadedImages || []));
+        await maybeCloseOverlayAfterAdd();
       }
-      await resetManualFields();
-      await maybeCloseOverlayAfterAdd();
       return;
     }
 
@@ -12118,16 +10476,8 @@ async function addCurrentCardToAnki() {
         return metrics;
       });
       await recordShortcutCoachEvent("cardAdded");
-      // Persist to local archive (card metadata for future analysis)
-      try {
-        await archiveUpsertCards(
-          [{ noteId: result, card }],
-          { url: source_url, title, sourceLabel: source_label, meta, context: card.context || "" }
-        );
-      } catch (e) {
-        console.warn("Archive upsert failed:", e);
-      }
       await resetManualFields();
+      await retireUploadedImagesAfterAdd(note._uploadedImages);
       await maybeCloseOverlayAfterAdd();
     } else {
       status("No result from AnkiConnect.");
@@ -12137,302 +10487,9 @@ async function addCurrentCardToAnki() {
   }
 }
 
-// ------- Outbox -> Anki -------
-async function sendOutboxToAnki() {
-  if (!outbox.cards.length) {
-    status(
-      triage.cards.length
-        ? "Review or mark cards ready before sending to Anki."
-        : "No cards ready to send."
-    );
-    return;
-  }
-  closeActiveModal();
+function handlePrimaryAction() { return addToAnki(); }
 
-  status("Sending cards…");
-
-  try {
-    const deckName = $("#deck").value || "All Decks";
-    const selectedModel = $("#model").value || "Basic";
-    const includeBackLink = $("#includeBackLink").checked;
-    const fillSourceField = $("#fillSourceField").checked;
-    let page = copilot?.pageCtx || null;
-    try {
-      const ctx = await getPageContext();
-      page = { ...(ctx || {}), ...(page || {}) };
-    } catch {}
-    const mode = await getSourceMode();
-    const url = (mode === 'clipboard' || page?.usingClipboard) ? '' : (page?.url || '');
-    const title = page?.title || "";
-    const meta = page?.meta || null;
-
-    const preflightContext = await getNoteBuildContext();
-    await ensureOutboxPreflight({ force: false });
-    let pendingChecks = outbox.cards.filter((card) => !card.allowDuplicate && (!card._duplicateState || card._duplicateState === "checking"));
-    if (pendingChecks.length) {
-      status("Finishing duplicate checks…");
-      await Promise.all(pendingChecks.map((card) => preflightCard(card, { context: preflightContext, silent: true })));
-      pendingChecks = outbox.cards.filter((card) => !card.allowDuplicate && (!card._duplicateState || card._duplicateState === "checking"));
-      if (pendingChecks.length) {
-        pendingChecks.forEach((card) => {
-          card._duplicateState = "error";
-          card._duplicateError = "Duplicate check timed out; sending anyway.";
-        });
-        renderOutboxList();
-        updateOutboxMeta();
-        persistOutboxState();
-      }
-    }
-
-    const notePairs = [];
-    for (const card of outbox.cards) {
-      const note = await cardToAnkiNote(
-        card,
-        deckName,
-        selectedModel,
-        includeBackLink,
-        url,
-        title,
-        fillSourceField,
-        { syncMedia: true }
-      );
-      notePairs.push({ card, note });
-    }
-    if (!notePairs.length) {
-      status("No notes to send.");
-      return;
-    }
-
-    const notesPayload = notePairs.map((p) => p.note);
-    let allowList;
-    try {
-      const canAdd = await anki("canAddNotes", { notes: notesPayload });
-      allowList = Array.isArray(canAdd) ? canAdd : notePairs.map(() => true);
-    } catch (e) {
-      // Some AnkiConnect ports (notably AnkiconnectAndroid) reject batch JSON bodies.
-      if (!isMalformedJsonError(e)) throw e;
-      allowList = notePairs.map(() => true);
-    }
-    const allowedPairs = notePairs.filter((pair, idx) => pair.card.allowDuplicate ? true : !!allowList[idx]);
-    const skipped = notePairs.length - allowedPairs.length;
-    if (!allowedPairs.length) {
-      status("All notes appear to be duplicates; nothing sent.");
-      return;
-    }
-
-    let addResult = [];
-    let usedIndividualFallback = false;
-    try {
-      addResult = await anki("addNotes", { notes: allowedPairs.map((p) => p.note) }) || [];
-    } catch (e) {
-      // Fallback: send notes individually when bulk request fails.
-      // This handles both Android JSON parse issues and network errors
-      // where some notes may have been added before the failure.
-      if (!isMalformedJsonError(e) && !isExtensionContextInvalidated(e)) {
-        console.warn("Bulk addNotes failed; falling back to individual sends.", e?.message);
-      }
-      usedIndividualFallback = true;
-      addResult = [];
-      for (const pair of allowedPairs) {
-        try {
-          const noteId = await anki("addNote", { note: pair.note });
-          addResult.push(noteId);
-        } catch (err) {
-          addResult.push(null);
-          console.warn("Failed to add note individually:", pair.card.front?.slice(0, 50), err?.message);
-        }
-      }
-    }
-    const added = [];
-    const failed = [];
-    addResult.forEach((noteId, idx) => {
-      if (noteId) {
-        added.push({ noteId, card: allowedPairs[idx].card });
-      } else {
-        failed.push(allowedPairs[idx].card);
-      }
-    });
-    if (!added.length) {
-      status("Anki did not accept any notes.");
-      showOutboxSendFailureModal("No notes were accepted by AnkiConnect.");
-      return;
-    }
-
-    for (const entry of added) {
-      setCardReviewStatus(entry.card, "sent");
-      entry.card.created_note_ids = [
-        ...(Array.isArray(entry.card.created_note_ids) ? entry.card.created_note_ids : []),
-        entry.noteId,
-      ].filter(Boolean);
-      entry.card.sent_at = new Date().toISOString();
-    }
-    const sentIds = new Set(added.map((entry) => entry.card.id));
-    const sentCards = added.map((entry) => cloneCard(entry.card));
-    outbox.lastSend = { noteIds: added.map((entry) => entry.noteId), cards: sentCards };
-    outbox.cards = outbox.cards.filter((card) => !sentIds.has(card.id));
-    triage.cards = triage.cards.filter((card) => !sentIds.has(card.id));
-    triage.accepted = triage.accepted.filter((card) => !sentIds.has(card.id));
-    triage.skipped = triage.skipped.filter((card) => !sentIds.has(card.id));
-    if (triage.i >= triage.cards.length) triage.i = Math.max(0, triage.cards.length - 1);
-
-    syncTriageState();
-    updateOutboxMeta();
-    renderOutboxList();
-    renderEditor();
-
-    await archiveUpsertCards(added, { url, title, sourceLabel: title, meta, context: meta?.ogTitle || meta?.citationTitle || "" });
-
-	    const sentCount = outbox.lastSend.noteIds.length;
-	    await updateLocalMetrics((metrics) => {
-	      markMetricOnce(metrics, "first_card_sent_at");
-	      bumpMetric(metrics, "cards_sent", sentCount);
-	      return metrics;
-	    });
-	    let message = `Sent ${sentCount} note${sentCount === 1 ? "" : "s"} to Anki.`;
-    if (skipped > 0) message += ` Skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}.`;
-    if (failed.length > 0) {
-      message += ` ${failed.length} failed (kept in queue).`;
-    }
-    status(message, failed.length === 0);
-    persistOutboxState();
-    persistTriageState();
-    // Optional: keep manual authoring area clean after bulk send
-    const tagsEl = document.querySelector("#tags");
-    if (tagsEl) tagsEl.value = "";
-  } catch (e) {
-    status(`Failed to send: ${e.message}`);
-    showOutboxSendFailureModal(e.message);
-  }
-}
-
-async function undoLastSend() {
-  const { noteIds, cards } = outbox.lastSend;
-  if (!noteIds.length) {
-    status("No previous send to undo.");
-    return;
-  }
-
-  status("Undoing last send…");
-  try {
-    await anki("deleteNotes", { notes: noteIds });
-    const restored = cards.map((c) => cloneCard(c));
-    const startIndex = triage.cards.length;
-    for (const card of restored) {
-      setCardReviewStatus(card, "pending");
-      triage.cards.push(card);
-      try { triage.fingerprints.add(makeFingerprint(card)); } catch {}
-    }
-    triage.accepted = triage.accepted.filter((card) => !restored.some((r) => r.id === card.id));
-    triage.skipped = triage.skipped.filter((card) => !restored.some((r) => r.id === card.id));
-    if (triage.cards.length) triage.i = Math.min(startIndex, triage.cards.length - 1);
-    outbox.lastSend = { noteIds: [], cards: [] };
-    syncTriageState({ activateIfCards: triage.cards.length > 0 });
-    updateOutboxMeta();
-    renderEditor();
-    status("Undid last send.", true);
-    persistOutboxState();
-    persistTriageState();
-  } catch (e) {
-    status(`Failed to undo last send: ${e.message}`);
-  }
-}
-
-function isTypingTarget(el) {
-  if (!el) return false;
-  const tag = el.tagName?.toLowerCase();
-  return ["input", "textarea", "select"].includes(tag) || el.isContentEditable;
-}
-
-// --- Triage ⇄ editing gating -----------------------------------------------
-
-// Handle programmatic focus (e.g. front.focus()), tabbing, etc.
-document.addEventListener('focusin', (event) => {
-  if (!hasPendingTriageCards()) return;
-  if (isTextField(event.target)) {
-    setTriageActive(false);
-  }
-}, true);
-
-function handleTriageShortcut(e) {
-  if (e.defaultPrevented) return;
-  const k = (e.key || "").toLowerCase();
-  const isUndoShortcut = k === "z" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-
-  if (isUndoShortcut && !isTypingTarget(e.target)) {
-    e.preventDefault();
-    undoLastTriageDecision();
-    return;
-  }
-
-  if (k === "j" && !isTypingTarget(e.target)) {
-    e.preventDefault();
-    const jsonArea = document.querySelector("#jsonImport");
-    const details = jsonArea?.closest("details");
-    if (details) details.open = true;
-    jsonArea?.focus();
-    return;
-  }
-  if (!triageActive || !hasTriageQueue()) return;
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (isTextField(e.target)) return;
-
-  if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-    e.preventDefault();
-    moveTriage(1);
-  } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-    e.preventDefault();
-    moveTriage(-1);
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    skipCurrentCard();
-  } else if (e.key === "a" || e.key === "A") {
-    e.preventDefault();
-    acceptCurrentCard();
-  } else if (e.key === "r" || e.key === "R" || k === "s") {
-    e.preventDefault();
-    skipCurrentCard();
-  } else if (k === "u") {
-    e.preventDefault();
-    undoLastSend();
-  }
-}
-document.addEventListener("keydown", handleTriageShortcut);
-
-let swipeStart = null;
-function onTouchStart(event) {
-  if (!isTriageActive() || !triageActive) return;
-  const touch = event.changedTouches?.[0];
-  if (!touch) return;
-  swipeStart = { x: touch.clientX, y: touch.clientY, t: Date.now() };
-}
-function onTouchEnd(event) {
-  if (!swipeStart || !isTriageActive() || !triageActive) return;
-  const touch = event.changedTouches?.[0];
-  if (!touch) return;
-  const dx = touch.clientX - swipeStart.x;
-  const dy = Math.abs(touch.clientY - swipeStart.y);
-  const dt = Date.now() - swipeStart.t;
-  swipeStart = null;
-  if (dt > 800) return;
-  if (Math.abs(dx) < 50 || Math.abs(dx) <= dy) return;
-  event.preventDefault();
-  if (dx > 0) {
-    acceptCurrentCard();
-  } else {
-    skipCurrentCard();
-  }
-}
-document.addEventListener('touchstart', onTouchStart, { passive: true });
-document.addEventListener('touchend', onTouchEnd, { passive: false });
-
-function handlePrimaryAction() {
-  if (isTriageActive()) {
-    return acceptCurrentCard();
-  }
-  return addToAnki();
-}
-
-function handleQueueShortcut(event) {
+function handleAddShortcut(event) {
   if (!addShortcutConfig) return;
   if (event.repeat) return;
   if (!matchesShortcut(event, addShortcutConfig)) return;
@@ -12442,16 +10499,12 @@ function handleQueueShortcut(event) {
   event.preventDefault();
   event.stopPropagation();
   try {
-    if (triageActive && !isTextField(event.target)) {
-      status("Add shortcut is for writing mode. Use A to accept review cards.");
-      return;
-    }
     addToAnki();
   } catch (err) {
     console.warn("Add shortcut failed", err);
   }
 }
-document.addEventListener("keydown", handleQueueShortcut, true);
+document.addEventListener("keydown", handleAddShortcut, true);
 
 // ------- AI card draft -------
 function buildAIPrompt(templateId, sourceText, ctx = {}) {
@@ -12757,12 +10810,11 @@ async function updateCompactCopilotVisibility() {
   if (!miniNew && !miniOld) return;
 
   const opts = await getOptions();
-  const mode = normalizeMiniCopilotMode(opts.showMiniCopilotMode || (window.GHOSTWRITER_DEFAULTS || {}).showMiniCopilotMode || 'on');
+  const mode = normalizeMiniCopilotMode(opts.showMiniCopilotMode ?? (window.GHOSTWRITER_DEFAULTS || {}).showMiniCopilotMode ?? 'off');
   copilot.showSourceModePill = opts.showSourceModePill !== false;
   const isPopover = /\bpopover\b/i.test(location.hash);
   const small = window.matchMedia('(max-width: 640px)').matches || isPopover;
-  const triageOn = isTriageModeActive();
-  const compactOn = ((mode === 'on') || (mode === 'auto' && small)) && !triageOn;
+  const compactOn = ((mode === 'on') || (mode === 'auto' && small));
 
   // Prefer the new bar; keep the legacy bar hidden to prevent duplicates
   if (miniNew) miniNew.hidden = !compactOn;
@@ -12818,6 +10870,59 @@ function markPanelReady() {
   }
 }
 
+function updatePageSourcePermissionUI(ctx = {}) {
+  const button = $("#allowPageSourceAccess");
+  if (!button) return;
+  const captured = !!(getContextSourceText(copilot?.pageCtx) || copilot?.pageCtx?.url || $("#source")?.value?.trim());
+  button.hidden = captured || !ctx?.needsTabPermission;
+}
+
+function bindPageSourcePermissionUI() {
+  const button = $("#allowPageSourceAccess");
+  if (!button || !chrome.permissions?.request) return;
+  button.addEventListener("click", () => {
+    try { chrome.permissions.request({ permissions: ["tabs"] }, async (granted) => {
+      const hint = $("#pageSourceAccessHint");
+      if (!granted || chrome.runtime.lastError) {
+        if (hint) { hint.hidden = false; hint.textContent = "Page source access was not granted. You can keep writing or paste the source, and retry this button when ready."; }
+        return;
+      }
+      if (hint) { hint.hidden = false; hint.textContent = "Page title and URL access granted. Refreshing the source…"; }
+      try {
+        const ctx = await getPageContext();
+        copilot.pageCtx = normalizePageContext(ctx);
+        if (getContextSourceText(ctx)) applyPageContextToEditor(ctx, { preserveUserText: true });
+        updateOverlaySourceChrome();
+        updatePageSourcePermissionUI(ctx);
+        if (hint) hint.textContent = "Page source refreshed. Some pages still require a highlight and right-click capture or pasted text.";
+      } catch { if (hint) hint.textContent = "Page source could not be read. You can keep writing or paste the source."; }
+    }); } catch (err) {
+      const hint = $("#pageSourceAccessHint");
+      if (hint) { hint.hidden = false; hint.textContent = "Page source access could not be requested. You can keep writing or paste the source, and retry when ready."; }
+    }
+  });
+}
+
+async function initStage2Notice() {
+  const notice = $("#stage2Notice");
+  if (!notice) return;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "ghostwriter:stage2Status" });
+    const data = await chrome.storage.local.get("ghostwriter_update_notice_v2");
+    const saved = data?.ghostwriter_update_notice_v2;
+    if (!saved || saved.kind !== "focused-editor-stage2" || saved.dismissed) return;
+    $("#stage2NoticeText").textContent = "Ghostwriter now uses direct Add and explicit Suggest. " + (response?.status?.message || saved.message || "Recovery controls are available in Settings.");
+    notice.hidden = false;
+    $("#dismissStage2Notice")?.addEventListener("click", async () => {
+      const latest = (await chrome.storage.local.get("ghostwriter_update_notice_v2"))?.ghostwriter_update_notice_v2;
+      if (latest?.id === saved.id) {
+        await chrome.storage.local.set({ ghostwriter_update_notice_v2: { ...latest, dismissed: true } });
+        notice.hidden = true;
+      }
+    });
+  } catch (err) { console.warn("Could not show the update notice:", err); }
+}
+
 async function initPanel() {
   try {
     applySurfaceModeClass();
@@ -12853,20 +10958,6 @@ async function initPanel() {
       e.stopPropagation();
       triggerCopilotNow();
     });
-    const sendOutboxBtn = $("#sendOutbox");
-    if (sendOutboxBtn) sendOutboxBtn.addEventListener("click", (e) => { e.preventDefault(); sendOutboxToAnki(); });
-    const undoSendBtn = $("#undoLastSend");
-    if (undoSendBtn) undoSendBtn.addEventListener("click", (e) => { e.preventDefault(); undoLastSend(); });
-    const openReviewQueueSurface = (e) => {
-      e.preventDefault();
-      chrome.runtime.sendMessage({ type: "ghostwriter:openReviewQueue" });
-    };
-    const reviewQueueBtn = $("#openReviewQueue");
-    if (reviewQueueBtn) reviewQueueBtn.addEventListener("click", openReviewQueueSurface);
-    const overlayReviewQueueBtn = $("#overlayReviewQueue");
-    if (overlayReviewQueueBtn) overlayReviewQueueBtn.addEventListener("click", openReviewQueueSurface);
-    const inlineReviewQueueBtn = $("#openReviewQueueInline");
-    if (inlineReviewQueueBtn) inlineReviewQueueBtn.addEventListener("click", openReviewQueueSurface);
     const miniGen    = document.querySelector("#copilotMiniGenerate");
     const miniAccept = document.querySelector("#copilotMiniAccept");
     const miniReject = document.querySelector("#copilotMiniReject");
@@ -12946,7 +11037,7 @@ async function initPanel() {
         delete document.body.dataset.aiTemplateModalOpen;
         // Return focus to the main editor so keyboard continues to work
         const front = document.getElementById('front');
-        if (front && !hasPendingTriageCards()) front.focus();
+        if (front) front.focus();
       }
 
       function triggerAiDraftWithTemplate(templateId) {
@@ -12956,7 +11047,7 @@ async function initPanel() {
         editorTemplateSelect.value = templateId;
         lastAiTemplateId = templateId;
 
-        // Reuse existing Gen logic (this should start your AI draft + triage flow)
+        // Reuse existing Gen logic (this should start your single-card draft)
         editorGenerateBtn.click();
       }
 
@@ -13010,76 +11101,6 @@ async function initPanel() {
     if (miniAccept) miniAccept.addEventListener("click", (e) => { e.preventDefault(); acceptBothSuggestions(); });
     if (miniReject) miniReject.addEventListener("click", (e) => { e.preventDefault(); rejectBothSuggestions(); });
     if (miniClear)  miniClear.addEventListener("click",  (e) => { e.preventDefault(); clearFrontBackFields(); });
-    const triageSkipBtn = $("#triageSkip");
-    if (triageSkipBtn) triageSkipBtn.addEventListener("click", (e) => { e.preventDefault(); triggerTriageSkip(); });
-    const triageFooterReject = $("#triageFooterReject");
-    if (triageFooterReject) triageFooterReject.addEventListener("click", (e) => { e.preventDefault(); triggerTriageSkip(); });
-    const triagePrevBtn = $("#triagePrev");
-    if (triagePrevBtn) triagePrevBtn.addEventListener("click", (e) => { e.preventDefault(); triggerTriagePrev(); });
-    const triageFooterPrev = $("#triageFooterPrev");
-    if (triageFooterPrev) triageFooterPrev.addEventListener("click", (e) => { e.preventDefault(); triggerTriagePrev(); });
-    const triageNextBtn = $("#triageNext");
-    if (triageNextBtn) triageNextBtn.addEventListener("click", (e) => { e.preventDefault(); triggerTriageNext(); });
-    const triageFooterNext = $("#triageFooterNext");
-    if (triageFooterNext) triageFooterNext.addEventListener("click", (e) => { e.preventDefault(); triggerTriageNext(); });
-    if (triageToolbarPrev) triageToolbarPrev.addEventListener("click", (e) => { e.preventDefault(); triggerTriagePrev(); });
-    if (triageToolbarNext) triageToolbarNext.addEventListener("click", (e) => { e.preventDefault(); triggerTriageNext(); });
-    if (triageToolbarAccept) triageToolbarAccept.addEventListener("click", (e) => { e.preventDefault(); triggerTriageAccept(); });
-    if (triageToolbarSkip) triageToolbarSkip.addEventListener("click", (e) => { e.preventDefault(); triggerTriageSkip(); });
-    const triageFooterAccept = $("#triageFooterAccept");
-    if (triageFooterAccept) triageFooterAccept.addEventListener("click", (e) => { e.preventDefault(); triggerTriageAccept(); });
-    const triageAllBtn = $("#triageAcceptAll");
-    if (triageAllBtn) triageAllBtn.addEventListener("click", (e) => { e.preventDefault(); acceptAllPending(); });
-    const triageClearBtn = $("#triageClear");
-    const clearOutboxBtn = $("#clearOutbox");
-    const hideClearOutboxAction = () => {
-      if (clearOutboxBtn) clearOutboxBtn.hidden = true;
-    };
-    const revealClearOutboxAction = () => {
-      if (!clearOutboxBtn) return;
-      clearOutboxBtn.hidden = false;
-      clearOutboxBtn.focus();
-    };
-    if (triageClearBtn) {
-      triageClearBtn.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        revealClearOutboxAction();
-      });
-      triageClearBtn.addEventListener("click", (e) => {
-        const isModifiedClick = e.metaKey && e.button === 0;
-        if (isModifiedClick) {
-          e.preventDefault();
-          revealClearOutboxAction();
-          return;
-        }
-        e.preventDefault();
-        hideClearOutboxAction();
-        clearTriageOnly();
-      });
-    }
-    if (clearOutboxBtn) {
-      clearOutboxBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        const hasTriageCards = triage.cards.length > 0;
-        if (hasTriageCards) {
-          const confirmed = window.confirm(
-            "Are you sure you want to clear the outbox? This will remove all queued cards."
-          );
-          if (!confirmed) {
-            hideClearOutboxAction();
-            return;
-          }
-        }
-        outbox.cards = [];
-        outbox.lastSend = { noteIds: [], cards: [] };
-        persistOutboxState();
-        renderOutboxList();
-        updateOutboxMeta();
-        status("Queue cleared.");
-        hideClearOutboxAction();
-      });
-    }
-    if (triageResumeBtn) triageResumeBtn.addEventListener("click", (e) => { e.preventDefault(); resumeTriage(); });
     const quickOptionsShell = document.querySelector('.quick-options-shell');
     const collapseQuickOptions = () => {
       if (!quickOptionsShell) return;
@@ -13093,10 +11114,7 @@ async function initPanel() {
     window.addEventListener('resize', collapseQuickOptions);
     const deckSel = $("#deck");
     if (deckSel) deckSel.addEventListener("change", () => {
-      triage.deck = deckSel.value || null;
       updateCardDetailsSummary();
-      persistTriageState();
-      ensureOutboxPreflight({ force: true });
     });
     const modelSel = $("#model");
     if (modelSel) modelSel.addEventListener("change", (event) => {
@@ -13104,7 +11122,6 @@ async function initPanel() {
       if (modelName) {
         chrome.storage.local.set({ [LAST_MODEL_NAME_KEY]: modelName }).catch(() => {});
       }
-      ensureOutboxPreflight({ force: true });
       updateModelFieldWarning();
       updateCardTypeUI();
       updateCardDetailsSummary();
@@ -13159,10 +11176,6 @@ async function initPanel() {
       });
     }
     updateCardTypeUI();
-    const includeBackLink = $("#includeBackLink");
-    if (includeBackLink) includeBackLink.addEventListener("change", () => { ensureOutboxPreflight({ force: true }); });
-    const fillSourceField = $("#fillSourceField");
-    if (fillSourceField) fillSourceField.addEventListener("change", () => { ensureOutboxPreflight({ force: true }); });
     const manualAutoTag = $("#manualAutoTag");
     if (manualAutoTag) manualAutoTag.addEventListener("change", (e) => {
       const checked = !!e.target.checked;
@@ -13182,6 +11195,8 @@ async function initPanel() {
       }
     });
 
+    bindPageSourcePermissionUI();
+    await initStage2Notice();
     bindStickyContextUI();
     await loadStickyContextFromStorage();
 
@@ -13198,14 +11213,13 @@ async function initPanel() {
     await initCopilot();
     await initShortcutCoach();
     bindStorageSync();
-    await restoreSavedState();
     await restoreManualDraftFromStorage();
     await refreshMetaAndDefaults();
     updateShortcutHelpText();
     focusFrontAtEnd();
     updateFrontDetection($("#front")?.value || "");
     await updateMarkdownPreview();
-    if (outbox.cards.length) await ensureOutboxPreflight({ force: false });
+    renderEditor();
   } catch (err) {
     console.error('Ghostwriter for Anki panel init failed', err);
     return;
@@ -13282,10 +11296,6 @@ async function applyEditorViewModeFromOptions() {
     html.dataset.editorView = isForcedView || (isNarrow ? "mobile" : "desktop");
   }
 
-  // When layout mode changes, make sure triage UI recomputes visibility
-  if (typeof updateTriageUI === "function") {
-    updateTriageUI();
-  }
 }
 
 applySurfaceModeClass();

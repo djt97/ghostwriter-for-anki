@@ -25,10 +25,12 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 ## Quick Start
 
 1. [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/ghostwriter-for-anki/aldemiobejkammdkfgpfnmeppnegfaoc).
-2. Install AnkiConnect in desktop Anki (add-on ID `2055492159`).
+2. In desktop Anki, open **Tools → Add-ons → Get Add-ons**, enter `2055492159`, and restart Anki. Keep Anki open when sending cards. See [installation](./docs/installation.md) for connection and permission setup.
 3. Highlight text on a page and open Ghostwriter from the extension icon, context menu, or shortcut.
 4. Write the card in the overlay; press the Copilot autocomplete shortcut when useful.
 5. Add the card directly to Anki.
+
+The compact Suggest/Accept/Reject/Clear bar is hidden by default. Keyboard shortcuts still work. You can enable the buttons in **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**; existing saved display choices are retained.
 
 Ghostwriter includes 100 lifetime hosted-model requests per browser installation, with no per-install daily cap and no paid plan. Temporary network and service safety limits may still pause included requests. You can instead connect your own provider or local OpenAI-compatible model. Supported Chrome installations can also opt in to Chrome's on-device Prompt API (English only in the current adapter); setup is explicit because Chrome may need to download its model. Hosted fallback from the on-device model is separately controllable in Options.
 
@@ -39,11 +41,11 @@ npm ci
 npm run build:release
 ```
 
-Release zips are published on the [Releases](https://github.com/djt97/ghostwriter-for-anki/releases) page.
+The build creates `dist/ghostwriter/` and `dist/ghostwriter.zip` locally. Use the store link above for normal installation; these instructions do not assume a downloadable ZIP has been published.
 
 ## Privacy and policy docs
 
-- [Privacy Policy](https://github.com/djt97/ghostwriter-for-anki/blob/main/PRIVACY_POLICY.md)
+- [Privacy Policy](./PRIVACY_POLICY.md)
 - [Privacy Notes](./privacy.md)
 
 ## Third-party notices

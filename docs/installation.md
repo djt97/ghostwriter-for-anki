@@ -1,65 +1,49 @@
 # Installation
 
-This guide covers both end-user installation and local developer setup.
+## Install from the store
 
-## Prerequisites
+Install [Ghostwriter for Anki from the Chrome Web Store](https://chromewebstore.google.com/detail/ghostwriter-for-anki/aldemiobejkammdkfgpfnmeppnegfaoc) in Chrome or Edge. The store version may precede changes in the source repository.
 
-- Chrome or Edge (Manifest V3 support)
-- Desktop Anki
-- AnkiConnect add-on installed in Anki (`2055492159`)
+## Set up desktop Anki
 
-Keep Anki running whenever you send cards.
+1. Open desktop Anki and select **Tools → Add-ons → Get Add-ons**.
+2. Enter `2055492159`, the [AnkiConnect add-on code](https://ankiweb.net/shared/info/2055492159).
+3. Restart Anki and leave it running whenever you send cards.
+4. Open Ghostwriter **Options → Setup → AnkiConnect**. Keep the default endpoint, `http://127.0.0.1:8765`, for Anki on this computer.
+5. Press **Test AnkiConnect**. A successful version check establishes reachability; Ghostwriter still needs permission for subsequent Anki operations.
+6. When AnkiConnect asks whether to allow Ghostwriter, allow the connection. If it was refused, follow the [refusal steps](./troubleshooting.md#anki-refused-the-connection).
 
----
+Anki's [add-on instructions](https://docs.ankiweb.net/addons.html) explain how to install and manage add-ons.
 
-## Option A: Install from release ZIP (recommended)
+## Choose a model
 
-1. Download the standard Ghostwriter release bundle.
-2. Unzip to a folder.
-3. Open `chrome://extensions` (or `edge://extensions`).
-4. Enable **Developer mode**.
-5. Click **Load unpacked**.
-6. Select the unzipped extension folder.
-7. The default opener is **Open Ghostwriter for Anki Overlay** at `Option+Shift+F` on Mac and `Ctrl+Shift+F` on Windows/Linux. The side panel toggle shortcut is `Ctrl/Cmd+Shift+L`.
+Ghostwriter includes 100 lifetime hosted-model requests per browser installation. No key is needed for these requests. Temporary network and service limits may still pause them.
 
----
+You can instead configure a supported provider or local OpenAI-compatible endpoint in **Advanced provider settings**. On supported Chrome desktop installations, you can explicitly set up Chrome on-device AI. The current adapter uses English text; Chrome may download a model during setup. Its **hosted fallback** setting determines whether failed on-device requests may go to the included hosted model.
 
-## Option B: Install from source (local dev)
+Auto-Tag and Auto-Context are enabled by default and may make model requests when you add a card. Turn them off in Quick Options if you want to write without those requests. Read the [privacy policy](../PRIVACY_POLICY.md) before choosing a backend.
 
-### 1) Clone and install dependencies
+If a Source action cannot read the active page's title or URL, click **Allow page source access** when the editor offers it, or use that button in **Options → Setup → Page source access**. This optional tab permission is not requested during startup. Declining it leaves the editor usable with captured or manually entered content.
+
+## Local development or an approved test build
+
+From a source checkout, run:
 
 ```bash
 npm ci
-```
-
-### 2) Build release artifacts (optional but recommended)
-
-```bash
 npm run build:release
 ```
 
-This creates the packaged extension under `dist/`.
+The production build creates `dist/ghostwriter/` and `dist/ghostwriter.zip` locally. This is not a promise that a release ZIP exists online.
 
-### 3) Load unpacked extension
+Open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, choose **Load unpacked**, and select `dist/ghostwriter/`. For iterative development, you can load the repository root instead. Disable the store copy while testing another copy to avoid using the wrong editor. Reload the extension and reopen its panels after a code change.
 
-You can load either the repository root (`manifest.json`) for iterative development or the packaged extension under `dist/`.
+The overlay shortcut is `Option+Shift+F` on Mac and `Ctrl+Shift+F` on Windows/Linux. The side-panel toggle is `Cmd+Shift+L` on Mac and `Ctrl+Shift+L` elsewhere.
 
----
+## Upgrade and recovery
 
-## Post-install setup
+The source update retires Review Queue, its outbox and suggestions that appear automatically while typing. The editor still sends cards directly to Anki, and Copilot runs when you press Suggest or its shortcut.
 
-1. Open extension **Options**.
-2. Choose how Copilot and model-backed metadata helpers should run:
-   - Do nothing to use the 100 lifetime included hosted-model requests for this browser installation (no per-install daily cap and no paid plan; temporary service safety limits may still apply).
-   - Or add your own supported provider credentials or local OpenAI-compatible endpoint.
-   - Or, on a supported Chrome desktop installation, explicitly set up and enable Chrome on-device AI. The current adapter is English-only, and Chrome may download its model during setup.
-3. If you enable Chrome on-device AI, decide whether **hosted fallback** may send a failed or unavailable on-device request to Ghostwriter's included hosted model, then save Options.
-4. Verify AnkiConnect points to your Anki endpoint (default `http://127.0.0.1:8765`).
+Before clearing legacy queue/archive records, the update saves and verifies a local recovery backup. It keeps pasted-image data so that images referenced by the backup remain available. Current editor drafts, settings, provider keys and cards already in Anki are preserved.
 
----
-
-## Upgrade notes
-
-- Reload the extension after pulling new code.
-- If UI behavior seems stale, also reload any open Ghostwriter panel tabs.
-- Re-check permissions if browser version changed.
+In Options, **Export recovery backup** saves the retained records and image data to a local JSON file. The export does not include settings or provider keys, but may contain private card text, source URLs and images. If cleanup could not complete, **Retry safe cleanup** retries the backup-and-cleanup procedure. Keep an exported copy if you need to recover old records; exporting is not an import into Anki.

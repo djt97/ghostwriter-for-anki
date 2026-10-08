@@ -136,19 +136,6 @@
       cursor: pointer;
     }
     .header-theme-btn:hover { color: var(--text); border-color: var(--muted); }
-    .queue-badge {
-      min-width: 18px;
-      height: 18px;
-      padding: 0 5px;
-      border-radius: 999px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      background: color-mix(in oklab, var(--accent) 14%, var(--surface));
-      color: var(--accent);
-      font-size: 11px;
-      font-weight: 700;
-    }
 
     main { padding: 12px; padding-bottom: 60px; display: grid; gap: 12px; max-width: 820px; margin: 0 auto; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -438,7 +425,6 @@
       border-style: dashed;
     }
     .btns .subtle-btn:hover { color: var(--text); }
-    .outbox-hint { margin-top: 6px; }
     button {
       padding: 8px 10px;
       border: 1px solid var(--border);
@@ -656,6 +642,8 @@
       border-radius: var(--radii-sm);
       padding: 6px 8px;
     }
+    #stage2Notice { color: var(--text); }
+    #stage2Notice a { color: var(--accent); }
     .ghostwriter-info {
       margin-top: 6px;
       display: grid;
@@ -712,19 +700,7 @@
     }
     .long-source-notice[hidden] { display: none; }
     .long-source-notice button { font-size: 12px; flex-shrink: 0; }
-    .editor-nav-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
-    .editor-nav-buttons[hidden] { display: none; }
-    .editor-nav-buttons button { padding: 6px 8px; font-size: 12px; }
     .editor-meta { font-size:12px; color:var(--muted); }
-    .alt-answers { display:flex; flex-direction:column; gap:8px; margin:10px 0 4px; }
-    .alt-answers[hidden] { display:none; }
-    .alt-answer {
-      display:flex; flex-direction:column; gap:6px;
-      border: 1px dashed var(--border);
-      padding: 8px;
-      border-radius: var(--radii-sm);
-      background: var(--surface-2);
-    }
     .alt-text { font-size: 12px; color: var(--muted); }
     .alt-actions { display:flex; gap:6px; flex-wrap:wrap; }
     .alt-actions button { font-size:11px; padding:4px 6px; }
@@ -784,47 +760,6 @@
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
-
-    /* ---------- Outbox ---------- */
-    #outboxList { display:flex; flex-direction:column; gap:8px; margin:8px 0; }
-    .outbox-card {
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 10px;
-      background: var(--surface);
-      box-shadow: var(--shadow-sm);
-      display: flex; flex-direction: column; gap: 6px;
-    }
-    .outbox-card-header { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-    .outbox-card-title { font-weight:600; font-size:12px; color: var(--text); flex:1; }
-    .outbox-card-meta { font-size:11px; color: var(--muted); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .outbox-card-actions { display:flex; gap:6px; flex-wrap:wrap; }
-    .outbox-card-actions button { font-size:11px; padding:4px 6px; }
-    .outbox-flag {
-      font-size:11px; padding:2px 6px; border-radius: 999px; border: 1px solid var(--border);
-      background: color-mix(in oklab, var(--surface) 85%, #ffedd5);
-      color: #7a2e0e;
-    }
-    .outbox-flag.error {
-      background: color-mix(in oklab, var(--surface) 85%, #fee2e2);
-      color: #991b1b;
-    }
-    .outbox-flag.forced {
-      background: color-mix(in oklab, var(--surface) 85%, #dcfce7);
-      color: #14532d;
-    }
-
-    /* ---------- Duplicate banner (in triage editor) ---------- */
-    .duplicate-banner {
-      margin: 8px 0; padding: 10px 12px;
-      border-radius: var(--radius);
-      border: 1px solid color-mix(in oklab, var(--border) 60%, #f59e0b);
-      background: color-mix(in oklab, var(--surface) 85%, #fff7ed);
-      color: #7a2e0e;
-      display:flex; flex-wrap:wrap; gap:8px; align-items:center;
-    }
-    .duplicate-banner strong { font-weight:600; }
-    .duplicate-banner .actions { display:flex; gap:6px; flex-wrap:wrap; }
 
     /* ---------- Modal ---------- */
     .modal-overlay {
@@ -994,9 +929,6 @@
       outline: none;
       box-shadow: 0 0 0 var(--focus-outline) var(--ring);
     }
-    body[data-triage-active="true"] .shortcut-help-btn {
-      bottom: 64px;
-    }
     .shortcut-list {
       list-style: none;
       padding: 0;
@@ -1025,33 +957,6 @@
       border: 1px solid color-mix(in oklab, var(--border) 60%, #f59e0b);
       background: color-mix(in oklab, var(--surface) 88%, #fff7ed);
       color: #7a2e0e;
-    }
-
-    .triage-footer {
-      position: fixed;
-      inset-inline: 0;
-      bottom: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 10px 12px;
-      background: var(--surface);
-      border-top: 1px solid var(--border);
-      box-shadow: 0 -4px 12px rgba(0,0,0,.12);
-      z-index: 20;
-    }
-    .triage-footer[hidden] { display: none; }
-    .triage-footer button { padding: 8px 12px; font-size: 13px; }
-    body[data-triage-active="true"] header {
-      border-bottom-color: color-mix(in oklab, var(--accent) 60%, var(--border));
-      box-shadow: 0 4px 18px rgba(37,99,235,.12);
-    }
-    body[data-triage-active="true"] .editor-status {
-      color: var(--accent);
-    }
-    body[data-triage-active="true"] .triage-footer {
-      box-shadow: 0 -4px 16px rgba(15,23,42,.18);
     }
 
     /* ---------- Scrollbar polish (Chromium/WebKit) ---------- */
@@ -1084,67 +989,6 @@
     }
     .mini-copilot-bar[hidden] { display: none; }
     .mini-copilot-bar button { font-size: 12px; padding: 6px 8px; }
-
-    .triage-toolbar {
-      grid-column: 1 / -1;
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 8px;
-      margin: 4px 0 8px;
-      max-width: 100%;
-      box-sizing: border-box;
-    }
-    .triage-toolbar[hidden] {
-      display: none !important;
-    }
-    .triage-toolbar button {
-      font-size: 12px;
-      padding: 4px 8px;
-    }
-    .triage-toolbar button.primary {
-      background: var(--accent);
-      color: var(--accent-ink);
-      border-color: var(--accent);
-      box-shadow: var(--shadow-sm);
-    }
-
-    /* --- Mobile triage + Copilot integration --- */
-
-    /* In mobile editor view, turn triage toolbar into a sticky footer bar */
-    html[data-editor-view="mobile"] body[data-triage-active="true"] #triageToolbar {
-      position: sticky;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      z-index: 20;
-      margin: 4px 0 0;
-      padding: 8px;
-      background: linear-gradient(
-        180deg,
-        color-mix(in oklab, var(--surface) 96%, transparent),
-        var(--surface)
-      );
-      border-top: 1px solid color-mix(in oklab, var(--border) 70%, var(--accent) 20%);
-      box-shadow: 0 -4px 16px rgba(15,23,42,.18);
-      justify-content: space-between;
-      flex-wrap: wrap;
-      max-width: 100%;
-      box-sizing: border-box;
-    }
-
-    html[data-editor-view="mobile"] body[data-triage-active="true"] #triageToolbar button {
-      flex: 1 1 calc(50% - 6px);
-      min-width: 0;
-      white-space: nowrap;
-    }
-
-    /* Make the Copilot mini bar feel attached to the triage bar in mobile triage mode */
-    html[data-editor-view="mobile"] body[data-triage-active="true"] #copilotMini {
-      margin-bottom: 0;
-      padding-bottom: 4px;
-      border-bottom: 1px dashed color-mix(in oklab, var(--border) 70%, var(--accent) 10%);
-    }
 
     .copilot-mini select.small {
       min-width: 0;
@@ -1278,33 +1122,6 @@
       .editor-status-wrap {
         flex: 1 1 100%;
       }
-    }
-
-    /* One‑time triage gesture hint */
-    .triage-hint {
-      margin: 0 0 8px;
-    }
-    .triage-hint[hidden] {
-      display: none;
-    }
-    .triage-hint-body {
-      padding: 8px 10px;
-      border-radius: 8px;
-      border: 1px dashed rgba(148, 163, 184, 0.7);
-      background: radial-gradient(circle at top left, rgba(59,130,246,0.18), transparent 55%), var(--surface-2);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: flex-start;
-      font-size: 13px;
-    }
-    .triage-hint-body strong {
-      font-size: 13px;
-    }
-    #triageHintDismiss {
-      margin-left: auto;
-      font-size: 12px;
-      padding: 4px 8px;
     }
 
     /* ------ Overlay-first writing surface ------ */
@@ -1529,10 +1346,6 @@
       display: none !important;
     }
 
-    #openReviewQueueInline {
-      display: none;
-    }
-
     body.is-overlay-surface .primary-action-row {
       position: fixed;
       left: 50%;
@@ -1555,13 +1368,7 @@
       display: none;
     }
 
-    body.is-overlay-surface .primary-action-row:has(#triageSkip:not([hidden])) #openReviewQueueInline {
-      display: none;
-    }
-
-    body.is-overlay-surface .primary-action-row #add,
-    body.is-overlay-surface .primary-action-row #openReviewQueueInline,
-    body.is-overlay-surface .primary-action-row #triageSkip:not([hidden]) {
+    body.is-overlay-surface .primary-action-row #add{
       justify-content: center;
       font-weight: 700;
       min-height: 38px;
@@ -1572,11 +1379,6 @@
 
     body.is-overlay-surface .primary-action-row .button-shortcut {
       display: none;
-    }
-
-    body.is-overlay-surface .primary-action-row #triageSkip:not([hidden]) {
-      grid-column: 1;
-      grid-row: 1;
     }
 
     /* --- Mobile editor typography & tap-zoom behaviour --- */
@@ -1608,8 +1410,6 @@
     html[data-editor-view="mobile"] select {
       font-size: 16px;
     }
-
-    html[data-editor-view="mobile"] .triage-toolbar button,
     html[data-editor-view="mobile"] .copilot-mini button,
     html[data-editor-view="mobile"] .mini-copilot-bar button {
       font-size: 14px;
@@ -1641,11 +1441,6 @@
       overflow-y: auto;     /* scroll when the text is long */
     }
 
-    /* In mobile view, prefer the inline triage toolbar and hide footer triage bar */
-    html[data-editor-view="mobile"] #triageFooter {
-      display: none !important;
-    }
-
     /* Hide the legacy Copilot suggestion card; only show ghost overlays */
     .copilot-suggestion { display: none !important; }
     .copilot-working    { display: none !important; }
@@ -1672,25 +1467,14 @@
       <div id="overlayHeaderSource" class="overlay-header-source" aria-live="polite">No source captured</div>
     </div>
     <div class="inline small header-actions">
-      <button type="button" id="overlayReviewQueue" class="header-review-btn">
-        Review Queue <span id="overlayReviewBadge" class="queue-badge">0</span>
-      </button>
+
       <button type="button" id="themeToggle" class="header-theme-btn" title="Theme: System — click to change">◐</button>
       <a href="options.html" target="_blank" class="header-settings-link">Settings</a>
     </div>
   </header>
 
   <main>
-    <!-- One‑time mobile triage gesture hint -->
-    <div id="triageHint" class="triage-hint" hidden>
-      <div class="triage-hint-body">
-        <div>
-          <strong>Review tips</strong>
-          <div>On mobile: swipe <b>right</b> to accept, swipe <b>left</b> to reject. You can also use the toolbar buttons.</div>
-        </div>
-        <button type="button" id="triageHintDismiss">Got it</button>
-      </div>
-    </div>
+
     <details id="cardEditor" class="card-entry editor-shell" open>
       <summary>Card editor</summary>
       <div class="card-entry-body">
@@ -1700,7 +1484,7 @@
               <div class="editor-status-wrap">
                 <div id="editorStatus" class="editor-status">Card details</div>
                 <div id="cardDetailsSummary" class="editor-meta">Deck, note type, tags, and helpers</div>
-                <div id="triageMeta" class="editor-meta"></div>
+
               </div>
               <span class="card-details-action">
                 <span class="card-details-open-label">Details</span>
@@ -1770,22 +1554,27 @@
                 <summary>Quick options</summary>
                 <div class="quick-options">
                   <label class="inline"><input id="fillSourceField" type="checkbox" checked /> Fill <b>Source</b> field (if it exists)</label>
-                  <label class="inline"><input id="includeBackLink" type="checkbox" /> Add clickable link on Back</label>
+                  <label class="inline"><input id="includeBackLink" type="checkbox" /> Also show source link on Back</label>
                   <label class="inline"><input id="manualAutoTag" type="checkbox" /> Auto-tag</label>
                   <label class="inline"><input id="manualAutoContext" type="checkbox" /> Generate context</label>
                   <label class="inline"><input id="mathjaxPreview" type="checkbox" /> Auto preview</label>
-                  <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable Copilot autocomplete</label>
+                  <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable Copilot Suggest</label>
                 </div>
+                <p class="small">A known page or PDF URL is always kept in the note: in Source when selected and available, otherwise alongside the card content. Clipboard text without a known page URL has no invented link.</p>
               </details>
             </div>
           </details>
-          <div class="editor-nav-buttons" id="editorNavButtons" hidden>
-            <button type="button" id="triagePrev">◀ Prev</button>
-            <button type="button" id="triageNext">Next ▶</button>
-          </div>
+
         </div>
 
         <p id="pageNotice" class="page-notice small" role="status" hidden></p>
+        <button type="button" id="allowPageSourceAccess" hidden>Allow page source access</button>
+        <p id="pageSourceAccessHint" class="small" role="status" hidden></p>
+        <aside id="stage2Notice" class="small ghostwriter-warning" role="status" hidden>
+          <span id="stage2NoticeText"></span>
+          <a href="options.html" target="_blank" rel="noopener">Settings and recovery</a>
+          <button type="button" id="dismissStage2Notice">Dismiss</button>
+        </aside>
         <details id="sourceContextDetails" class="card metadata-drawer source-drawer" open>
           <summary>
             <span class="source-summary-label">Source</span>
@@ -1812,7 +1601,7 @@
           </div>
         </details>
         <div id="longSourceNotice" class="small long-source-notice" role="status" aria-live="polite" hidden>
-          <span>Long selection — Copilot autocomplete works best on a sentence or two. Try selecting a smaller passage.</span>
+          <span>Long selection — Copilot Suggest works best on a sentence or two. Try selecting a smaller passage.</span>
           <button type="button" id="dismissLongSourceNotice">Dismiss</button>
         </div>
 
@@ -1940,7 +1729,7 @@
           </div>
 
           <!-- Compact Copilot autocomplete panel -->
-          <div id="copilotMini" class="copilot-mini">
+          <div id="copilotMini" class="copilot-mini" hidden>
             <select id="editorTemplateSelect" class="small" hidden></select>
             <button type="button" id="editorGenerateBtn" title="Draft one card from Source" tabindex="-1" hidden>Draft</button>
             <button type="button" id="copilotMiniGenerate" title="Request Copilot suggestion" tabindex="-1">Suggest</button>
@@ -1948,14 +1737,6 @@
             <button type="button" id="copilotMiniAccept" title="Accept both" tabindex="-1">Accept</button>
             <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)" tabindex="-1">Reject</button>
             <button type="button" id="copilotMiniClear" title="Clear Front &amp; Back" tabindex="-1">Clear</button>
-          </div>
-
-          <!-- Review toolbar (mobile-friendly; shown when review is active) -->
-          <div id="triageToolbar" class="triage-toolbar" hidden>
-            <button type="button" id="triageToolbarPrev" title="Previous (↑ / ←)">◀ Prev</button>
-            <button type="button" id="triageToolbarSkip" title="Reject (Esc)">Reject</button>
-            <button type="button" id="triageToolbarAccept" class="primary" title="Accept (A)">Accept</button>
-            <button type="button" id="triageToolbarNext" title="Next (↓ / →)">Next ▶</button>
           </div>
 
           <div>
@@ -1986,10 +1767,8 @@
           </div>
         </div>
 
-        <div id="altAnswers" class="alt-answers" hidden></div>
       </div>
     </details>
-
 
     <details id="debugPanel" class="card-entry" hidden>
       <summary>Debugging</summary>
@@ -2024,34 +1803,12 @@
       </div>
     </details>
 
-    <details id="readyToSendSection" class="card-entry" hidden>
-      <summary>Review &amp; Send</summary>
-      <div class="card-entry-body">
-        <div class="btns">
-          <button type="button" id="openReviewQueue">Open Review Queue</button>
-        </div>
-        <div class="small" id="outboxMeta"></div>
-        <div id="outboxList"></div>
-        <div class="btns">
-          <button id="sendOutbox" class="primary">Send to Anki</button>
-          <button id="undoLastSend">Undo last send</button>
-        </div>
-        <div class="btns">
-          <button type="button" id="triageAcceptAll" class="primary">Mark all ready</button>
-          <button type="button" id="triageClear">Reset</button>
-          <button type="button" id="clearOutbox" class="subtle-btn" hidden>Clear queue</button>
-          <button type="button" id="triageResume" hidden>Resume review</button>
-        </div>
-      </div>
-    </details>
-
     <div class="btns primary-action-row">
       <button id="refresh" class="maintenance-action">↻ Refresh decks/types</button>
-      <button type="button" id="openReviewQueueInline" class="secondary-action">Review Queue</button>
-      <button type="button" id="triageSkip" hidden>Reject</button>
+
       <button class="primary primary-with-shortcut" id="add">
         <span class="button-label">Add to Anki</span>
-        <kbd id="queueShortcutButtonHint" class="button-shortcut">Cmd + Shift + A</kbd>
+        <kbd id="addShortcutButtonHint" class="button-shortcut">Cmd + Shift + A</kbd>
       </button>
     </div>
 
@@ -2062,13 +1819,6 @@
     <div class="modal copilot-fact-modal" role="dialog" aria-modal="true" aria-labelledby="copilotFactPickerTitle">
       <div id="copilotFactPickerBody"></div>
     </div>
-  </div>
-
-  <div id="triageFooter" class="triage-footer" hidden>
-    <button type="button" id="triageFooterPrev">[←] Prev</button>
-    <button type="button" id="triageFooterReject" class="warning">[R] Reject</button>
-    <button type="button" id="triageFooterAccept" class="primary">[A] Accept</button>
-    <button type="button" id="triageFooterNext">[→] Next</button>
   </div>
 
   <footer class="small">
@@ -2094,7 +1844,7 @@
             <code>Cmd/Ctrl + Shift + L</code>
           </li>
           <li>
-            <span>Copilot autocomplete</span>
+            <span>Copilot Suggest</span>
             <code id="shortcutCopilot">Cmd/Ctrl + Shift + X</code>
           </li>
           <li>
@@ -2102,12 +1852,8 @@
             <code id="shortcutAdd">Custom</code>
           </li>
           <li>
-            <span>Accept / reject</span>
-            <code>A / R (or Esc)</code>
-          </li>
-          <li>
-            <span>Next / previous card</span>
-            <code>Arrow keys</code>
+            <span>Accept / dismiss suggestion</span>
+            <code>Tab / Esc</code>
           </li>
           <li>
             <span>Close overlay</span>

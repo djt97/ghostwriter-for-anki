@@ -22,11 +22,13 @@ You can open Ghostwriter using:
 1. Open the overlay, side panel, or standalone tab.
 2. Pick deck and note model.
 3. Type a prompt/question in **Front**.
-4. Request Copilot autocomplete when useful:
+4. Request Copilot autocomplete with `Ctrl/Cmd+Shift+X` when useful, or **Suggest** when its button is shown:
    - `Tab` to accept inline suggestion
-   - or click accept controls
+   - or click Accept when its control is shown
 5. Fill/review **Back**.
 6. Add the finished card to Anki with `Ctrl/Cmd+Shift+A` or the **Add to Anki** button.
+
+Suggestions appear only when requested. The compact Suggest/Accept/Reject/Clear bar is hidden by default; existing saved display choices remain in effect. To show the buttons, use **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**. Keyboard shortcuts work with the bar hidden. Review Queue and its outbox are retired in the source update; **Add to Anki** sends the edited card directly to Anki.
 
 ## Source and context behavior
 
@@ -52,3 +54,5 @@ When model tagging is unavailable, Auto-Tag may add at most one high-confidence 
 - Prefer one target per card.
 - Reject suggestions that drift toward generic trivia, vague context, or passage restatement.
 - Treat AI output as a draft; edit it before adding the card.
+
+Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged and may contain URLs. A known full HTTP(S) source URL remains in the Anki Source field or backlink. Known local-file/PDF-viewer addresses remain as escaped source text rather than clickable links. This reduction applies to those automatic helpers; Copilot uses the selected source, which can include URLs or image metadata. Clipboard text without a known source page has no source URL to save.

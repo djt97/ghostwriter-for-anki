@@ -1396,7 +1396,7 @@ describe('panel.js shortcut coaching', () => {
   });
 
   it('teaches suggestion accept/dismiss without opening a tour', () => {
-    assert.ok(panelSource.includes('Use ${suggestionShortcut} for Copilot autocomplete.'));
+    assert.ok(panelSource.includes('Use ${suggestionShortcut} for Copilot Suggest.'));
     assert.ok(panelSource.includes('Tab to accept'));
     assert.ok(panelSource.includes('Esc to dismiss'));
     assert.ok(panelSource.includes('rejectFocusedCopilotSuggestion'));

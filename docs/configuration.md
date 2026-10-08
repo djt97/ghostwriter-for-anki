@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Ghostwriter's Options page is intentionally small in focused v2. The editor is the product; settings should only change the daily writing path when they clearly need to. A left-side menu shows one settings pane at a time, with Connection shown first by default.
+Ghostwriter's Options page shows one settings pane at a time, with Connection shown first by default.
 
 ## 1) Connection
 
@@ -12,7 +12,8 @@ Ghostwriter's Options page is intentionally small in focused v2. The editor is t
 ## 2) Copilot autocomplete
 
 - Copilot autocomplete can be turned on or off.
-- Autocomplete is manually requested with the configured shortcut.
+- Autocomplete is requested with the configured shortcut, or Suggest when its button is shown; suggestions do not appear automatically while you type.
+- The compact Suggest/Accept/Reject/Clear bar defaults to **Off**. Set its visibility under **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**. Existing saved **On**, **Auto (mobile only)** and legacy **Always** choices are retained; Always is treated as On. Hiding the bar does not disable keyboard shortcuts.
 - Ghostwriter completes the field the user is writing; it does not expose public prompt/template editing in the main Options page.
 - Source-verbatim split assistance remains available locally when model-backed autocomplete is off.
 - Default editor surface can be Overlay, Side panel, or standalone Tab.
@@ -30,6 +31,7 @@ Ghostwriter's Options page is intentionally small in focused v2. The editor is t
 - Auto-Tag uses the same selected model route as Copilot autocomplete.
 - If model tagging is unavailable or fails, Auto-Tag may add at most one subject tag from a conservative, local deterministic classifier. It only emits a tag when confidence is high.
 - Auto-Context reuses useful page or media metadata locally first, then uses the selected model route if no label is available. It has no semantic-classifier fallback after model failure.
+- Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. HTTP(S) URLs in those hints are reduced to hostnames. Front/Back text is unchanged and may itself contain URLs. The full known source URL remains in the card's Anki Source field or backlink.
 
 ## 5) Defaults
 
@@ -48,3 +50,9 @@ Ghostwriter's Options page is intentionally small in focused v2. The editor is t
 ## 7) Privacy
 
 Ghostwriter stores settings and draft cards locally. A cloud-backed Copilot or metadata request sends the selected source text, current card text, and prompt to the active endpoint. Chrome on-device requests are processed on the device unless separately enabled hosted fallback is used. See the [Privacy Policy](../PRIVACY_POLICY.md) for the complete routing and endpoint disclosure.
+
+## 8) Permissions and recovery
+
+`tabs` and `clipboardRead` are optional permissions. If source-tab information is unavailable through the current `activeTab` grant, click **Allow page source access** when the editor offers it, or use that button in **Options → Setup → Page source access**. Opening Settings does not request this permission. If you decline, you can keep writing with captured or manually entered content and retry the button later. Clipboard access supports explicit Clipboard Source controls. The extension no longer requests `notifications`.
+
+**Export recovery backup** saves legacy queue/archive records and retained image data to a local JSON file. Images removed from the active cache after a confirmed upload and note add are first retained in a verified recovery backup. **Retry safe cleanup** retries a failed backup-and-cleanup procedure. The backup remains in extension storage; no control deletes it automatically. These controls do not change your current drafts, settings, provider keys or Anki collection.

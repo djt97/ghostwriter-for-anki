@@ -31,13 +31,12 @@
     "storage",
     "activeTab",
     "scripting",
-    "tabs",
     "contextMenus",
-    "sidePanel",
-    "notifications"
+    "sidePanel"
   ],
   "optional_permissions": [
-    "clipboardRead"
+    "clipboardRead",
+    "tabs"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",

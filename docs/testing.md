@@ -1,51 +1,32 @@
 # Testing Guide
 
-## Test stack
-
-Ghostwriter uses Playwright for extension UI coverage.
-
-Primary spec:
-
-- `tests/extension.e2e.spec.ts`
-
-## Install browser dependencies
+## Unit and browser checks
 
 ```bash
+npm test
+npm run lint
 npm run test:install
+npm run build:release
+EXT_PATH=dist/ghostwriter npm run test:screenshots
 ```
 
-## Run screenshot/UI suite
+The UI suite uses Playwright and `tests/extension.e2e.spec.ts`. Tests must use fresh temporary browser profiles, mock both Anki loopback names, and block hosted/model-provider requests before opening an editor. Anki fixtures and fake keys must never use a real collection or provider allowance.
 
-```bash
-npm run test:ui
-```
+Production builds disable query-driven content and panel test behavior. Exercise normal extension message routes when testing the release. Explicit CI builds may set `GHOSTWRITER_BUILD_TEST_HOOKS=1`; their output must not be uploaded. Tests of production hook rejection must use a build made without that option.
 
-Equivalent command:
+## Check the artifact
 
-```bash
-npm run test:screenshots
-```
+Verify the resource list and disabled test modes in the ZIP, then extract it into a fresh directory and run the relevant browser checks against that directory. Record the tested archive hash and test counts. Existing source tests or historical counts do not establish that a new release passes.
 
-## What the UI test validates
+Regression coverage should include:
 
-- Extension loads in Chromium persistent context
-- Content script responds to ping
-- Overlay opens and becomes visible
-- Panel iframe reaches ready state
-- Deck selector appears
-- Screenshots captured for light/dark overlay + panel tab
+- Anki permission denial, malformed permission replies, later grant and HTTP 401/403 refusal handling.
+- Direct Add, preservation of text after refusal, and Source refresh.
+- Optional tab/clipboard permission behavior and refusal fallbacks.
+- Legacy backup creation/readback, failure and safe retry; draft, settings, key and image preservation.
+- Metadata hostname reduction while the full Anki source backlink remains intact.
+- MathJax, raw/rendered Source, and light/dark editor views.
 
-## CI considerations
+## Manual release checks
 
-The GitHub UI workflow runs the screenshot suite under Xvfb with a persistent Chromium profile. Use `GHOSTWRITER_SKIP_UI=1` only for temporary incident response when browser startup is known to be broken.
-
-## Manual verification checklist
-
-Before release, verify:
-
-1. Overlay opens on a normal HTTPS page.
-2. Side panel opens via action.
-3. Provider call works with test key.
-4. AnkiConnect connection check passes with desktop Anki running.
-5. Outbox send creates notes in expected deck/model.
-6. The release zip loads as an unpacked extension and includes the expected extension files.
+Try the extension on a normal HTTPS page and in the side panel. Check real PDF right-click selection and Windows/Linux keyboard behavior. Real Anki adds and live model requests require an explicitly approved disposable collection/deck and provider budget; fixture checks do not authorize those actions.

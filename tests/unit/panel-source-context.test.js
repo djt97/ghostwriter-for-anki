@@ -68,6 +68,31 @@ const sourceFns = new Function(`
   };
 `)();
 
+function makePanelMessageSandbox() {
+  const start = panelSource.indexOf('const EXTENSION_ORIGIN =');
+  const end = panelSource.indexOf('chrome.runtime.onMessage', start);
+  assert.ok(start >= 0 && end > start, 'Could not find the overlay message listener');
+  let listener;
+  let adds = 0;
+  const parent = {};
+  const window = {
+    parent,
+    addEventListener(type, handler) {
+      if (type === 'message') listener = handler;
+    },
+  };
+  new Function('window', 'chrome', 'location', 'getEditorSurface', 'addToAnki',
+    panelSource.slice(start, end))(
+    window,
+    { runtime: { getURL: () => 'https://extension.test/' } },
+    { origin: 'https://extension.test' },
+    () => 'overlay',
+    async () => { adds += 1; },
+  );
+  assert.equal(typeof listener, 'function');
+  return { listener, parent, addedCount: () => adds };
+}
+
 describe('panel.js page source context', () => {
   it('turns figure captions into explicit image metadata source text', () => {
     const text = sourceFns.getContextSourceText({
@@ -298,7 +323,7 @@ describe('panel.js page source context', () => {
     assert.doesNotMatch(messageListener[0], /userInitiated: true/);
   });
 
-  it('refreshes overlay source from extension storage while keeping queueing same-origin only', () => {
+  it('refreshes overlay source from extension storage', () => {
     const messageListener = panelSource.match(/window\.addEventListener\("message"[\s\S]*?chrome\.runtime\.onMessage/);
     assert.ok(messageListener, 'Could not find panel message listener');
 
@@ -310,10 +335,29 @@ describe('panel.js page source context', () => {
       messageListener[0],
       /const rawContext = sameOriginMessage \? \(event\.data\.payload \|\| \{\}\) : await takeStoredOverlayContextDraft\(\)/
     );
-    assert.match(
-      messageListener[0],
-      /if \(type === "quickflash:queueCurrentCard"\)[\s\S]*if \(!sameOriginMessage\) return;[\s\S]*await addToAnki\(\)/
-    );
+  });
+
+  it('accepts Add messages from the extension origin but refuses host-page Add requests', async () => {
+    const sandbox = makePanelMessageSandbox();
+    await sandbox.listener({
+      origin: 'https://host-page.test', source: sandbox.parent,
+      data: { type: 'quickflash:addCurrentCard' },
+    });
+    assert.equal(sandbox.addedCount(), 0, 'The overlay parent must not be able to submit cards');
+    await sandbox.listener({
+      origin: 'https://extension.test', source: sandbox.parent,
+      data: { type: 'quickflash:addCurrentCard' },
+    });
+    assert.equal(sandbox.addedCount(), 1);
+  });
+
+  it('ignores the retired queue-card message even from the extension origin', async () => {
+    const sandbox = makePanelMessageSandbox();
+    await sandbox.listener({
+      origin: 'https://extension.test', source: sandbox.parent,
+      data: { type: 'quickflash:queueCurrentCard' },
+    });
+    assert.equal(sandbox.addedCount(), 0);
   });
 });
 
