@@ -40,7 +40,7 @@ function frozenPreferences(value) {
   return Object.freeze(value);
 }
 
-function visibility({ prefs = {}, mobile = false, hash = '', defaults = sharedDefaults, bars = true } = {}) {
+function visibility({ prefs = {}, touch = false, hash = '', search = '', defaults = sharedDefaults, bars = true } = {}) {
   let input = frozenPreferences(prefs);
   let before = copy(input);
   const mini = bars ? { hidden: false } : null;
@@ -55,9 +55,11 @@ function visibility({ prefs = {}, mobile = false, hash = '', defaults = sharedDe
     },
     window: {
       GHOSTWRITER_DEFAULTS: defaults,
-      matchMedia(query) { assert.equal(query, '(max-width: 640px)'); return { matches: mobile }; },
+      matchMedia(query) { assert.equal(query, '(hover: none) and (pointer: coarse)'); return { matches: touch }; },
     },
-    location: { hash },
+    location: { hash, search },
+    URLSearchParams,
+    isLikelyMobileDevice: () => touch,
     async getOptions() { calls.options += 1; return input; },
     copilot,
     currentSourceMode: 'auto',
@@ -74,27 +76,31 @@ function visibility({ prefs = {}, mobile = false, hash = '', defaults = sharedDe
   };
 }
 
+// DJ (2026-10-08): the buttons show on touch devices by default and stay hidden on desktop,
+// including the desktop overlay and the narrow desktop side panel.
 const surfaces = [
-  { name: 'desktop', mobile: false, hash: '' },
-  { name: 'mobile', mobile: true, hash: '' },
-  { name: 'popover', mobile: false, hash: '#popover' },
+  { name: 'desktop', touch: false },
+  { name: 'touch device', touch: true },
+  { name: 'desktop overlay', touch: false, hash: '#popover' },
+  { name: 'forced mobile view', touch: false, search: '?view=mobile' },
 ];
+const isTouch = (surface) => surface.touch || surface.search === '?view=mobile';
 
 describe('Copilot bar visibility preserves explicit choices', () => {
   for (const surface of surfaces) {
-    it(`keeps missing preferences hidden on ${surface.name}`, async () => {
+    it(`uses the Auto default on ${surface.name}`, async () => {
       const harness = visibility({ ...surface, prefs: { unrelated: { preserved: true } } });
       await harness.update();
-      assert.equal(harness.mini.hidden, true);
+      assert.equal(harness.mini.hidden, !isTouch(surface));
       assert.equal(harness.legacy.hidden, true);
-      assert.equal(harness.attributes.has('data-compact'), false);
+      assert.equal(harness.attributes.has('data-compact'), isTouch(surface));
       assert.deepEqual(harness.calls.render, ['auto']);
     });
   }
 
   for (const mode of ['on', 'always', 'auto', 'off']) {
     for (const surface of surfaces) {
-      const shown = mode === 'on' || mode === 'always' || (mode === 'auto' && surface.name !== 'desktop');
+      const shown = mode === 'on' || mode === 'always' || (mode === 'auto' && isTouch(surface));
       it(`honors stored ${mode} on ${surface.name}`, async () => {
         const harness = visibility({ ...surface, prefs: { showMiniCopilotMode: mode, showSourceModePill: false, unrelated: { preserved: true } } });
         await harness.update();
@@ -106,15 +112,19 @@ describe('Copilot bar visibility preserves explicit choices', () => {
     }
   }
 
-  it('uses Off even when shared defaults are unavailable', async () => {
-    const withoutDefaults = visibility({ mobile: true, defaults: null });
-    await withoutDefaults.update();
-    assert.equal(withoutDefaults.mini.hidden, true);
+  it('falls back to Auto when shared defaults are unavailable', async () => {
+    const touchDevice = visibility({ touch: true, defaults: null });
+    await touchDevice.update();
+    assert.equal(touchDevice.mini.hidden, false);
+    const desktop = visibility({ touch: false, defaults: null });
+    await desktop.update();
+    assert.equal(desktop.mini.hidden, true);
   });
 
   it('hides invalid saved modes instead of opting the user into buttons', async () => {
-    for (const mode of ['invalid', '', null, false]) {
-      const harness = visibility({ mobile: true, prefs: { showMiniCopilotMode: mode } });
+    // null counts as "not set" and means the Auto default.
+    for (const mode of ['invalid', '', false]) {
+      const harness = visibility({ touch: true, prefs: { showMiniCopilotMode: mode } });
       await harness.update();
       assert.equal(harness.mini.hidden, true);
     }
@@ -162,14 +172,14 @@ describe('Settings Copilot bar preference fallbacks', () => {
     };
   }
 
-  it('loads a missing preference as Off and saves the displayed Off choice', () => {
+  it('loads a missing preference as Auto and saves the displayed Auto choice', () => {
     const harness = settings({ unrelated: { kept: true } });
-    assert.equal(harness.load(), 'off');
-    assert.equal(harness.save(), 'off');
+    assert.equal(harness.load(), 'auto');
+    assert.equal(harness.save(), 'auto');
   });
 
-  it('saves an empty selector as Off', () => {
-    assert.equal(settings({}, '').save(), 'off');
+  it('saves an empty selector as Auto', () => {
+    assert.equal(settings({}, '').save(), 'auto');
   });
 
   it('retains stored On, Always, Auto and Off semantics when loading and saving', () => {
@@ -200,11 +210,11 @@ describe('Copilot bar first paint', () => {
     assert.match(openingTag, /\bhidden(?:\s|=|>)/);
   });
 
-  it('starts the Settings selector on Off before loading stored preferences', () => {
+  it('starts the Settings selector on Auto before loading stored preferences', () => {
     const select = optionsHtml.match(/<select\b[^>]*\bid="showMiniCopilotMode"[^>]*>([\s\S]*?)<\/select>/)?.[1];
     assert.ok(select);
     const selected = [...select.matchAll(/<option\b([^>]*)>/g)].filter((match) => /\bselected\b/.test(match[1]));
     assert.equal(selected.length, 1);
-    assert.match(selected[0][1], /\bvalue="off"/);
+    assert.match(selected[0][1], /\bvalue="auto"/);
   });
 });

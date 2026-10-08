@@ -523,7 +523,7 @@ async function requestPageContext(tabId) {
 // (Chrome's PDF viewer when injection fails, other extensions' viewers).
 async function draftFromSelectionHint(activeId, selectionHint) {
   const tab = await chrome.tabs.get(activeId).catch(() => null);
-  return { selection: selectionHint, url: tab?.url || "", title: tab?.title || "" };
+  return { selection: selectionHint, url: tab?.url || "", title: tab?.title || "", tabId: activeId };
 }
 
 async function openPanelTabFallback(activeId, windowId, reason = "fallback", { selectionHint = "" } = {}) {
@@ -564,6 +564,7 @@ async function seedLastDraftFromTab(activeId, { selectionHint = "" } = {}) {
     let ctx = await requestPageContext(activeId);
     if (ctx && !ctx.selection && selectionHint) ctx.selection = selectionHint;
     if (!ctx && selectionHint) ctx = await draftFromSelectionHint(activeId, selectionHint);
+    if (ctx) ctx.tabId = activeId; // lets a side panel notice a later tab switch
     if (ctx && (ctx.selection || ctx.url)) {
       await chrome.storage.local.set({ quickflash_lastDraft: ctx });
       return ctx;
@@ -862,6 +863,20 @@ async function runFocusedV2CompatibilityUpdate({ reason = "update", previousVers
 
 const STAGE2_NOTICE_SHOWN_KEY = "ghostwriter_stage2_notice_shown_v1";
 
+// The September v3 test build forced the Suggest bar On for anyone who had saved Off. DJ then
+// chose Auto (touch devices only) as the default; undo that forced On once, for those profiles only.
+async function undoForcedSuggestBar() {
+  const KEY = "ghostwriter_v3_migrations_v1";
+  const got = await chrome.storage.local.get(KEY);
+  const done = got?.[KEY];
+  if (!done?.suggestBarOn || done.suggestBarAuto) return;
+  const { [OPTIONS_KEY]: opts } = await chrome.storage.sync.get(OPTIONS_KEY);
+  if (opts?.showMiniCopilotMode === "on") {
+    await chrome.storage.sync.set({ [OPTIONS_KEY]: { ...opts, showMiniCopilotMode: "auto" } });
+  }
+  await chrome.storage.local.set({ [KEY]: { ...done, suggestBarAuto: true } });
+}
+
 async function runStage2CompatibilityUpdate() {
   const status = await globalThis.GHOSTWRITER_STAGE2_MIGRATION.migrate(chrome.storage.local);
   // Explain the retired Review Queue once, and only to people who had queue data: not on a
@@ -926,6 +941,7 @@ chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
     }
     await stage2Ready;
     await runStage2CompatibilityUpdate();
+    await undoForcedSuggestBar().catch(() => {});
     await chrome.storage.local.set({ [LAST_VER_KEY]: chrome.runtime.getManifest().version });
   } catch {}
 });

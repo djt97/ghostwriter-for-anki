@@ -492,16 +492,24 @@ async function getPageContext() {
       sourceLabel: "",
     };
   }
-  const fallback = { ...emptyPageContextFromTab(tab), needsTabPermission: !tab.url };
+  // In a tab of its own, the "active tab" is the editor itself: page access can't help there.
+  let isOwnEditorTab = false;
+  if (window.top === window) {
+    try { isOwnEditorTab = (await chrome.tabs.getCurrent())?.id === tab.id; } catch {}
+  }
+  // tabId lets a side panel that stays open across tabs notice that the page changed even when
+  // Chrome hides the URL (no tabs permission).
+  const fallback = { ...emptyPageContextFromTab(tab), tabId: tab.id, needsTabPermission: !tab.url && !isOwnEditorTab };
   updatePageSourcePermissionUI(fallback);
   if (!canRequestTabPageContext(tab)) {
     return fallback;
   }
   try {
-    return await withContextMessageTimeout(
+    const ctx = await withContextMessageTimeout(
       chrome.tabs.sendMessage(tab.id, { type: "quickflash:getContext" }),
       fallback
     );
+    return ctx && typeof ctx === "object" ? { ...ctx, tabId: tab.id } : fallback;
   } catch {
     return fallback;
   }
@@ -529,6 +537,13 @@ async function resolveCurrentTabId() {
   return null;
 }
 
+// The page a pinned Context belongs to: address without fragment (text fragments included).
+function stickyPageKey(ctx) {
+  const url = getContextPageUrl(ctx || {});
+  if (!url) return "";
+  try { const u = new URL(url); return u.origin + u.pathname + u.search; } catch { return url; }
+}
+
 function stickyStorageKey(tabId = stickyContextState.tabId) {
   return typeof tabId === "number" ? `${STICKY_CONTEXT_PREFIX}${tabId}` : null;
 }
@@ -551,7 +566,8 @@ async function persistStickyContext(value) {
   if (!key) return;
 
   if (value) {
-    await chrome.storage.local.set({ [key]: value });
+    // Remember the page, so a pin from one article never follows the tab to the next.
+    await chrome.storage.local.set({ [key]: { value, page: stickyPageKey(copilot?.pageCtx) } });
   } else {
     await chrome.storage.local.remove(key).catch(() => {});
   }
@@ -563,8 +579,16 @@ async function loadStickyContextFromStorage() {
   if (!key) return;
 
   try {
-    const stored = await chrome.storage.local.get(key);
-    const savedValue = typeof stored?.[key] === "string" ? stored[key] : "";
+    const stored = (await chrome.storage.local.get(key))?.[key];
+    const savedValue = typeof stored === "string" ? stored : (typeof stored?.value === "string" ? stored.value : "");
+    const savedPage = typeof stored?.page === "string" ? stored.page : "";
+    if (savedValue && savedPage) {
+      const currentPage = stickyPageKey(await getPageContext().catch(() => null));
+      if (currentPage && currentPage !== savedPage) {
+        await chrome.storage.local.remove(key).catch(() => {});
+        return;
+      }
+    }
     if (savedValue) {
       stickyContextState.enabled = true;
       stickyContextState.value = savedValue;
@@ -2603,12 +2627,18 @@ async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, f
   return hasClip;
 }
 
+// Both contexts carry the tab they came from, and the tabs differ.
+function isContextFromOtherTab(fresh, current) {
+  return typeof fresh?.tabId === "number" && typeof current?.tabId === "number" && fresh.tabId !== current.tabId;
+}
+
 async function refreshPageSelectionFromTab({ fresh = null, applyToEditor = false, clearStale = false } = {}) {
   try {
     const ctx = normalizePageContext(fresh || await getPageContext());
     const selection = getContextSourceText(ctx);
     const currentCtx = copilot?.pageCtx || null;
-    const pageChanged = !!getContextPageUrl(ctx) && !!getContextPageUrl(currentCtx) && !sameContextPage(ctx, currentCtx);
+    const tabChanged = isContextFromOtherTab(ctx, currentCtx);
+    const pageChanged = tabChanged || (!!getContextPageUrl(ctx) && !!getContextPageUrl(currentCtx) && !sameContextPage(ctx, currentCtx));
     if (!selection) {
       if (clearStale && pageChanged) {
         copilot.pageCtx = { ...ctx, selection: "", sourceText: "", usingClipboard: false };
@@ -2625,8 +2655,11 @@ async function refreshPageSelectionFromTab({ fresh = null, applyToEditor = false
     }
     const current = getContextSourceText(copilot?.pageCtx);
     const usingClipboard = !!copilot?.pageCtx?.usingClipboard;
-    if (!copilot.pageCtx || usingClipboard || selection !== current) {
-      copilot.pageCtx = { ...(copilot.pageCtx || {}), ...ctx, selection, usingClipboard: false };
+    if (!copilot.pageCtx || usingClipboard || selection !== current || tabChanged) {
+      // A different tab is a different page: replace the context instead of merging into it.
+      copilot.pageCtx = tabChanged
+        ? { ...ctx, selection, usingClipboard: false }
+        : { ...(copilot.pageCtx || {}), ...ctx, selection, usingClipboard: false };
       refreshDebugSource();
     }
     if (applyToEditor) {
@@ -2808,7 +2841,12 @@ async function seedCopilotPageContext() {
     return;
   }
 
-  copilot.pageCtx = normalizePageContext(chosen);
+  // A draft seeded without its tab (older builds) belongs to the tab that was active when the
+  // editor opened; record that so a later tab switch is noticed.
+  const seeded = typeof chosen.tabId !== "number" && typeof liveCtx?.tabId === "number"
+    ? { ...chosen, tabId: liveCtx.tabId }
+    : chosen;
+  copilot.pageCtx = normalizePageContext(seeded);
   if (getContextSourceText(copilot.pageCtx)) {
     await clearManualDraftStorage().catch(() => {});
     applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
@@ -3001,7 +3039,8 @@ function setCopilotEnabled(nextEnabled, { persist = false } = {}) {
     cancelCopilotRequests();
     setCopilotStatus("Exact source assists remain available. Connect a provider or enable Chrome AI in Settings.");
   } else {
-    setCopilotStatus(`Ready: press ${formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut} or Suggest`);
+    const shortcut = formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut;
+    setCopilotStatus(copilot.compactBarVisible ? `Ready: press ${shortcut} or Suggest` : `Ready: press ${shortcut} for a suggestion`);
   }
 
   if (persist) {
@@ -8405,7 +8444,15 @@ async function syncImagesToAnki(files) {
   const uploaded = [];
   for (const filename of files) {
     const entry = store?.[filename];
-    if (!entry?.data) throw new Error("Image data is missing for " + filename + ". Paste the image again before adding this card.");
+    if (!entry?.data) {
+      // Names Ghostwriter didn't create refer to files already in Anki's media folder. A pasted
+      // image removed after an earlier add is fine too, as long as Anki still has it.
+      if (!/^paste-[\w-]+\.[a-z0-9]+$/i.test(filename)) continue;
+      let inAnki = false;
+      try { const data = await anki("retrieveMediaFile", { filename }); inAnki = typeof data === "string" && data.length > 32; } catch {}
+      if (inAnki) continue;
+      throw new Error("Image data is missing for " + filename + ". Paste the image again before adding this card.");
+    }
     const storedFilename = await anki("storeMediaFile", { filename, data: entry.data });
     if (storedFilename !== filename) throw new Error("AnkiConnect did not confirm the image upload for " + filename + ". The card was kept for retry.");
     uploaded.push(filename);
@@ -10111,6 +10158,13 @@ async function maybeCloseOverlayAfterAdd() {
 
 // One add at a time: a second click or shortcut during a slow add would send the card twice.
 let ankiAddInFlight = false;
+// Set for a single add by the "Add anyway" button after Anki refused a duplicate.
+let allowDuplicateOnce = false;
+
+function showAddAnyway(show) {
+  const button = $("#addAnyway");
+  if (button) button.hidden = !show;
+}
 
 async function addToAnki() {
   if (ankiAddInFlight) return;
@@ -10132,6 +10186,7 @@ async function addToAnki() {
 }
 
 async function addCurrentCardToAnki() {
+  showAddAnyway(false);
   // What was in the editor when Add was pressed; text typed during the add is kept.
   const typedAtStart = {
     front: $("#front").value || "",
@@ -10208,7 +10263,8 @@ async function addCurrentCardToAnki() {
   let page = copilot?.pageCtx || null;
   try {
     const ctx = await getPageContext();
-    page = normalizePageContext({ ...(ctx || {}), ...(page || {}) });
+    // A side panel left open on another tab must not attach the earlier page to this card.
+    page = normalizePageContext(isContextFromOtherTab(ctx, page) ? { ...(ctx || {}) } : { ...(ctx || {}), ...(page || {}) });
   } catch {}
   const mode = await getSourceMode();
   const source_url = (mode === 'clipboard' || page?.usingClipboard)
@@ -10427,7 +10483,7 @@ async function addCurrentCardToAnki() {
           fillSourceField,
           { syncMedia: true }
         );
-        note.options = { allowDuplicate: false, duplicateScope: "deck" };
+        note.options = { allowDuplicate: allowDuplicateOnce, duplicateScope: "deck" };
         notePairs.push({ card: lpcgCard, note });
       }
       const notesPayload = notePairs.map((pair) => pair.note);
@@ -10498,7 +10554,7 @@ async function addCurrentCardToAnki() {
       fillSourceField,
       { syncMedia: true }
     );
-    note.options = { allowDuplicate: false, duplicateScope: "deck" };
+    note.options = { allowDuplicate: allowDuplicateOnce, duplicateScope: "deck" };
 
     const result = await anki("addNote", { note });
     if (result) {
@@ -10517,6 +10573,7 @@ async function addCurrentCardToAnki() {
     }
   } catch (e) {
     status(e?.kind ? e.message : `Failed: ${e.message}`);
+    if (e?.kind === "anki" && /duplicate/i.test(e.raw || e.message)) showAddAnyway(true);
   }
 }
 
@@ -10843,11 +10900,14 @@ async function updateCompactCopilotVisibility() {
   if (!miniNew && !miniOld) return;
 
   const opts = await getOptions();
-  const mode = normalizeMiniCopilotMode(opts.showMiniCopilotMode ?? (window.GHOSTWRITER_DEFAULTS || {}).showMiniCopilotMode ?? 'off');
+  const mode = normalizeMiniCopilotMode(opts.showMiniCopilotMode ?? (window.GHOSTWRITER_DEFAULTS || {}).showMiniCopilotMode ?? 'auto');
   copilot.showSourceModePill = opts.showSourceModePill !== false;
-  const isPopover = /\bpopover\b/i.test(location.hash);
-  const small = window.matchMedia('(max-width: 640px)').matches || isPopover;
-  const compactOn = ((mode === 'on') || (mode === 'auto' && small));
+  // Auto: the buttons are for touch screens, where there is no keyboard shortcut. A narrow
+  // desktop side panel or overlay still counts as desktop.
+  const forcedMobile = new URLSearchParams(location.search || "").get("view") === "mobile";
+  const touch = forcedMobile || isLikelyMobileDevice() || window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+  const compactOn = mode === 'on' || (mode === 'auto' && touch);
+  copilot.compactBarVisible = compactOn;
 
   // Prefer the new bar; keep the legacy bar hidden to prevent duplicates
   if (miniNew) miniNew.hidden = !compactOn;
@@ -10906,7 +10966,8 @@ function markPanelReady() {
 function updatePageSourcePermissionUI(ctx = {}) {
   const button = $("#allowPageSourceAccess");
   if (!button) return;
-  const captured = !!(getContextSourceText(copilot?.pageCtx) || copilot?.pageCtx?.url || $("#source")?.value?.trim());
+  const sameTab = !isContextFromOtherTab(ctx, copilot?.pageCtx);
+  const captured = sameTab && !!(getContextSourceText(copilot?.pageCtx) || copilot?.pageCtx?.url || $("#source")?.value?.trim());
   button.hidden = captured || !ctx?.needsTabPermission;
 }
 
@@ -10977,6 +11038,13 @@ async function initPanel() {
       }
     });
     $("#add").addEventListener("click", (e) => { e.preventDefault(); handlePrimaryAction(); });
+    $("#addAnyway")?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      allowDuplicateOnce = true;
+      try { await addToAnki(); } finally { allowDuplicateOnce = false; }
+    });
+    // A changed Front is a new card: the duplicate override no longer applies.
+    $("#front")?.addEventListener("input", () => showAddAnyway(false));
     const editorGenerateBtn = $("#editorGenerateBtn");
     if (editorGenerateBtn) {
       editorGenerateBtn.addEventListener("click", async (e) => {

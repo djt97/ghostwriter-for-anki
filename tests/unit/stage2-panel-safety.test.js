@@ -128,13 +128,23 @@ describe('panel Anki media confirmation', () => {
     assert.deepEqual(harness.calls.anki, []);
   });
 
-  it('rejects missing data before submitting the media request', async () => {
+  it('rejects a missing pasted image that Anki does not have, without uploading anything', async () => {
     for (const store of [{}, { 'paste-fixture.png': {} }, { 'paste-fixture.png': { data: '' } }]) {
-      const harness = mediaHarness({ store });
+      const harness = mediaHarness({ store, anki: (action) => (action === 'retrieveMediaFile' ? false : 'unexpected') });
       await assert.rejects(harness.syncImagesToAnki(new Set(['paste-fixture.png'])), /Image data is missing/);
-      assert.deepEqual(harness.calls.anki, []);
+      assert.deepEqual(harness.calls.anki.map((call) => call.action), ['retrieveMediaFile']);
       assert.equal(harness.cache(), harness.initialCache);
     }
+  });
+
+  it('accepts a pasted image already in Anki and leaves other media references alone', async () => {
+    const inAnki = mediaHarness({ store: {}, anki: (action) => (action === 'retrieveMediaFile' ? 'A'.repeat(64) : 'unexpected') });
+    assert.deepEqual(copy(await inAnki.syncImagesToAnki(new Set(['paste-fixture.png']))), []);
+    assert.deepEqual(inAnki.calls.anki.map((call) => call.action), ['retrieveMediaFile']);
+    // A filename Ghostwriter didn't create refers to the user's own Anki media: no checks, no upload.
+    const existing = mediaHarness({ store: {} });
+    assert.deepEqual(copy(await existing.syncImagesToAnki(new Set(['krebs-cycle.png']))), []);
+    assert.deepEqual(existing.calls.anki, []);
   });
 
   it('propagates an Anki rejection and stops before subsequent files', async () => {
@@ -409,7 +419,7 @@ function tabPermissionHarness({ contextError } = {}) {
   const calls = { request: [], contains: [], callbacks: [], reads: 0, apply: [], chrome: 0 };
   const helpers = sandbox([
     'compactImageMeta', 'buildImageSelectionSourceText', 'getContextSourceText', 'normalizePageContext',
-    'updatePageSourcePermissionUI', 'bindPageSourcePermissionUI',
+    'updatePageSourcePermissionUI', 'bindPageSourcePermissionUI', 'isContextFromOtherTab',
   ], {
     $: (selector) => ({ '#allowPageSourceAccess': button, '#pageSourceAccessHint': hint, '#source': source })[selector] || null,
     copilot,

@@ -1135,7 +1135,7 @@ async function save() {
     copilotTimeoutMs: Math.max(1000, timeoutSec * 1000),
     nativeAiEnabled: nativeAiPreferences.nativeAiEnabled,
     nativeAiHostedFallback: nativeAiPreferences.nativeAiHostedFallback,
-    showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "off"),
+    showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "auto"),
     showSourceModePill: !!$("#showSourceModePill")?.checked,
     showShortcutHints: document.querySelector("#showShortcutHints")?.checked !== false,
     contentFont: document.querySelector("#contentFont")?.value === "sans" ? "sans" : "serif",
@@ -1265,7 +1265,7 @@ async function load() {
   document.querySelector("#copilotMinIntervalMs").value = String(opts.copilotMinIntervalMs ?? D.copilotMinIntervalMs ?? 1200);
   document.querySelector("#copilotTimeoutSec").value = String(Math.round((opts.copilotTimeoutMs ?? D.copilotTimeoutMs ?? 30000) / 1000));
   document.querySelector("#showMiniCopilotMode").value = normalizeMiniCopilotMode(
-    opts.showMiniCopilotMode ?? D.showMiniCopilotMode ?? "off"
+    opts.showMiniCopilotMode ?? D.showMiniCopilotMode ?? "auto"
   );
   const pill = document.querySelector("#showSourceModePill");
   if (pill) pill.checked = opts.showSourceModePill !== false;
