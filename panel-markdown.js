@@ -14,6 +14,19 @@ function makeBackLinkHTML(url, title) {
   return `<div class="quickflash-source" style="margin-top:8px;font-size:12px;color:#666">Source: <a href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeTitle}</a></div>`;
 }
 
+// The dedicated Source field holds just the link, as it did before v3, so note templates that
+// label or style {{Source}} keep working. The styled "Source:" block is only for Back/Extra.
+function makeSourceFieldHTML(url, title) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    if (["http:", "https:"].includes(parsed.protocol)) {
+      return `<a href="${escapeHtml(parsed.href)}">${escapeHtml(title || parsed.href)}</a>`;
+    }
+  } catch {}
+  return escapeHtml(url); // local files and PDF viewers: readable text, never a link
+}
+
 const markdownRendererState = { instance: null };
 
 function getMarkdownRenderer() {

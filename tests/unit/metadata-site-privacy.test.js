@@ -49,7 +49,7 @@ function loadMetadataPrompts({ requests, localLabel = () => '' }) {
 
 const privateUrl = 'https://user:fixture@example.test:8443/private/chapter?token=fixture&lang=en#:~:text=selected%20sentence';
 
-function loadNoteBuilder(fieldNames) {
+function loadNoteBuilder(fieldNames, templates = null) {
   const markdown = { console, URL };
   markdown.window = markdown;
   vm.createContext(markdown);
@@ -57,7 +57,7 @@ function loadNoteBuilder(fieldNames) {
   vm.runInContext(fs.readFileSync(path.join(root, 'panel-markdown.js'), 'utf8'), markdown);
   return new Function('window', 'getModelFields', 'getOptions', 'isLpcg1ModelName',
     'isClozeModelName', 'isClozeTypeModel', 'resolveGhostwriterClozeModel',
-    'convertLatexToAnki', 'makeBackLinkHTML', 'normalizeFieldsWithImages', 'escapeHtml', `
+    'convertLatexToAnki', 'makeBackLinkHTML', 'normalizeFieldsWithImages', 'escapeHtml', 'makeSourceFieldHTML', 'getModelTemplatesSafe', `
     ${extractFunction('pickString')}
     ${extractFunction('coerceLpcgNumber')}
     ${extractFunction('normalizeLpcgText')}
@@ -76,7 +76,9 @@ function loadNoteBuilder(fieldNames) {
     (text) => markdown.convertLatexToAnki(text),
     (url, title) => markdown.makeBackLinkHTML(url, title),
     async () => [],
-    (value) => markdown.escapeHtml(value)
+    (value) => markdown.escapeHtml(value),
+    (url, title) => markdown.makeSourceFieldHTML(url, title),
+    async () => templates
   );
 }
 
@@ -151,21 +153,43 @@ describe('automatic metadata prompts and Anki source separation', () => {
     assert.ok(note.fields['Back Extra'].includes(`href="${privateUrl.replace(/&/g, '&amp;')}"`));
   });
 
-  it('retains a full source in a one-field custom Cloze note without replacing its deletion', async () => {
+  it('keeps a one-field custom Cloze question free of the source link', async () => {
     const buildNote = loadNoteBuilder(['Text']);
     const note = await buildNote({ type: 'cloze', front: '{{c1::Answer}}' }, 'Fixture', 'Custom Cloze', false, privateUrl, 'Reading', false);
     assert.match(note.fields.Text, /\{\{c1::Answer\}\}/);
-    assert.ok(note.fields.Text.includes(privateUrl.replaceAll('&', '&amp;')));
+    assert.ok(!note.fields.Text.includes('example'), 'the Text field is the question');
   });
 
-  it('retains LPCG source in Notes, Context or Title while preserving the recited Line', async () => {
+  it('puts an LPCG source link only in Notes, never in the question-side Line, Context or Title', async () => {
     for (const fields of [['Line', 'Notes'], ['Line', 'Context'], ['Line', 'Title'], ['Line']]) {
       const buildNote = loadNoteBuilder(fields);
       const note = await buildNote({ front: 'Recite me', lpcg: { title: 'Poem' } }, 'Fixture', 'LPCG1', false, privateUrl, 'Reading', false);
-      const target = fields.find((field) => field !== 'Line') || 'Line';
-      assert.ok(note.fields[target].includes(privateUrl.replaceAll('&', '&amp;')));
-      if (target !== 'Line') assert.equal(note.fields.Line, 'Recite me');
+      for (const field of fields) {
+        const hasLink = (note.fields[field] || '').includes(privateUrl.replaceAll('&', '&amp;'));
+        assert.equal(hasLink, field === 'Notes', field);
+      }
+      assert.equal(note.fields.Line, 'Recite me');
     }
+  });
+
+  it('keeps the link out of typed answers and reversed cards, but adds it to a plain Basic Back', async () => {
+    const href = `href="${privateUrl.replace(/&/g, '&amp;')}"`;
+    const card = () => ({ type: 'basic', front: 'Question?', back: 'Answer.' });
+    const typeIn = { 'Card 1': { Front: '{{Front}}\n\n{{type:Back}}', Back: '{{FrontSide}}<hr id=answer>{{type:Back}}' } };
+    const reversed = { 'Card 1': { Front: '{{Front}}', Back: '{{Back}}' }, 'Card 2': { Front: '{{Back}}', Back: '{{Front}}' } };
+    const basic = { 'Card 1': { Front: '{{Front}}', Back: '{{FrontSide}}<hr id=answer>{{Back}}' } };
+    for (const [templates, expectLink] of [[typeIn, false], [reversed, false], [basic, true], [null, true]]) {
+      const note = await loadNoteBuilder(['Front', 'Back'], templates)(card(), 'Default', 'Basic', false, privateUrl, 'Example work', true);
+      assert.equal(note.fields.Back.includes(href), expectLink, JSON.stringify(templates));
+      if (!expectLink) assert.equal(note.fields.Back, 'Answer.');
+    }
+  });
+
+  it('writes the dedicated Source field as a plain link', async () => {
+    const note = await loadNoteBuilder(['Front', 'Back', 'Source'])({ type: 'basic', front: 'Q?', back: 'A.' },
+      'Default', 'Basic [Ghostwriter]', false, 'https://example.com/a', 'Example work', true);
+    assert.equal(note.fields.Source, '<a href="https://example.com/a">Example work</a>');
+    assert.equal(note.fields.Back, 'A.');
   });
 
   it('preserves known local-file and PDF-viewer URLs as escaped text without clickable unsafe schemes', async () => {

@@ -38,3 +38,16 @@ test("a one-field note type has nowhere for the Back", () => {
   assert.equal(map.front, "Word");
   assert.equal(map.back, null);
 });
+
+test("source links stay out of typed answers and question-side answer fields", () => {
+  const { sourceLinkUnsafeReason } = require("../../anki-note.js");
+  const typeIn = { "Card 1": { Front: "{{Front}}\n\n{{type:Back}}", Back: "{{FrontSide}}<hr id=answer>{{type:Back}}" } };
+  const reversed = { "Card 1": { Front: "{{Front}}", Back: "{{FrontSide}}<hr id=answer>{{Back}}" }, "Card 2": { Front: "{{Back}}", Back: "{{FrontSide}}<hr id=answer>{{Front}}" } };
+  const basic = { "Card 1": { Front: "{{Front}}", Back: "{{FrontSide}}<hr id=answer>{{Back}}" } };
+  assert.equal(sourceLinkUnsafeReason(typeIn, "Back"), "type");
+  assert.equal(sourceLinkUnsafeReason(reversed, "Back"), "reversed");
+  assert.equal(sourceLinkUnsafeReason(basic, "Back"), "");
+  assert.equal(sourceLinkUnsafeReason({ "Card 1": { Front: "{{Backside}}", Back: "" } }, "Back"), "");
+  assert.equal(sourceLinkUnsafeReason(null, "Back"), "", "unknown templates (e.g. AnkiconnectAndroid) are treated as safe");
+  assert.equal(sourceLinkUnsafeReason({ "Card 1": { Front: "{{Q (a.b)}}", Back: "" } }, "Q (a.b)"), "reversed");
+});

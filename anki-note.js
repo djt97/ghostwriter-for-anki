@@ -25,7 +25,23 @@
     };
   }
 
-  const api = { resolveNoteFields, METADATA_FIELDS };
+  // Why a source link must stay out of the answer field, given the note type's card templates
+  // (AnkiConnect modelTemplates: { cardName: { Front, Back } }):
+  //   "type"     a template asks to type the answer ({{type:Back}}), and Anki would grade the link
+  //   "reversed" the answer field appears on a question side (e.g. Basic (and reversed card))
+  // "" when it is safe, or when the templates are unknown.
+  function sourceLinkUnsafeReason(templates, answerField) {
+    if (!templates || typeof templates !== "object" || !answerField) return "";
+    const name = String(answerField).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const typed = new RegExp(`\\{\\{type:(?:[^{}:]*:)?${name}\\}\\}`, "i");
+    const shown = new RegExp(`\\{\\{(?:[^{}#/^]*:)?${name}\\}\\}`);
+    const cards = Object.values(templates).filter((card) => card && typeof card === "object");
+    if (cards.some((card) => typed.test(String(card.Front || "")) || typed.test(String(card.Back || "")))) return "type";
+    if (cards.some((card) => shown.test(String(card.Front || "")))) return "reversed";
+    return "";
+  }
+
+  const api = { resolveNoteFields, sourceLinkUnsafeReason, METADATA_FIELDS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.GHOSTWRITER_ANKI_NOTE = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

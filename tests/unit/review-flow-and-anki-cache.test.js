@@ -35,6 +35,7 @@ function makeAnkiSandbox(sendAnkiConnectRequest) {
     const ANKI_SESSION_CACHE_TTL_MS = 30000;
     const ankiSessionCache = { permissionGranted: false, values: new Map() };
     const modelFieldsCache = new Map();
+    const modelTemplatesCache = new Map();
     ${grabPanelFunction('clearAnkiSessionCache')}
     ${grabPanelFunction('getAnkiCacheKey')}
     ${grabPanelFunction('isCacheableAnkiAction')}

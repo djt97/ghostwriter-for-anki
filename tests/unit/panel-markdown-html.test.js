@@ -6,7 +6,7 @@ const vm = require("vm");
 
 // Load the real bundled markdown-it and panel-markdown.js, as panel.html does.
 const root = path.resolve(__dirname, "../..");
-const ctx = { console };
+const ctx = { console, URL };
 ctx.window = ctx;
 ctx.globalThis = ctx;
 vm.createContext(ctx);
@@ -78,4 +78,11 @@ test("uppercase formatting tags are normalised", () => {
 test("Markdown after a line that starts with a tag still renders", () => {
   assert.equal(render('<img src="x.png">\n**important**'), '<img src="x.png"><br>\n<strong>important</strong>');
   assert.match(render("<b>Note</b>\n\n- item"), /<ul>\s*<li>item<\/li>/);
+});
+
+test("the dedicated Source field gets a plain link, as before v3", () => {
+  const html = vm.runInContext('makeSourceFieldHTML("https://example.com/a?b=1#:~:text=x", "Example & Co")', ctx);
+  assert.equal(html, '<a href="https://example.com/a?b=1#:~:text=x">Example &amp; Co</a>');
+  assert.equal(vm.runInContext('makeSourceFieldHTML("file:///Users/me/paper.pdf", "paper")', ctx), "file:///Users/me/paper.pdf");
+  assert.equal(vm.runInContext('makeSourceFieldHTML("javascript:alert(1)", "x")', ctx), "javascript:alert(1)");
 });

@@ -73,6 +73,7 @@ export default [
         QUICKFLASH_PROMPTS: "readonly",
         // panel-markdown.js globals
         makeBackLinkHTML: "readonly",
+        makeSourceFieldHTML: "readonly",
         escapeHtml: "readonly",
         extractMathSegments: "readonly",
         restoreMathSegments: "readonly",

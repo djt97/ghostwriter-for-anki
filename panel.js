@@ -300,7 +300,24 @@ const ankiSessionCache = {
   values: new Map(),
 };
 
+// Card templates per note type, to keep source links out of typed or question-side answers.
+const modelTemplatesCache = new Map();
+
+async function getModelTemplatesSafe(modelName) {
+  if (!modelName) return null;
+  if (modelTemplatesCache.has(modelName)) return modelTemplatesCache.get(modelName);
+  let templates = null;
+  try {
+    const result = await anki("modelTemplates", { modelName });
+    // AnkiconnectAndroid has no modelTemplates and answers with a string: treat as unknown.
+    if (result && typeof result === "object" && !Array.isArray(result)) templates = result;
+  } catch {}
+  modelTemplatesCache.set(modelName, templates);
+  return templates;
+}
+
 function clearAnkiSessionCache({ keepPermission = false } = {}) {
+  modelTemplatesCache.clear();
   ankiSessionCache.values.clear();
   if (!keepPermission) ankiSessionCache.permissionGranted = false;
   modelFieldsCache?.clear?.();
@@ -9419,6 +9436,18 @@ async function updateModelFieldWarning() {
         ? `It has no Front/Back fields, so Ghostwriter will put the question in “${fieldMap.front}” and the answer in “${fieldMap.back}”.`
         : `It has only one field for the card (“${fieldMap.front}”), so the Back will not be saved.`)
       : "";
+    // No Source field: say when the source link has to be left out of the answer as well.
+    let linkNote = "";
+    if (!hasSource && !isClozeModelName(modelName) && !isLpcg1ModelName(modelName) && !isLpcgMode()) {
+      const templates = await getModelTemplatesSafe(modelName);
+      if (requestId !== modelFieldWarningRequest) return;
+      const reason = fieldMap.back ? window.GHOSTWRITER_ANKI_NOTE.sourceLinkUnsafeReason(templates, fieldMap.back) : "none";
+      if (reason) {
+        linkNote = reason === "type"
+          ? "Because this note type checks typed answers, Ghostwriter won't add the source link to the answer. Use Basic [Ghostwriter] to keep it."
+          : "Because this note type shows the answer field on a question side, Ghostwriter won't add the source link there. Use Basic [Ghostwriter] to keep it.";
+      }
+    }
     if (hasContext && hasSource && !remapNote) {
       hideWarning();
       return;
@@ -9429,7 +9458,7 @@ async function updateModelFieldWarning() {
     const missingNote = missing.length
       ? `Your selected note type has no ${missing.join("/")} field. Consider using the Basic or Cloze Ghostwriter note types, or adding Context/Source fields to your preferred type in Anki to store those values.`
       : "";
-    const message = [missingNote, remapNote].filter(Boolean).join(" ");
+    const message = [missingNote, remapNote, linkNote].filter(Boolean).join(" ");
     warningTextEl.textContent = message;
     if (!message.trim()) {
       hideWarning();
@@ -9951,8 +9980,15 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
       }
     } catch {}
   }
-  const sourceInDedicatedField = !!(fillSourceField && "Source" in fields && sourceLink);
-  const backLink = (includeBackLink || !sourceInDedicatedField) ? sourceLink : "";
+  const sourceFieldValue = hasSourceLink ? makeSourceFieldHTML(sourceUrl, sourceLabel) : "";
+  const sourceInDedicatedField = !!(fillSourceField && "Source" in fields && sourceFieldValue);
+  let backLink = (includeBackLink || !sourceInDedicatedField) ? sourceLink : "";
+  // Never put the link where it would be graded as a typed answer or shown on a question side;
+  // the note-type warning recommends the Ghostwriter note types, which have a Source field.
+  if (backLink && !isLpcg1 && cardType !== "cloze") {
+    const templates = await getModelTemplatesSafe(effectiveModel);
+    if (!fieldMap.back || window.GHOSTWRITER_ANKI_NOTE.sourceLinkUnsafeReason(templates, fieldMap.back)) backLink = "";
+  }
 
   if (isLpcg1) {
     const lpcgFields = buildLpcgFields(card);
@@ -9981,7 +10017,7 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
 
     // Optional extra metadata if the LPCG note type has these fields
     if (fillSourceField && "Source" in fields && hasSourceLink) {
-      fields.Source = sourceLink;
+      fields.Source = sourceFieldValue;
     }
     if ("Notes" in fields && sourceExcerpt) {
       fields.Notes = sourceExcerpt;
@@ -10002,7 +10038,7 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
     // Keep the source with the note (Source field is not shown on the back), so the excerpt the
     // user captured isn't lost for cloze cards: prefer the backlink, fall back to the raw excerpt.
     if (fillSourceField && "Source" in fields) {
-      if (hasSourceLink) fields.Source = sourceLink;
+      if (hasSourceLink) fields.Source = sourceFieldValue;
       else if (sourceExcerpt) fields.Source = sourceExcerpt;
     }
   } else {
@@ -10030,21 +10066,19 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
       if (!("Notes" in fields) && sourceExcerpt) extraSegments.push(sourceExcerpt);
       if (!fieldMap.back && backLink) extraSegments.push(backLink);
       fields[fieldMap.extra] = extraSegments.join("\n\n");
-    } else if (!fieldMap.back && backLink && fieldMap.front) {
-      fields[fieldMap.front] = fields[fieldMap.front] ? `${fields[fieldMap.front]}\n\n${backLink}` : backLink;
     }
 
     if ("Notes" in fields && sourceExcerpt) fields.Notes = sourceExcerpt;
     if (fillSourceField && "Source" in fields && hasSourceLink) {
-      fields.Source = sourceLink;
+      fields.Source = sourceFieldValue;
     }
   }
 
   // Every known source retains its complete URL even when this note type has no Source field.
   if (backLink && (isLpcg1 || (cardType === "cloze" && !fieldMap.extra))) {
-    const candidates = isLpcg1
-      ? ["Notes", "Context", "Title", fieldMap.extra, fieldMap.back, "Line"]
-      : ["Notes", fieldMap.text, fieldNames[0]];
+    // Only an answer-side metadata field: LPCG shows Context, Title and Line on the question,
+    // and a cloze's Text is the question itself.
+    const candidates = ["Notes"];
     const target = candidates.find((name) => name && name in fields);
     if (target) fields[target] = fields[target] ? fields[target] + "\n\n" + backLink : backLink;
   }
