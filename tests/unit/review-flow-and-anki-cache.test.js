@@ -106,23 +106,34 @@ describe('AnkiConnect session cache', () => {
     assert.equal(env.ankiSessionCache.permissionGranted, false);
   });
 
-  it('stops before sending notes or reading setup when permission is denied or malformed', async () => {
-    for (const permissionResult of [{ permission: 'denied' }, null, undefined, {}, { permission: true }]) {
-      for (const action of ['requestPermission', 'addNote', 'modelFieldNames']) {
-        const calls = [];
-        const env = makeAnkiSandbox(async (requestedAction) => {
-          calls.push(requestedAction);
-          return permissionResult;
-        });
-        env.ankiSessionCache.values.set('stale', { at: Date.now(), value: [] });
-        env.modelFieldsCache.set('Basic', ['Front', 'Back']);
-        await assert.rejects(env.anki(action), (err) =>
-          err.kind === 'refused' && /Anki.*(?:denied the connection|did not confirm permission)/.test(err.message));
-        assert.deepEqual(calls, ['requestPermission']);
-        assert.equal(env.ankiSessionCache.permissionGranted, false);
-        assert.equal(env.ankiSessionCache.values.size, 0);
-        assert.equal(env.modelFieldsCache.size, 0);
-      }
+  it('stops before sending notes or reading setup when permission is denied', async () => {
+    for (const action of ['requestPermission', 'addNote', 'modelFieldNames']) {
+      const calls = [];
+      const env = makeAnkiSandbox(async (requestedAction) => {
+        calls.push(requestedAction);
+        return { permission: 'denied' };
+      });
+      env.ankiSessionCache.values.set('stale', { at: Date.now(), value: [] });
+      env.modelFieldsCache.set('Basic', ['Front', 'Back']);
+      await assert.rejects(env.anki(action), (err) => err.kind === 'refused' && /Anki denied the connection/.test(err.message));
+      assert.deepEqual(calls, ['requestPermission']);
+      assert.equal(env.ankiSessionCache.permissionGranted, false);
+      assert.equal(env.ankiSessionCache.values.size, 0);
+      assert.equal(env.modelFieldsCache.size, 0);
+    }
+  });
+
+  it('works with AnkiConnect variants that do not implement requestPermission', async () => {
+    // AnkiconnectAndroid answers unknown actions with "AnkiConnect v.6"; older add-ons may answer null.
+    for (const reply of ['AnkiConnect v.6', null, {}]) {
+      const calls = [];
+      const env = makeAnkiSandbox(async (action) => {
+        calls.push(action);
+        return action === 'requestPermission' ? reply : 123456;
+      });
+      assert.equal(await env.anki('addNote', {}), 123456, JSON.stringify(reply));
+      assert.equal(env.ankiSessionCache.permissionGranted, true);
+      assert.deepEqual(calls, ['requestPermission', 'addNote']);
     }
   });
 

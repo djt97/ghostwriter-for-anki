@@ -356,12 +356,11 @@ async function anki(action, params = {}) {
 
     const result = await sendAnkiConnectRequest(action, params);
     if (action === "requestPermission") {
-      if (result?.permission !== "granted") {
-        const denied = result?.permission === "denied";
-        throw Object.assign(new Error(denied
-          ? "Anki denied the connection. In Anki, allow Ghostwriter when AnkiConnect asks, or add this extension to AnkiConnect's webCorsOriginList."
-          : "AnkiConnect did not confirm permission. Check that AnkiConnect is up to date, then try again."), {
-          name: "AnkiConnectError", kind: "refused", raw: denied ? "permission denied" : "invalid permission response",
+      // Only an explicit refusal stops here. AnkiconnectAndroid doesn't implement this action
+      // and answers "AnkiConnect v.6"; older AnkiConnect builds may answer null. Both work.
+      if (result?.permission === "denied") {
+        throw Object.assign(new Error("Anki denied the connection. In Anki, allow Ghostwriter when AnkiConnect asks, or add this extension to AnkiConnect's webCorsOriginList."), {
+          name: "AnkiConnectError", kind: "refused", raw: "permission denied",
         });
       }
       ankiSessionCache.permissionGranted = true;

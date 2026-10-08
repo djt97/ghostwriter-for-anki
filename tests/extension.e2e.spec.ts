@@ -207,6 +207,7 @@ test.describe('Ghostwriter for Anki UI', () => {
         });
 
       switch (action) {
+        case 'requestPermission': return ok({ permission: 'granted', requireApikey: false, version: 6 });
         case 'deckNames':        return ok(['Default']);
         case 'modelNames':       return ok(['Basic']);
         case 'modelFieldNames':  return ok(['Front', 'Back']);
