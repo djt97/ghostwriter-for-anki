@@ -309,9 +309,12 @@ async function getModelTemplatesSafe(modelName) {
   let templates = null;
   try {
     const result = await anki("modelTemplates", { modelName });
-    // AnkiconnectAndroid has no modelTemplates and answers with a string: treat as unknown.
     if (result && typeof result === "object" && !Array.isArray(result)) templates = result;
-  } catch {}
+  } catch (err) {
+    // AnkiConnect answered but doesn't support modelTemplates (AnkiconnectAndroid): remember
+    // "unknown". After a timeout or no connection, ask again next time.
+    if (err?.kind !== "anki") return null;
+  }
   modelTemplatesCache.set(modelName, templates);
   return templates;
 }
@@ -353,7 +356,15 @@ async function anki(action, params = {}) {
 
   try {
     if (action !== "requestPermission" && !ankiSessionCache.permissionGranted) {
-      await anki("requestPermission");
+      try {
+        await anki("requestPermission");
+      } catch (err) {
+        // AnkiconnectAndroid has no requestPermission and answers with an error message
+        // (MalformedJsonException). AnkiConnect is reachable, so carry on; a real refusal
+        // (permission "denied", HTTP 401/403) or no connection still stops here.
+        if (err?.kind !== "anki") throw err;
+        ankiSessionCache.permissionGranted = true;
+      }
     }
 
     if (action === "requestPermission" && ankiSessionCache.permissionGranted) {
@@ -373,8 +384,7 @@ async function anki(action, params = {}) {
 
     const result = await sendAnkiConnectRequest(action, params);
     if (action === "requestPermission") {
-      // Only an explicit refusal stops here. AnkiconnectAndroid doesn't implement this action
-      // and answers "AnkiConnect v.6"; older AnkiConnect builds may answer null. Both work.
+      // Only an explicit refusal stops here; older AnkiConnect builds may answer null.
       if (result?.permission === "denied") {
         throw Object.assign(new Error("Anki denied the connection. In Anki, allow Ghostwriter when AnkiConnect asks, or add this extension to AnkiConnect's webCorsOriginList."), {
           name: "AnkiConnectError", kind: "refused", raw: "permission denied",
@@ -499,7 +509,9 @@ async function getPageContext() {
   }
   // tabId lets a side panel that stays open across tabs notice that the page changed even when
   // Chrome hides the URL (no tabs permission).
-  const fallback = { ...emptyPageContextFromTab(tab), tabId: tab.id, needsTabPermission: !tab.url && !isOwnEditorTab };
+  // The editor's own tab isn't a source page, so it gets no tabId: a draft seeded from the page
+  // the user right-clicked must not look like it came from "another tab".
+  const fallback = { ...emptyPageContextFromTab(tab), ...(isOwnEditorTab ? {} : { tabId: tab.id }), needsTabPermission: !tab.url && !isOwnEditorTab };
   updatePageSourcePermissionUI(fallback);
   if (!canRequestTabPageContext(tab)) {
     return fallback;
@@ -509,7 +521,7 @@ async function getPageContext() {
       chrome.tabs.sendMessage(tab.id, { type: "quickflash:getContext" }),
       fallback
     );
-    return ctx && typeof ctx === "object" ? { ...ctx, tabId: tab.id } : fallback;
+    return ctx && typeof ctx === "object" ? { ...ctx, ...(isOwnEditorTab ? {} : { tabId: tab.id }) } : fallback;
   } catch {
     return fallback;
   }
@@ -9483,16 +9495,23 @@ async function updateModelFieldWarning() {
         ? `It has no Front/Back fields, so Ghostwriter will put the question in “${fieldMap.front}” and the answer in “${fieldMap.back}”.`
         : `It has only one field for the card (“${fieldMap.front}”), so the Back will not be saved.`)
       : "";
-    // No Source field: say when the source link has to be left out of the answer as well.
+    // No Source field: say when the source link has to be left out of the card.
     let linkNote = "";
-    if (!hasSource && !isClozeModelName(modelName) && !isLpcg1ModelName(modelName) && !isLpcgMode()) {
-      const templates = await getModelTemplatesSafe(modelName);
-      if (requestId !== modelFieldWarningRequest) return;
-      const reason = fieldMap.back ? window.GHOSTWRITER_ANKI_NOTE.sourceLinkUnsafeReason(templates, fieldMap.back) : "none";
-      if (reason) {
-        linkNote = reason === "type"
-          ? "Because this note type checks typed answers, Ghostwriter won't add the source link to the answer. Use Basic [Ghostwriter] to keep it."
-          : "Because this note type shows the answer field on a question side, Ghostwriter won't add the source link there. Use Basic [Ghostwriter] to keep it.";
+    if (!hasSource) {
+      const keepIt = "Use Basic [Ghostwriter] or Cloze [Ghostwriter], which keep it in a Source field.";
+      const noSafeField = `This note type has no field for the source link that stays off the question, so the link is left out. ${keepIt}`;
+      if (isLpcg1ModelName(modelName) || isLpcgMode()) {
+        if (!fieldNames.includes("Notes")) linkNote = noSafeField;
+      } else if (isClozeModelName(modelName)) {
+        if (!fieldMap.extra && !fieldNames.includes("Notes")) linkNote = noSafeField;
+      } else if (!fieldMap.back) {
+        if (!fieldMap.extra) linkNote = noSafeField;
+      } else {
+        const templates = await getModelTemplatesSafe(modelName);
+        if (requestId !== modelFieldWarningRequest) return;
+        const reason = window.GHOSTWRITER_ANKI_NOTE.sourceLinkUnsafeReason(templates, fieldMap.back);
+        if (reason === "type") linkNote = `Because this note type checks typed answers, Ghostwriter won't add the source link to the answer. ${keepIt}`;
+        if (reason === "reversed") linkNote = `Because this note type shows the answer field on a question side, Ghostwriter won't add the source link there. ${keepIt}`;
       }
     }
     if (hasContext && hasSource && !remapNote) {
@@ -10034,7 +10053,9 @@ async function cardToAnkiNote(card, deckName, modelName, includeBackLink, url, t
   // the note-type warning recommends the Ghostwriter note types, which have a Source field.
   if (backLink && !isLpcg1 && cardType !== "cloze") {
     const templates = await getModelTemplatesSafe(effectiveModel);
-    if (!fieldMap.back || window.GHOSTWRITER_ANKI_NOTE.sourceLinkUnsafeReason(templates, fieldMap.back)) backLink = "";
+    if (fieldMap.back
+      ? window.GHOSTWRITER_ANKI_NOTE.sourceLinkUnsafeReason(templates, fieldMap.back)
+      : !fieldMap.extra) backLink = "";
   }
 
   if (isLpcg1) {
@@ -10905,7 +10926,8 @@ async function updateCompactCopilotVisibility() {
   // Auto: the buttons are for touch screens, where there is no keyboard shortcut. A narrow
   // desktop side panel or overlay still counts as desktop.
   const forcedMobile = new URLSearchParams(location.search || "").get("view") === "mobile";
-  const touch = forcedMobile || isLikelyMobileDevice() || window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+  const mobileUA = /android|iphone|ipad|ipod/i.test(navigator.userAgent || "");
+  const touch = forcedMobile || mobileUA || window.matchMedia('(hover: none) and (pointer: coarse)').matches;
   const compactOn = mode === 'on' || (mode === 'auto' && touch);
   copilot.compactBarVisible = compactOn;
 

@@ -40,7 +40,7 @@ function frozenPreferences(value) {
   return Object.freeze(value);
 }
 
-function visibility({ prefs = {}, touch = false, hash = '', search = '', defaults = sharedDefaults, bars = true } = {}) {
+function visibility({ prefs = {}, touch = false, ua = 'Mozilla/5.0 (Macintosh)', hash = '', search = '', defaults = sharedDefaults, bars = true } = {}) {
   let input = frozenPreferences(prefs);
   let before = copy(input);
   const mini = bars ? { hidden: false } : null;
@@ -59,7 +59,7 @@ function visibility({ prefs = {}, touch = false, hash = '', search = '', default
     },
     location: { hash, search },
     URLSearchParams,
-    isLikelyMobileDevice: () => touch,
+    navigator: { userAgent: ua },
     async getOptions() { calls.options += 1; return input; },
     copilot,
     currentSourceMode: 'auto',
@@ -81,10 +81,13 @@ function visibility({ prefs = {}, touch = false, hash = '', search = '', default
 const surfaces = [
   { name: 'desktop', touch: false },
   { name: 'touch device', touch: true },
+  { name: 'Android phone', touch: false, ua: 'Mozilla/5.0 (Linux; Android 14)' },
   { name: 'desktop overlay', touch: false, hash: '#popover' },
+  // A touchscreen laptop with a mouse reports a fine, hovering pointer: it counts as desktop.
+  { name: 'touchscreen laptop side panel', touch: false, ua: 'Mozilla/5.0 (Windows NT 10.0)' },
   { name: 'forced mobile view', touch: false, search: '?view=mobile' },
 ];
-const isTouch = (surface) => surface.touch || surface.search === '?view=mobile';
+const isTouch = (surface) => surface.touch || /Android/.test(surface.ua || '') || surface.search === '?view=mobile';
 
 describe('Copilot bar visibility preserves explicit choices', () => {
   for (const surface of surfaces) {

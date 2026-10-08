@@ -33,8 +33,9 @@
   function sourceLinkUnsafeReason(templates, answerField) {
     if (!templates || typeof templates !== "object" || !answerField) return "";
     const name = String(answerField).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const typed = new RegExp(`\\{\\{type:(?:[^{}:]*:)?${name}\\}\\}`, "i");
-    const shown = new RegExp(`\\{\\{(?:[^{}#/^]*:)?${name}\\}\\}`);
+    // Anki trims whitespace inside the braces: {{ type:Back }} and {{ Back }} count too.
+    const typed = new RegExp(`\\{\\{\\s*type\\s*:(?:[^{}:]*:)?\\s*${name}\\s*\\}\\}`, "i");
+    const shown = new RegExp(`\\{\\{\\s*(?:[^{}#/^]*:)?\\s*${name}\\s*\\}\\}`);
     const cards = Object.values(templates).filter((card) => card && typeof card === "object");
     if (cards.some((card) => typed.test(String(card.Front || "")) || typed.test(String(card.Back || "")))) return "type";
     if (cards.some((card) => shown.test(String(card.Front || "")))) return "reversed";

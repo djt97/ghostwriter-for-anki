@@ -50,4 +50,7 @@ test("source links stay out of typed answers and question-side answer fields", (
   assert.equal(sourceLinkUnsafeReason({ "Card 1": { Front: "{{Backside}}", Back: "" } }, "Back"), "");
   assert.equal(sourceLinkUnsafeReason(null, "Back"), "", "unknown templates (e.g. AnkiconnectAndroid) are treated as safe");
   assert.equal(sourceLinkUnsafeReason({ "Card 1": { Front: "{{Q (a.b)}}", Back: "" } }, "Q (a.b)"), "reversed");
+  // Anki trims whitespace inside the braces.
+  assert.equal(sourceLinkUnsafeReason({ "Card 1": { Front: "{{Front}} {{ type:Back }}", Back: "" } }, "Back"), "type");
+  assert.equal(sourceLinkUnsafeReason({ "Card 1": { Front: "{{ Back }}", Back: "" } }, "Back"), "reversed");
 });

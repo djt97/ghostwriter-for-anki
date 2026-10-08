@@ -125,8 +125,24 @@ describe('AnkiConnect session cache', () => {
   });
 
   it('works with AnkiConnect variants that do not implement requestPermission', async () => {
-    // AnkiconnectAndroid answers unknown actions with "AnkiConnect v.6"; older add-ons may answer null.
-    for (const reply of ['AnkiConnect v.6', null, {}]) {
+    // AnkiconnectAndroid has no requestPermission; its JSON parser rejects the default reply, so
+    // AnkiConnect answers with an error. AnkiConnect is there, so the add goes ahead.
+    const calls = [];
+    const android = makeAnkiSandbox(async (action) => {
+      calls.push(action);
+      if (action === 'requestPermission') {
+        throw Object.assign(new Error('Anki says: com.google.gson.stream.MalformedJsonException: line 1 column 14'), { kind: 'anki' });
+      }
+      return 123456;
+    });
+    assert.equal(await android.anki('addNote', {}), 123456);
+    assert.equal(android.ankiSessionCache.permissionGranted, true);
+    assert.deepEqual(calls, ['requestPermission', 'addNote']);
+    // ...but no connection at all still stops.
+    const offline = makeAnkiSandbox(async () => { throw Object.assign(new Error('Can\'t reach Anki'), { kind: 'unreachable' }); });
+    await assert.rejects(offline.anki('addNote', {}), (err) => err.kind === 'unreachable');
+    // Older add-ons may answer null or an empty object.
+    for (const reply of [null, {}]) {
       const calls = [];
       const env = makeAnkiSandbox(async (action) => {
         calls.push(action);

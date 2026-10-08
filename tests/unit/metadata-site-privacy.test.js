@@ -185,6 +185,13 @@ describe('automatic metadata prompts and Anki source separation', () => {
     }
   });
 
+  it('keeps the link in Extra on a note type with Front and Extra but no Back', async () => {
+    const note = await loadNoteBuilder(['Front', 'Extra'])({ type: 'basic', front: 'Q?', back: '' },
+      'Default', 'Front+Extra', false, privateUrl, 'Example work', true);
+    assert.ok(note.fields.Extra.includes(`href="${privateUrl.replace(/&/g, '&amp;')}"`));
+    assert.ok(!note.fields.Front.includes('href='));
+  });
+
   it('writes the dedicated Source field as a plain link', async () => {
     const note = await loadNoteBuilder(['Front', 'Back', 'Source'])({ type: 'basic', front: 'Q?', back: 'A.' },
       'Default', 'Basic [Ghostwriter]', false, 'https://example.com/a', 'Example work', true);
