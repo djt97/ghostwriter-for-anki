@@ -6,6 +6,8 @@ Install [Ghostwriter for Anki from the Chrome Web Store](https://chromewebstore.
 
 ## Set up desktop Anki
 
+A welcome page opens after installing. It walks through these steps, checks the connection to Anki live, and has a practice paragraph for a first card. You can reopen it from **Options → Help**.
+
 1. Open desktop Anki and select **Tools → Add-ons → Get Add-ons**.
 2. Enter `2055492159`, the [AnkiConnect add-on code](https://ankiweb.net/shared/info/2055492159).
 3. Restart Anki and leave it running whenever you send cards.

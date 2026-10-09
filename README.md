@@ -25,7 +25,7 @@ A complete documentation set now lives under [`docs/`](./docs/README.md):
 ## Quick Start
 
 1. [Install from the Chrome Web Store](https://chromewebstore.google.com/detail/ghostwriter-for-anki/aldemiobejkammdkfgpfnmeppnegfaoc).
-2. In desktop Anki, open **Tools → Add-ons → Get Add-ons**, enter `2055492159`, and restart Anki. Keep Anki open when sending cards. See [installation](./docs/installation.md) for connection and permission setup.
+2. In desktop Anki, open **Tools → Add-ons → Get Add-ons**, enter `2055492159`, and restart Anki. Keep Anki open when sending cards. The welcome page that opens after installing checks the connection as you go; see [installation](./docs/installation.md) for details.
 3. Highlight text on a page and open Ghostwriter from the extension icon, context menu, or shortcut.
 4. Write the card in the overlay; press the Copilot autocomplete shortcut when useful.
 5. Add the card directly to Anki.

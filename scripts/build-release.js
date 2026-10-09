@@ -23,6 +23,8 @@ const RELEASE_SOURCE_FILES = [
   'anki-note.js',
   'stage2-migration.js',
   'options.html',
+  'welcome.html',
+  'welcome.js',
   'options.js',
   'options.css',
   'native-ai.js',

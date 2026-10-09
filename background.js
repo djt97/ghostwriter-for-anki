@@ -935,6 +935,11 @@ chrome.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
   chrome.contextMenus.create({ id: "quickflash-open", title: "Ghostwriter for Anki", contexts: ["all"] });
   chrome.contextMenus.create({ id: "quickflash-write-card", title: "Create Anki card with Ghostwriter", contexts: ["selection"] });
 
+  // First install only: a short setup page (AnkiConnect, a practice card, shortcuts).
+  if (reason === "install") {
+    try { await chrome.tabs.create({ url: chrome.runtime.getURL("welcome.html") }); } catch {}
+  }
+
   try {
     if (reason === "update") {
       await runFocusedV2CompatibilityUpdate({ reason, previousVersion: previousVersion || "" });

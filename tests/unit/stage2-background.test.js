@@ -277,6 +277,16 @@ describe('Stage 2 worker recovery bridge', () => {
     assert.equal(harness.local.data.ghostwriter_saved_items[0].text, 'Fixture saved card');
   });
 
+  it('opens the welcome page on a fresh install only, never on updates', async () => {
+    const harness = await worker();
+    harness.clearCalls();
+    await harness.events.get('runtime.onInstalled').emit({ reason: 'update', previousVersion: '0.5.0' });
+    assert.ok(!harness.effects.some(({ name, args }) => name === 'tabs.create' && /welcome\.html/.test(JSON.stringify(args))));
+    await harness.events.get('runtime.onInstalled').emit({ reason: 'install' });
+    const opened = harness.effects.filter(({ name, args }) => name === 'tabs.create' && /welcome\.html/.test(JSON.stringify(args)));
+    assert.equal(opened.length, 1);
+  });
+
   it('does not revive retired review-queue or queue-badge message handlers', async () => {
     const harness = await worker();
     harness.clearCalls();
