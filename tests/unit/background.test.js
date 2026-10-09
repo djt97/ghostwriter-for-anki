@@ -207,20 +207,20 @@ describe('background.js pure functions', () => {
   });
 
   describe('buildUpdateNotice', () => {
-    it('summarizes the 0.4.1 model choices while preserving credentials', () => {
+    it('summarizes what changed in this release while preserving credentials', () => {
       const notice = buildUpdateNotice({
-        previousVersion: '0.4.0',
-        currentVersion: '0.4.1',
+        previousVersion: '0.5.0',
+        currentVersion: '0.6.0',
         preservedCredentials: { openaiKey: true },
       });
-      assert.match(notice.title, /0\.4\.1/);
+      const text = `${notice.message} ${notice.actions.join(' ')}`;
+      assert.match(notice.title, /0\.6\.0/);
       assert.match(notice.message, /API keys/);
-      assert.match(`${notice.message} ${notice.actions.join(' ')}`, /100 included model requests/i);
-      assert.match(`${notice.message} ${notice.actions.join(' ')}`, /Chrome on-device AI/i);
-      assert.match(`${notice.message} ${notice.actions.join(' ')}`, /model path/i);
+      assert.match(text, /Ctrl on Windows/i);
+      assert.match(text, /PDF/);
       assert.equal(notice.dismissed, false);
       assert.ok(notice.actions.length >= 2);
-      assert.doesNotMatch(`${notice.message} ${notice.actions.join(' ')}`, /AI suggestions|10 per day|20 lifetime/i);
+      assert.doesNotMatch(text, /AI suggestions|10 per day|20 lifetime/i);
     });
   });
 

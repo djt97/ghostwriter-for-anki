@@ -806,13 +806,15 @@ function buildUpdateNotice({ previousVersion = "", currentVersion = "", preserve
     createdAt: Date.now(),
     dismissed: false,
     title: `Ghostwriter updated to ${currentVersion || "the latest version"}`,
+    // What's new, shown once after an update (draft wording for DJ's rewrite).
     message: preservedCount
-      ? "Your API keys and Anki settings were preserved. Copilot now makes its active model path visible."
-      : "Copilot now makes its active model path visible. You can also keep writing without model requests.",
+      ? "Your API keys and Anki settings were preserved. This release fixes how cards reach Anki and how shortcuts work."
+      : "This release fixes how cards reach Anki and how shortcuts work.",
     actions: [
-      "Each browser profile gets 100 included model requests for its lifetime, with no paid Ghostwriter plan.",
-      "Opt in to Chrome on-device AI for Copilot, tags, and context when your browser supports it.",
-      "Copilot shows whether a personal, local, on-device, or included hosted model handled the latest request.",
+      "Shortcuts use Ctrl on Windows and Linux (Cmd on Mac).",
+      "Pasted screenshots and simple formatting such as bold and subscripts now reach Anki intact.",
+      "In a PDF, right-click highlighted text and choose Create Anki card with Ghostwriter.",
+      "Add to Anki sends each card directly; the old Review Queue is retired.",
     ],
     preservedCredentials,
   };
