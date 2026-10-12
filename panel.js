@@ -11439,6 +11439,9 @@ function updatePdfSourceNotice() {
   const autoRead = copilot?.clipboardFallback !== false;
   const shortcutRereads = autoRead && getEditorSurface() === "overlay";
   if (fromClipboard) {
+    // Copied text is already in use. Where the shortcut reads it again, the button only repeats
+    // that; the side panel keeps it, because its shortcut closes the panel.
+    if (button && shortcutRereads) button.hidden = true;
     el.textContent = `Using the text you copied. To use a different passage, copy it (${copyKeys}) and `
       + (shortcutRereads ? "press the shortcut again." : "choose Use copied text again.");
     return;

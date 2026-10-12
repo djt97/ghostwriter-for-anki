@@ -68,12 +68,15 @@ describe('PDF Source notice', () => {
     assert.equal(els.pageNotice.hidden, false);
     assert.match(els.pageNotice.textContent, /Using the text you copied/);
     assert.match(els.pageNotice.textContent, /press the shortcut again/);
+    // The shortcut already re-reads the clipboard, so the button would only repeat it.
+    assert.equal(els.pdfUseClipboard.hidden, true);
   });
 
   it('points the side panel at the button, since its shortcut closes the panel', () => {
     const els = makeNoticeSandbox({ ctx: { isPdf: true, selection: 'Theorem 6.2', usingClipboard: true }, source: 'Theorem 6.2', surface: 'side_panel' });
     assert.match(els.pageNotice.textContent, /choose Use copied text again/);
     assert.doesNotMatch(els.pageNotice.textContent, /shortcut/);
+    assert.equal(els.pdfUseClipboard.hidden, false);
   });
 
   it('does not promise automatic reads when the clipboard fallback is off', () => {
@@ -82,6 +85,7 @@ describe('PDF Source notice', () => {
     assert.match(empty.pageNotice.textContent, /turn on “Use clipboard as a Source fallback” in Settings/);
     const used = makeNoticeSandbox({ ctx: { isPdf: true, selection: 'x', usingClipboard: true }, source: 'x', clipboardFallback: false });
     assert.match(used.pageNotice.textContent, /choose Use copied text again/);
+    assert.equal(used.pdfUseClipboard.hidden, false);
     const on = makeNoticeSandbox({ ctx: { isPdf: true, selection: '' } });
     assert.match(on.pageNotice.textContent, /After the first time, copying before you open Ghostwriter is enough/);
   });
