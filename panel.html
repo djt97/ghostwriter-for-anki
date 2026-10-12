@@ -1572,7 +1572,7 @@
                   <textarea id="notes" placeholder="Extra detail to map into the Anki note"></textarea>
                 </div>
                 <div class="copilot-row">
-                  <div class="small">Copilot status</div>
+                  <div class="small">Suggestion status</div>
                   <div id="copilotStatus" class="copilot-status small"></div>
                 </div>
               </div>
@@ -1585,7 +1585,7 @@
                   <label class="inline"><input id="manualAutoTag" type="checkbox" /> Auto-tag</label>
                   <label class="inline"><input id="manualAutoContext" type="checkbox" /> Generate context</label>
                   <label class="inline"><input id="mathjaxPreview" type="checkbox" /> Auto preview</label>
-                  <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable Copilot Suggest</label>
+                  <label class="inline small"><input id="copilotEnabled" type="checkbox" checked /> Enable Ghostwriter suggestions</label>
                 </div>
                 <p class="small">A known page or PDF URL is always kept in the note: in Source when selected and available, otherwise alongside the card content. Clipboard text without a known page URL has no invented link.</p>
               </details>
@@ -1629,7 +1629,7 @@
           </div>
         </details>
         <div id="longSourceNotice" class="small long-source-notice" role="status" aria-live="polite" hidden>
-          <span>Long selection — Copilot Suggest works best on a sentence or two. Try selecting a smaller passage.</span>
+          <span>Long selection — suggestions work best on a sentence or two. Try selecting a smaller passage.</span>
           <button type="button" id="dismissLongSourceNotice">Dismiss</button>
         </div>
 
@@ -1745,7 +1745,7 @@
             </div>
             <div class="copilot-suggestion" data-field="front" hidden>
               <div class="copilot-header">
-                <div class="copilot-meta">Copilot suggestion</div>
+                <div class="copilot-meta">Ghostwriter suggestion</div>
                 <div class="copilot-hint small"></div>
               </div>
               <div class="copilot-text"></div>
@@ -1760,7 +1760,7 @@
           <div id="copilotMini" class="copilot-mini" hidden>
             <select id="editorTemplateSelect" class="small" hidden></select>
             <button type="button" id="editorGenerateBtn" title="Draft one card from Source" tabindex="-1" hidden>Draft</button>
-            <button type="button" id="copilotMiniGenerate" title="Request Copilot suggestion" tabindex="-1">Suggest</button>
+            <button type="button" id="copilotMiniGenerate" title="Ask Ghostwriter for a suggestion" tabindex="-1">Suggest</button>
             <span id="sourceModePill" class="source-pill small" aria-live="polite">Source: Auto</span>
             <button type="button" id="copilotMiniAccept" title="Accept both" tabindex="-1">Accept</button>
             <button type="button" id="copilotMiniReject" title="Reject current suggestion(s)" tabindex="-1">Reject</button>
@@ -1783,7 +1783,7 @@
             </div>
             <div class="copilot-suggestion" data-field="back" hidden>
               <div class="copilot-header">
-                <div class="copilot-meta">Copilot suggestion</div>
+                <div class="copilot-meta">Ghostwriter suggestion</div>
                 <div class="copilot-hint small"></div>
               </div>
               <div class="copilot-text"></div>
@@ -1873,7 +1873,7 @@
             <code>Cmd/Ctrl + Shift + L</code>
           </li>
           <li>
-            <span>Copilot Suggest</span>
+            <span>Ghostwriter suggestion</span>
             <code id="shortcutCopilot">Cmd/Ctrl + Shift + X</code>
           </li>
           <li>
@@ -1897,7 +1897,7 @@
   <div id="aiTemplateModal" class="modal-overlay" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiTemplateModalTitle">
       <header>
-        <h2 id="aiTemplateModalTitle">Copilot mode</h2>
+        <h2 id="aiTemplateModalTitle">Suggestion mode</h2>
         <button type="button" id="aiTemplateModalClose" aria-label="Close">×</button>
       </header>
       <div class="modal-body">

@@ -211,7 +211,7 @@ describe('panel.js Copilot guardrails', () => {
     assert.ok(panelSource.includes('buildFrontGuardRetryPrompt'));
     assert.match(panelSource, /clozeMode\s*\?\s*await callClozeLLM/);
     assert.match(panelSource, /:\s*await callFrontLLMWithLocalGuard/);
-    assert.ok(panelSource.includes('Copilot rewriting cue'));
+    assert.ok(panelSource.includes('Ghostwriter rewriting cue'));
     assert.ok(panelSource.includes('Suppressed Front suggestion after rewrite'));
     assert.ok(panelSource.includes('getFrontNormalizationRetryReason(existingText, state._lastFrontRawOutput)'));
     assert.ok(panelSource.includes('!partial.trim() && !abortedByEarlyStop'));
@@ -1396,7 +1396,7 @@ describe('panel.js shortcut coaching', () => {
   });
 
   it('teaches suggestion accept/dismiss without opening a tour', () => {
-    assert.ok(panelSource.includes('Use ${suggestionShortcut} for Copilot Suggest.'));
+    assert.ok(panelSource.includes('Use ${suggestionShortcut} for a Ghostwriter suggestion.'));
     assert.ok(panelSource.includes('Tab to accept'));
     assert.ok(panelSource.includes('Esc to dismiss'));
     assert.ok(panelSource.includes('rejectFocusedCopilotSuggestion'));

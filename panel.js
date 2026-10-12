@@ -2168,7 +2168,7 @@ function resetRejectedCopilotDraft(state) {
   }
   state.suggestionEl?.classList?.remove?.("rejected-draft-mode");
   const metaEl = state.suggestionEl?.querySelector?.(".copilot-meta");
-  if (metaEl) metaEl.textContent = "Copilot suggestion";
+  if (metaEl) metaEl.textContent = "Ghostwriter suggestion";
 }
 
 function rememberRejectedCopilotDraft(state, { suggestion = "", preview = "", reason = "" } = {}) {
@@ -2969,7 +2969,7 @@ window.addEventListener("message", async (event) => {
   if (type === "quickflash:overlayClosed") {
     clearClipboardSource({ notify: true });
     resetCopilotLocks();
-    setCopilotStatus("Copilot ready.");
+    setCopilotStatus("Ghostwriter ready.");
   }
   if (type === "quickflash:addCurrentCard") {
     if (!sameOriginMessage) return;
@@ -3010,7 +3010,7 @@ function setCopilotStatus(text, isError = false) {
 
 // Ephemeral Copilot notice anchored between Front and Back
 let __qfLiteToastTimer = null;
-function showCopilotNotice(message = "Copilot notice", { error = false } = {}) {
+function showCopilotNotice(message = "Ghostwriter notice", { error = false } = {}) {
   try {
     // Reuse the same banner if it already exists
     let note = document.getElementById("qf-lite-fallback");
@@ -3072,7 +3072,7 @@ async function persistCopilotPreference(enabled) {
     });
   } catch (err) {
     console.warn("Failed to persist Copilot preference", err);
-    setCopilotStatus("Could not save Copilot preference. It may reset next time.", true);
+    setCopilotStatus("Could not save the suggestions setting. It may reset next time.", true);
   }
 }
 
@@ -3086,7 +3086,7 @@ function setCopilotEnabled(nextEnabled, { persist = false } = {}) {
 
   if (!enabled) {
     cancelCopilotRequests();
-    setCopilotStatus("Copilot Suggest off. Exact source assists remain available.");
+    setCopilotStatus("Ghostwriter suggestions are off. Exact source assists remain available.");
   } else if (!copilot.apiConfigured) {
     cancelCopilotRequests();
     setCopilotStatus("Exact source assists remain available. Connect a provider or enable Chrome AI in Settings.");
@@ -4766,7 +4766,7 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
     }
     if (state.hintEl) state.hintEl.textContent = "Rewriting cue...";
     if (state.workingEl) {
-      state.workingEl.textContent = "Copilot rewriting cue...";
+      state.workingEl.textContent = "Ghostwriter rewriting cue…";
       state.workingEl.hidden = false;
     }
 
@@ -5487,7 +5487,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     if (isCopilotTimeoutAbort(controller) && isCurrentCopilotRequest(backState, controller)) {
       backState.suggestion = "";
       clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
-      setCopilotStatus("Copilot timed out.", true);
+      setCopilotStatus("Ghostwriter timed out.", true);
     }
     if (isCurrentCopilotRequest(backState, controller)) backState.controller = null;
     return;
@@ -5519,7 +5519,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
   }
 
   if (backState.workingEl) {
-    backState.workingEl.textContent = "Copilot working…";
+    backState.workingEl.textContent = "Ghostwriter working…";
     backState.workingEl.hidden = false;
   }
 
@@ -5563,7 +5563,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       if (isCopilotTimeoutAbort(controller)) {
         backState.suggestion = "";
         clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
-        setCopilotStatus("Copilot timed out.", true);
+        setCopilotStatus("Ghostwriter timed out.", true);
       }
       return;
     }
@@ -5579,7 +5579,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       if (isCopilotTimeoutAbort(controller)) {
         backState.suggestion = "";
         clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
-        setCopilotStatus("Copilot timed out.", true);
+        setCopilotStatus("Ghostwriter timed out.", true);
       }
       return;
     }
@@ -5632,7 +5632,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       backState.suggestion = "";
       clearSuggestionUI(backState, { removeClasses: true, mirrorValue: existingBack });
       if (isCopilotTimeoutAbort(controller, e)) {
-        setCopilotStatus("Copilot timed out.", true);
+        setCopilotStatus("Ghostwriter timed out.", true);
       }
       return;
     }
@@ -5648,7 +5648,7 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       backState.suggestionEl.classList.add("error");
     }
     backState.suggestion = "";
-    const msg = e?.message || "Copilot error";
+    const msg = e?.message || "Ghostwriter error";
     if (backState.textEl) backState.textEl.textContent = msg;
     if (backState.hintEl) backState.hintEl.textContent = "";
     if (backState.ghostEl) backState.ghostEl.hidden = true;
@@ -6281,7 +6281,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
   const editSeqAtRequest = state.userEditSeq || 0;
 
   if (state.workingEl) {
-    state.workingEl.textContent = "Copilot working…";
+    state.workingEl.textContent = "Ghostwriter working…";
     state.workingEl.hidden = false;
   }
 
@@ -6329,7 +6329,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
     if (isCopilotTimeoutAbort(controller)) {
       state.suggestion = "";
       clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
-      setCopilotStatus("Copilot timed out.", true);
+      setCopilotStatus("Ghostwriter timed out.", true);
     }
     cleanupBeforeLlm();
     return;
@@ -6417,15 +6417,15 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
   }
 
   if (localOnly) {
-    setCopilotStatus("Copilot is off; no exact source split was found.");
-    showFrontNoCardNotice(state, "Copilot is off, and no exact match for this was found in the source.");
+    setCopilotStatus("Ghostwriter suggestions are off; no exact source split was found.");
+    showFrontNoCardNotice(state, "Ghostwriter suggestions are off, and no exact match for this was found in the source.");
     clearSuggestionUI(state, { mirrorValue: value });
     cleanupBeforeLlm();
     return;
   }
 
   if (!copilot.apiConfigured) {
-    setCopilotStatus("Connect a provider or enable Chrome on-device AI in Settings to use Copilot autocomplete.", true);
+    setCopilotStatus("Connect a provider or enable Chrome on-device AI in Settings to use Ghostwriter suggestions.", true);
     clearSuggestionUI(state, { mirrorValue: value });
     cleanupBeforeLlm();
     return;
@@ -6457,7 +6457,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       if (isCopilotTimeoutAbort(controller)) {
         state.suggestion = "";
         clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
-        setCopilotStatus("Copilot timed out.", true);
+        setCopilotStatus("Ghostwriter timed out.", true);
       }
       return;
     }
@@ -6486,7 +6486,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       if (isCopilotTimeoutAbort(controller)) {
         state.suggestion = "";
         clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
-        setCopilotStatus("Copilot timed out.", true);
+        setCopilotStatus("Ghostwriter timed out.", true);
       }
       return;
     }
@@ -6635,7 +6635,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       state.suggestion = "";
       clearSuggestionUI(state, { removeClasses: true, mirrorValue: value });
       if (isCopilotTimeoutAbort(controller, e)) {
-        setCopilotStatus("Copilot timed out.", true);
+        setCopilotStatus("Ghostwriter timed out.", true);
       }
       return;
     }
@@ -6663,7 +6663,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       state.suggestionEl.classList.add("error");
     }
     state.suggestion = "";
-    const msg = e?.message || "Copilot error";
+    const msg = e?.message || "Ghostwriter error";
     if (state.textEl) state.textEl.textContent = msg;
     if (state.hintEl) state.hintEl.textContent = "";
     if (state.ghostEl) state.ghostEl.hidden = true;
@@ -7494,7 +7494,7 @@ function shortcutCoachMessageForField(fieldId) {
 
   if (copilot.enabled && copilot.apiConfigured) {
     const suggestionShortcut = formatShortcutSpec(copilot.triggerShortcutSpec) || copilot.triggerShortcut || "";
-    return suggestionShortcut ? `Use ${suggestionShortcut} for Copilot Suggest.` : "";
+    return suggestionShortcut ? `Use ${suggestionShortcut} for a Ghostwriter suggestion.` : "";
   }
 
   return "";
@@ -10827,7 +10827,7 @@ async function aiGenerate(templateId, ctx = {}) {
   const templateSelect = $("#editorTemplateSelect");
   const templates = getAiTemplateList();
   if (!templates.length) {
-    status("No Copilot modes configured. Add some in Options.");
+    status("No suggestion modes configured. Add some in Options.");
     return;
   }
 
@@ -10858,7 +10858,7 @@ async function aiGenerate(templateId, ctx = {}) {
         bumpMetric(metrics, "ai_suggestions_accepted");
         return metrics;
       });
-      status("Applied Copilot suggestion. Edit it, then Add to Anki.", true);
+      status("Applied Ghostwriter suggestion. Edit it, then Add to Anki.", true);
       return;
     }
 

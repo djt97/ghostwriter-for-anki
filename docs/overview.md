@@ -7,7 +7,7 @@ Ghostwriter for Anki is a Chrome/Edge Manifest V3 extension that helps you turn 
 - **Highlight-first card writing**
   - Highlight text and open the editor directly.
   - Overlay is the default editor; side panel is optional.
-- **Manual card authoring with Copilot autocomplete**
+- **Manual card authoring with optional suggestions**
   - Draft cards manually in Front/Back fields.
   - Request short continuations manually, then accept or ignore them.
 - **Direct Anki send workflow**
@@ -37,7 +37,7 @@ Ghostwriter can be used in more than one browser surface:
 ## High-level flow
 
 1. Open Ghostwriter from shortcut, action, or context menu.
-2. Draft the card manually with optional Copilot autocomplete.
+2. Draft the card manually, asking Ghostwriter for a suggestion when useful.
 3. Edit the suggestion until the card is ready.
 4. Add the card directly to Anki via AnkiConnect.
 

@@ -36,7 +36,7 @@ Read the reported Anki error. A missing deck or a changed note type needs a setu
 
 Use a supported Chrome desktop installation and the explicit setup button in Options; Chrome may need to download its model. The current Ghostwriter adapter supports English input and output only. Enable the feature and save Options after setup. Keep **hosted fallback** disabled if a failed request must not go to the included hosted model.
 
-## Weak Copilot suggestions
+## Weak suggestions
 
 Type the first few words of the card you want. A partial Back answer or a short note can help establish the target. Reject suggestions that drift to adjacent trivia, admit several answers or merely restate the passage.
 

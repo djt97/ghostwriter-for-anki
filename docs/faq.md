@@ -18,7 +18,7 @@ Yes, if they support compatible chat/completions semantics and you configure bas
 
 ## Are my cards stored in the cloud?
 
-Drafts and settings are stored in browser storage, and finished notes are sent to your AnkiConnect endpoint. Cloud-backed Copilot or metadata requests send the text needed for that request to the active provider. An opted-in Chrome on-device request is processed on the device unless its separately enabled hosted fallback is used. Review the [Privacy Policy](../PRIVACY_POLICY.md) and the policies of services you enable.
+Drafts and settings are stored in browser storage, and finished notes are sent to your AnkiConnect endpoint. Cloud-backed suggestion or metadata requests send the text needed for that request to the active provider. An opted-in Chrome on-device request is processed on the device unless its separately enabled hosted fallback is used. Review the [Privacy Policy](../PRIVACY_POLICY.md) and the policies of services you enable.
 
 ## How does Ghostwriter choose a model backend?
 
@@ -32,7 +32,7 @@ Each browser installation receives 100 lifetime requests to Ghostwriter's includ
 
 On a supported Chrome desktop installation, yes. The feature is opt-in and requires an explicit setup action because Chrome may need to download its model. Ghostwriter's current adapter supports English input and output only. Hosted fallback is separately controllable; disable it if an unavailable or failed on-device request must not be sent to Ghostwriter's included hosted model.
 
-## Why is Copilot autocomplete delayed?
+## Why is a suggestion delayed?
 
 Possible causes include high model latency, strict request interval settings, low token caps, and network/API performance.
 

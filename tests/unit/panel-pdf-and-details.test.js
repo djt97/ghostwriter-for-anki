@@ -332,3 +332,25 @@ describe('notice colours follow the theme', () => {
     assert.match(panelHtml, /\.model-warning \{\n {6}color: var\(--warn-ink\);/);
   });
 });
+
+describe('the AI feature is called Ghostwriter in the interface', () => {
+  const optionsHtml = fs.readFileSync(path.resolve(__dirname, '../../options.html'), 'utf8');
+  const visibleText = (html) => html
+    .replace(/<style[\s\S]*?<\/style>/g, '')
+    .replace(/<script[\s\S]*?<\/script>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]*>/g, ' ');
+  it('keeps "Copilot" out of the editor and Settings text', () => {
+    assert.doesNotMatch(visibleText(panelHtml), /Copilot/);
+    assert.doesNotMatch(visibleText(optionsHtml), /Copilot/);
+    for (const attr of panelHtml.match(/(?:title|aria-label|placeholder)="[^"]*"/g) || []) assert.doesNotMatch(attr, /Copilot/, attr);
+  });
+  it('keeps "Copilot" out of panel.js messages (console logs and code names may keep it)', () => {
+    const visible = panelSource.split('\n')
+      .filter((line) => !/console\.|throw new Error/.test(line))
+      .flatMap((line) => line.match(/"[^"]*Copilot[^"]*"|`[^`]*Copilot[^`]*`/g) || [])
+      .map((s) => s.replace(/\$\{[^}]*\}/g, ''))
+      .filter((s) => /Copilot/.test(s) && /\s/.test(s));
+    assert.deepEqual(visible, []);
+  });
+});

@@ -44,7 +44,7 @@ The overlay shortcut is `Option+Shift+F` on Mac and `Ctrl+Shift+F` on Windows/Li
 
 ## Upgrade and recovery
 
-The source update retires Review Queue, its outbox and suggestions that appear automatically while typing. The editor still sends cards directly to Anki, and Copilot runs when you press Suggest or its shortcut.
+The source update retires Review Queue, its outbox and suggestions that appear automatically while typing. The editor still sends cards directly to Anki, and Ghostwriter suggests wording when you press Suggest or its shortcut.
 
 Before clearing legacy queue/archive records, the update saves and verifies a local recovery backup. Pasted images that the backup refers to are kept. Current editor drafts, settings, provider keys and cards already in Anki are preserved.
 

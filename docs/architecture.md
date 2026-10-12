@@ -6,7 +6,7 @@ Ghostwriter is implemented as a Manifest V3 extension with these main pieces:
 
 - `background.js` — service worker orchestration
 - `content.js` — page integration, overlay host, selection/context capture
-- `panel.html` + `panel.js` — card editor, manually requested Copilot and direct Anki submission
+- `panel.html` + `panel.js` — card editor, manually requested suggestions and direct Anki submission
 - `options.html` + `options.js` — settings UI and persistence
 - `native-ai.js` + `native-ai-options.js` — document-context adapter and explicit setup UI for Chrome's on-device Prompt API
 - `copilot-core.js` — shared deterministic source-verbatim card assists used by the runtime and eval harness
@@ -18,7 +18,7 @@ Ghostwriter is implemented as a Manifest V3 extension with these main pieces:
 1. User triggers Ghostwriter command.
 2. Background resolves active tab and ensures content script availability.
 3. UI opens in overlay, side panel, or panel tab.
-4. Panel handles manually requested Copilot and card editing.
+4. Panel handles manually requested suggestions and card editing.
 5. Background/panel exchange messages for page context and browser actions.
 6. Panel submits notes to AnkiConnect endpoint.
 
@@ -62,7 +62,7 @@ Host permissions include:
 ## External integrations
 
 - **AnkiConnect** for note creation and metadata lookup
-- **AI providers** for Copilot autocomplete and model-backed metadata helpers
+- **AI providers** for suggestions and model-backed metadata helpers
 - **Chrome Prompt API**, when explicitly enabled, for English on-device inference in a document context (the API is not used from the extension service worker)
 - **Ghostwriter included-model proxy** for 100 lifetime hosted-model requests per browser installation, with no per-install daily cap and a service-wide cost circuit breaker
 
@@ -77,4 +77,4 @@ The panel resolves a backend for each model-backed task in this order:
 
 The active-backend UI is updated when routing or fallback changes so users can see where a model request ran.
 
-Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged. The full source URL is retained in Anki Source/backlinks when known, except that no backlink is written into a typed-answer or question-side answer field (see `anki-note.js` `sourceLinkUnsafeReason`). Copilot source/image context is a separate path and can include URLs supplied in the selected source.
+Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. Front/Back text is unchanged. The full source URL is retained in Anki Source/backlinks when known, except that no backlink is written into a typed-answer or question-side answer field (see `anki-note.js` `sourceLinkUnsafeReason`). The source and image context for suggestions is a separate path and can include URLs supplied in the selected source.

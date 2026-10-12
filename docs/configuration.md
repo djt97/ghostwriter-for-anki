@@ -9,11 +9,11 @@ Ghostwriter's Options page shows one settings pane at a time, with Connection sh
 - Provider/model/base URL choices are advanced controls, not part of the normal writing flow.
 - A configured provider or local OpenAI-compatible model is always the first choice. Without one, Ghostwriter can use opted-in Chrome on-device AI, then the included hosted model where available and permitted.
 
-## 2) Copilot autocomplete
+## 2) Ghostwriter suggestions
 
-- Copilot autocomplete can be turned on or off.
+- Suggestions can be turned on or off.
 - Autocomplete is requested with the configured shortcut, or Suggest when its button is shown; suggestions do not appear automatically while you type.
-- The compact Suggest/Accept/Reject/Clear bar defaults to **Auto (touch devices only)**: shown on touch screens, hidden on desktop (including the overlay and side panel). Set it under **Options → Copilot → Advanced AI settings → Compact suggestion buttons (between Front & Back)**. Saved **On** and **Off** choices are kept; legacy **Always** is treated as On. Hiding the bar does not disable keyboard shortcuts.
+- The compact Suggest/Accept/Reject/Clear bar defaults to **Auto (touch devices only)**: shown on touch screens, hidden on desktop (including the overlay and side panel). Set it under **Options → Suggestions → Advanced AI settings → Compact suggestion buttons (between Front & Back)**. Saved **On** and **Off** choices are kept; legacy **Always** is treated as On. Hiding the bar does not disable keyboard shortcuts.
 - Ghostwriter completes the field the user is writing; it does not expose public prompt/template editing in the main Options page.
 - Source-verbatim split assistance remains available locally when model-backed autocomplete is off.
 - Default editor surface can be Overlay, Side panel, or standalone Tab.
@@ -28,7 +28,7 @@ Ghostwriter's Options page shows one settings pane at a time, with Connection sh
 
 ## 4) Metadata helpers
 
-- Auto-Tag uses the same selected model route as Copilot autocomplete.
+- Auto-Tag uses the same selected model route as suggestions.
 - If model tagging is unavailable or fails, Auto-Tag may add at most one subject tag from a conservative, local deterministic classifier. It only emits a tag when confidence is high.
 - Auto-Context reuses useful page or media metadata locally first, then uses the selected model route if no label is available. It has no semantic-classifier fallback after model failure.
 - Automatic tag/context requests use the page hostname; card text and URL-reduced title/metadata hints may also be sent. HTTP(S) URLs in those hints are reduced to hostnames. Front/Back text is unchanged and may itself contain URLs. The full known source URL remains in the card's Anki Source field or backlink.
@@ -49,7 +49,7 @@ Ghostwriter's Options page shows one settings pane at a time, with Connection sh
 
 ## 7) Privacy
 
-Ghostwriter stores settings and draft cards locally. A cloud-backed Copilot or metadata request sends the selected source text, current card text, and prompt to the active endpoint. Chrome on-device requests are processed on the device unless separately enabled hosted fallback is used. See the [Privacy Policy](../PRIVACY_POLICY.md) for the complete routing and endpoint disclosure.
+Ghostwriter stores settings and draft cards locally. A cloud-backed suggestion or metadata request sends the selected source text, current card text, and prompt to the active endpoint. Chrome on-device requests are processed on the device unless separately enabled hosted fallback is used. See the [Privacy Policy](../PRIVACY_POLICY.md) for the complete routing and endpoint disclosure.
 
 ## 8) Permissions and recovery
 
