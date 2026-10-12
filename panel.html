@@ -19,6 +19,13 @@
       --muted:         #6e6b60;  /* warm grey */
       --accent:        #42604a;  /* laurel green (AA on paper) */
       --accent-ink:    #f4f6f2;
+      /* Notice inks: hints, warnings and errors on the themed surfaces. */
+      --info-ink:      #1f4a85;
+      --warn-ink:      #9a4a08;
+      --danger-ink:    #b91c1c;
+      --note-bg:       #fdf6e0;
+      --note-border:   #e8d9a8;
+      --note-ink:      #7a5d1a;
       --ring:          color-mix(in oklab, var(--accent) 30%, white);
       --radius:        12px;
       --radii-sm:      8px;
@@ -45,6 +52,12 @@
         --muted:        #9d9a8d;
         --accent:       #8fb89b;  /* lighter laurel (AA on dark) */
         --accent-ink:   #1b1a16;
+        --info-ink:     #9ec3ef;
+        --warn-ink:     #e3a75c;
+        --danger-ink:   #f19a9a;
+        --note-bg:      #322c1b;
+        --note-border:  #5a4b26;
+        --note-ink:     #e8cf8f;
         --ring:         color-mix(in oklab, var(--accent) 30%, black);
         --input-bg:     #232219;
         --input-border: #3d3b30;
@@ -63,6 +76,12 @@
       --muted:        #9d9a8d;
       --accent:       #8fb89b;
       --accent-ink:   #1b1a16;
+      --info-ink:     #9ec3ef;
+      --warn-ink:     #e3a75c;
+      --danger-ink:   #f19a9a;
+      --note-bg:      #322c1b;
+      --note-border:  #5a4b26;
+      --note-ink:     #e8cf8f;
       --ring:         color-mix(in oklab, var(--accent) 30%, black);
       --input-bg:     #232219;
       --input-border: #3d3b30;
@@ -78,6 +97,12 @@
       --muted:        #6e6b60;
       --accent:       #42604a;
       --accent-ink:   #f4f6f2;
+      --info-ink:     #1f4a85;
+      --warn-ink:     #9a4a08;
+      --danger-ink:   #b91c1c;
+      --note-bg:      #fdf6e0;
+      --note-border:  #e8d9a8;
+      --note-ink:     #7a5d1a;
       --ring:         color-mix(in oklab, var(--accent) 30%, white);
       --input-bg:     #fffefb;
       --input-border: var(--border);
@@ -305,7 +330,7 @@
       font-size: 12px;
       color: var(--muted);
     }
-    .copilot-status.error { color: #b91c1c; }
+    .copilot-status.error { color: var(--danger-ink); }
     .copilot-suggestion {
       margin-top: 6px;
       padding: 8px 10px;
@@ -353,7 +378,7 @@
       font-size: 13px;
     }
     .copilot-suggestion.loading .copilot-text { color: var(--muted); }
-    .copilot-suggestion.error .copilot-text { color: #b91c1c; }
+    .copilot-suggestion.error .copilot-text { color: var(--danger-ink); }
     .stem-split-word {
       display: inline-block;
       padding: 2px 7px;
@@ -467,7 +492,7 @@
     }
     button.warning {
       background: color-mix(in oklab, #ef4444 18%, var(--surface));
-      color: #991b1b;
+      color: var(--danger-ink);
       border-color: color-mix(in oklab, #ef4444 22%, var(--border));
     }
     button.warning:hover { filter: brightness(1.02); }
@@ -630,13 +655,13 @@
     .editor-status-wrap { display:flex; flex-direction:column; gap:2px; max-width: 100%; }
     .editor-status { font-weight:600; font-size:13px; max-width: 100%; overflow-wrap: anywhere; }
     .model-warning {
-      color: #b45309;
+      color: var(--warn-ink);
       margin-top: 4px;
       display: grid;
       gap: 6px;
     }
     .ghostwriter-warning {
-      color: #1f4a85;
+      color: var(--info-ink);
       background: var(--surface-2);
       border: 1px solid var(--border);
       border-radius: var(--radii-sm);
@@ -668,7 +693,7 @@
       gap: 6px;
     }
     .model-info {
-      color: #1f4a85;
+      color: var(--info-ink);
       margin-top: 4px;
       display: grid;
       gap: 6px;
@@ -693,10 +718,10 @@
       gap: 8px;
       margin-top: 6px;
       padding: 6px 10px;
-      border: 1px solid #e8d9a8;
+      border: 1px solid var(--note-border);
       border-radius: 8px;
-      background: #fdf6e0;
-      color: #7a5d1a;
+      background: var(--note-bg);
+      color: var(--note-ink);
     }
     .long-source-notice[hidden] { display: none; }
     .long-source-notice button { font-size: 12px; flex-shrink: 0; }
@@ -954,9 +979,9 @@
     .shortcut-note {
       border-radius: var(--radii-sm);
       padding: 8px 10px;
-      border: 1px solid color-mix(in oklab, var(--border) 60%, #f59e0b);
-      background: color-mix(in oklab, var(--surface) 88%, #fff7ed);
-      color: #7a2e0e;
+      border: 1px solid var(--note-border);
+      background: var(--note-bg);
+      color: var(--note-ink);
     }
 
     /* ---------- Scrollbar polish (Chromium/WebKit) ---------- */
@@ -1080,11 +1105,12 @@
 
     .lpcg-word {
       display: inline-block;
-      border: 1px solid #b7b7b7;
+      border: 1px solid var(--border);
       border-radius: 6px;
       padding: 2px 6px;
       margin: 2px 2px 4px;
-      background: #fff;
+      background: var(--surface);
+      color: var(--text);
       cursor: pointer;
     }
 

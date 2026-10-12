@@ -279,6 +279,9 @@ test.describe('Ghostwriter for Anki UI', () => {
 
     await panelPage.goto(panelUrl, { waitUntil: 'load' });
     await expect(panelPage.locator('html')).toHaveAttribute('data-qf-panel', 'ready', { timeout: 30_000 });
+    // The preview toggle lives in Card details, which start closed.
+    const details = panelPage.locator('#cardDetailsPanel');
+    if (await details.getAttribute('open') === null) await details.locator('> summary').click();
     // No force: a forced click lands on whatever covers the box (the sticky header at some
     // scroll positions). Let Playwright scroll it clear and click it like a user.
     await panelPage.locator('#mathjaxPreview').check();
@@ -293,6 +296,8 @@ test.describe('Ghostwriter for Anki UI', () => {
     await expect(preview.locator('mjx-container')).toHaveCount(1, { timeout: 30_000 });
     expect(errors).toEqual([]);
 
+    // Opening the details is remembered; don't let later screenshots inherit it.
+    await panelPage.evaluate(() => chrome.storage.local.remove('quickflash_card_details_open_v1'));
     await panelPage.close();
   });
 

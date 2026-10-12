@@ -6191,6 +6191,7 @@ function dropSuggestionAfterUserEdit(state) {
   state.suggestion = "";
   clearSuggestionUI(state, { removeClasses: true, mirrorValue: state.textarea?.value || "" });
   setCopilotStatus("You kept typing, so the suggestion was dropped. Ask again when you're ready.", false);
+  showFrontNoCardNotice(state, "You kept typing, so the suggestion was dropped. Ask again when you're ready.");
 }
 
 async function requestCopilot(state, { force = false, withOther = false, localOnly = false } = {}) {
@@ -6377,6 +6378,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
 
   if (localOnly) {
     setCopilotStatus("Copilot is off; no exact source split was found.");
+    showFrontNoCardNotice(state, "Copilot is off, and no exact match for this was found in the source.");
     clearSuggestionUI(state, { mirrorValue: value });
     cleanupBeforeLlm();
     return;
@@ -7108,6 +7110,9 @@ function updateCardDetailsSummary() {
   if (deck) parts.push(compactInlineText(deck, 44));
   if (model) parts.push(compactInlineText(model, 44));
   if (tags.length) parts.push(`${tags.length} tag${tags.length === 1 ? "" : "s"}`);
+  // The details start closed, so say when the note-type warning inside them is showing.
+  const warning = $("#modelFieldWarning");
+  if (warning && !warning.hidden) parts.push("⚠ note type warning");
   summary.textContent = parts.length ? parts.join(" · ") : "Deck, note type, tags, and helpers";
 }
 
@@ -7225,6 +7230,8 @@ function setupThemeControls() {
   });
 }
 
+const CARD_DETAILS_OPEN_KEY = "quickflash_card_details_open_v1";
+
 function applySurfaceModeClass() {
   const surface = getEditorSurface();
   document.documentElement.dataset.editorSurface = surface;
@@ -7236,13 +7243,27 @@ function applySurfaceModeClass() {
     sourceDetails.dataset.surfaceDefaulted = "true";
   }
 
+  // Card details start closed so a first card isn't crowded; the summary line still shows the
+  // deck and note type. Outside the overlay, the user's last open/closed choice wins.
   const cardDetails = $("#cardDetailsPanel");
   if (cardDetails && !cardDetails.dataset.surfaceDefaulted) {
-    cardDetails.open = surface !== "overlay";
+    cardDetails.open = false;
     cardDetails.dataset.surfaceDefaulted = "true";
+    if (surface !== "overlay") restoreCardDetailsOpen(cardDetails);
+    cardDetails.addEventListener("toggle", () => {
+      if (getEditorSurface() === "overlay") return;
+      chrome.storage.local.set({ [CARD_DETAILS_OPEN_KEY]: cardDetails.open }).catch(() => {});
+    });
   }
 
   updateOverlaySourceChrome();
+}
+
+async function restoreCardDetailsOpen(details) {
+  try {
+    const stored = (await chrome.storage.local.get(CARD_DETAILS_OPEN_KEY))?.[CARD_DETAILS_OPEN_KEY];
+    if (typeof stored === "boolean") details.open = stored;
+  } catch {}
 }
 
 async function updateLocalMetrics(mutator) {
@@ -9473,6 +9494,7 @@ async function updateModelFieldWarning() {
     warningEl.style.display = "none";
     if (warningActionsEl) warningActionsEl.hidden = true;
     if (warningActionsEl) warningActionsEl.style.display = "none";
+    updateCardDetailsSummary();
   };
   if (getStorageFlag(localStorage, MODEL_FIELD_WARNING_HIDDEN_PREF)) {
     hideWarning();
@@ -9537,6 +9559,7 @@ async function updateModelFieldWarning() {
     warningEl.style.display = "";
     if (warningActionsEl) warningActionsEl.hidden = false;
     if (warningActionsEl) warningActionsEl.style.display = "";
+    updateCardDetailsSummary();
   } catch {
     if (requestId !== modelFieldWarningRequest) return;
     hideWarning();
@@ -11289,6 +11312,7 @@ async function initPanel() {
         if (warningTextEl) warningTextEl.textContent = "";
         if (modelFieldWarningActions) modelFieldWarningActions.hidden = true;
         if (modelFieldWarningActions) modelFieldWarningActions.style.display = "none";
+        updateCardDetailsSummary();
       });
     }
     const hideModelFieldWarning = $("#hideModelFieldWarning");
