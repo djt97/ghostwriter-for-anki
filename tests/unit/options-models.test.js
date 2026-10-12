@@ -146,7 +146,8 @@ describe('options.js source defaults', () => {
     assert.equal(manifest.permissions.includes('clipboardRead'), false);
     assert.ok((manifest.optional_permissions || []).includes('clipboardRead'));
     assert.ok(panelSource.includes('chrome.permissions.request({ permissions: ["clipboardRead"] })'));
-    assert.ok(optionsHtml.includes('can use clipboard text when Clipboard Source is selected'));
+    assert.ok(optionsHtml.includes('text you copy before opening Ghostwriter on a PDF becomes the Source'));
+    assert.ok(optionsHtml.includes('reads the clipboard only after you allow it with <strong>Use copied text</strong>'));
     assert.ok(optionsSource.includes('optional permission is requested from explicit Source controls'));
   });
 });

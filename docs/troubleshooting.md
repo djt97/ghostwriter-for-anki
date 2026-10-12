@@ -46,7 +46,7 @@ Test on a normal HTTPS page first. Reload the extension and the page. Browser se
 
 ## PDF selection is missing
 
-Highlight the PDF text, right-click it and choose **Create Anki card with Ghostwriter**. Chrome's PDF viewer does not expose its selection through the ordinary page-capture route. Opening with the icon or shortcut can therefore show no Source even when text is selected.
+Chrome's PDF viewer does not let extensions read a highlight, except through its right-click menu. Either right-click the highlighted text and choose **Create Anki card with Ghostwriter**, or copy it (⌘C, or Ctrl+C on Windows and Linux) and then open Ghostwriter. In a PDF with no captured text, the editor offers **Use copied text**; the first time, Chrome asks to let Ghostwriter read the clipboard. After that, copying before you open Ghostwriter on a PDF fills the Source on its own, unless **Use clipboard as a Source fallback** is off in Settings. On other pages Ghostwriter doesn't read the clipboard by itself; select the text instead.
 
 ## Settings not updating
 

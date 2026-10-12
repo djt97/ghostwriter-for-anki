@@ -81,6 +81,7 @@ async function showShortcuts() {
   try { opts = (await chrome.storage.sync.get(OPTIONS_KEY))?.[OPTIONS_KEY] || {}; } catch {}
   const label = (value, fallback) => S.formatShortcutSpec(S.parseShortcutSpec(value || fallback)) || "Not set";
   $("#keySuggest").textContent = label(opts.copilotShortcut, D.copilotShortcut || "Cmd+Shift+X");
+  if (!S.isMacPlatform()) $("#keyCopy").textContent = "Ctrl+C";
   $("#keyAdd").textContent = typeof opts.addShortcut === "string" && opts.addShortcut === ""
     ? "Not set"
     : label(opts.addShortcut, DEFAULT_ADD_SHORTCUT);

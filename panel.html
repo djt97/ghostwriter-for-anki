@@ -1484,6 +1484,7 @@
       background: var(--surface-2);
       color: var(--text);
     }
+    .page-notice-action { display: block; width: auto; margin: -4px 0 10px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -1594,6 +1595,7 @@
         </div>
 
         <p id="pageNotice" class="page-notice small" role="status" hidden></p>
+        <button type="button" id="pdfUseClipboard" class="page-notice-action" hidden>Use copied text</button>
         <button type="button" id="allowPageSourceAccess" hidden>Allow page source access</button>
         <p id="pageSourceAccessHint" class="small" role="status" hidden></p>
         <aside id="stage2Notice" class="small ghostwriter-warning" role="status" hidden>

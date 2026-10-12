@@ -2606,14 +2606,44 @@ function hasVisibleSourceModeControl() {
   });
 }
 
+// Chrome reads the clipboard only for a focused document, and an overlay opened by the shortcut
+// over a PDF usually isn't focused yet. Read again once it is, unless the user went to the Source
+// box to paste by hand.
+let pdfClipboardRetryArmed = false;
+async function retryPdfClipboardOnFocus(args) {
+  if (pdfClipboardRetryArmed) return;
+  pdfClipboardRetryArmed = true;
+  let granted = false;
+  try { granted = await chrome.permissions.contains({ permissions: ["clipboardRead"] }); } catch {}
+  if (!granted) {
+    pdfClipboardRetryArmed = false;
+    return;
+  }
+  window.addEventListener("focus", () => {
+    setTimeout(() => {
+      pdfClipboardRetryArmed = false;
+      const ctx = copilot?.pageCtx;
+      if (!ctx?.isPdf || getContextSourceText(ctx) || ($("#source")?.value || "").trim()) return;
+      if (document.activeElement === $("#source")) return;
+      applyClipboardFallback(args).catch(() => {});
+    }, 0);
+  }, { once: true });
+}
+
 // If there is no selection (or mode demands), fill pageCtx.selection from clipboard.
 async function applyClipboardFallback({ wantPaste = false, allowEmpty = false, force = false, requestPermission = false, userInitiated = false } = {}) {
   if (!force) {
     const opts = await getOptions();
     if (!isClipboardFallbackEnabled(opts)) return false;
+    // Automatic reads are for PDFs, where Chrome hides the highlight. On other pages the
+    // selection is the Source, and whatever was copied earlier would only get in the way.
+    if (!copilot?.pageCtx?.isPdf) return false;
   }
   const clip = await readClipboardSafe({ requestPermission, userInitiated });
   const hasClip = !!clip;
+  if (!hasClip && !userInitiated && copilot?.pageCtx?.isPdf && !document.hasFocus()) {
+    retryPdfClipboardOnFocus({ wantPaste, allowEmpty, force });
+  }
   if (!hasClip && !allowEmpty) return false;
   window.copilot = window.copilot || {};
   const hasPageSelection = !!getContextSourceText(copilot?.pageCtx) && !copilot?.pageCtx?.usingClipboard;
@@ -2848,6 +2878,15 @@ async function seedCopilotPageContext() {
     surface: getEditorSurface(),
   });
 
+  // The overlay may already hold the page's context, posted by content.js before this runs.
+  // Don't trade it for an emptier one, e.g. when Chrome hides the tab's URL from the editor.
+  const current = copilot?.pageCtx;
+  const hasSubstance = (ctx) => !!(getContextSourceText(ctx) || getContextPageUrl(ctx));
+  if (getEditorSurface() === "overlay" && hasSubstance(current) && !hasSubstance(chosen)) {
+    updateOverlaySourceChrome();
+    return;
+  }
+
   if (!chosen) {
     copilot.pageCtx = null;
     return;
@@ -2865,6 +2904,7 @@ async function seedCopilotPageContext() {
   }
   refreshDebugSource();
   updatePageSourcePermissionUI(liveCtx);
+  updatePdfSourceNotice();
 }
 
 // Listen for overlay push (content.js posts this to the panel iframe)
@@ -2888,7 +2928,7 @@ window.addEventListener("message", async (event) => {
 
     copilot.pageCtx = incomingCtx || copilot.pageCtx; // latest overlay context
     applyPageContextToEditor(copilot.pageCtx, { preserveUserText: false });
-    showPdfSelectionHint(incomingCtx, incomingSelection);
+    updatePdfSourceNotice();
     resetCopilotLocks();
     refreshDebugSource();
 
@@ -6874,6 +6914,7 @@ async function initCopilot() {
       cloze: basePromptDefaults.cloze || null,
     };
     copilot.showSourceModePill = opts.showSourceModePill !== false;
+    copilot.clipboardFallback = isClipboardFallbackEnabled(opts);
     const D = window.GHOSTWRITER_DEFAULTS || {};
     const shortcut = typeof opts.copilotShortcut === "string" ? opts.copilotShortcut.trim() : "";
     copilot.triggerShortcut = shortcut || D.copilotShortcut || "Cmd+Shift+X";
@@ -6934,6 +6975,8 @@ async function initCopilot() {
         copilot.timeoutMs      = Number.isFinite(+next.copilotTimeoutMs) ? +next.copilotTimeoutMs : copilot.timeoutMs;
         shortcutCoach.enabled = next.showShortcutHints !== false;
         setCopilotEnabled(next.autoCompleteAI !== false);
+        copilot.clipboardFallback = isClipboardFallbackEnabled(next);
+        updatePdfSourceNotice();
         applyContentFontPreference(next);
         updateShortcutCoach();
         updateShortcutHelpText();
@@ -7156,6 +7199,7 @@ function updateOverlaySourceChrome() {
   const sourceText = ($("#source")?.value || getContextSourceText(copilot?.pageCtx) || "").trim();
   const sourceIssue = sourceText ? "" : getClipboardFallbackIssue();
   updateLongSourceNotice(sourceText);
+  updatePdfSourceNotice();
   if (sourceText || copilot?.pageCtx?.url) $("#allowPageSourceAccess")?.setAttribute("hidden", "");
   const preview = $("#sourcePreviewText");
   if (preview) {
@@ -11354,6 +11398,7 @@ async function initPanel() {
     initClozeNotice();
     initSourceDisplayToggle();
     initLongSourceNotice();
+    bindPdfClipboardButton();
     bindClipboardImagePaste();
     initDebugPanel();
 
@@ -11375,22 +11420,51 @@ async function initPanel() {
   markPanelReady();
 }
 
-// The background opens a tab with ?notice=restricted when Chrome would not let it read the
-// page (chrome:// pages, the Web Store). Say so instead of leaving an empty Source unexplained.
-// Chrome's PDF viewer hides the selection from the page script; only the right-click menu
-// receives it. Tell the reader how to get their highlight in.
-function showPdfSelectionHint(ctx, selection) {
+// Chrome's PDF viewer doesn't let extensions read a highlight, except through its right-click
+// menu. In a PDF, copied text stands in for the selection.
+function updatePdfSourceNotice() {
   const el = document.getElementById("pageNotice");
-  if (!el) return;
-  if (ctx?.isPdf && !selection) {
-    el.textContent = "In a PDF, highlight the text, then right-click it and choose "
-      + "\u201cCreate Anki card with Ghostwriter\u201d to use it as the Source.";
-    el.hidden = false;
-  } else if (el.dataset.kind !== "restricted") {
-    el.hidden = true;
+  const button = document.getElementById("pdfUseClipboard");
+  if (!el || el.dataset.kind === "restricted") return;
+  const ctx = copilot?.pageCtx || null;
+  const sourceText = ($("#source")?.value || getContextSourceText(ctx) || "").trim();
+  const fromClipboard = !!ctx?.usingClipboard && !!sourceText;
+  const show = !!ctx?.isPdf && (!sourceText || fromClipboard);
+  el.hidden = !show;
+  if (button) button.hidden = !show;
+  if (!show) return;
+  const copyKeys = window.GHOSTWRITER_SHORTCUTS?.isMacPlatform?.() ? "\u2318C" : "Ctrl+C";
+  // Pressing the shortcut again re-reads the clipboard only in the overlay (the side-panel
+  // shortcut closes the panel), and only while automatic clipboard reads are on.
+  const autoRead = copilot?.clipboardFallback !== false;
+  const shortcutRereads = autoRead && getEditorSurface() === "overlay";
+  if (fromClipboard) {
+    el.textContent = `Using the text you copied. To use a different passage, copy it (${copyKeys}) and `
+      + (shortcutRereads ? "press the shortcut again." : "choose Use copied text again.");
+    return;
   }
+  const issue = clipboardReadState.lastPermissionError
+    ? "Clipboard access wasn't allowed. "
+    : (clipboardReadState.lastReadError && clipboardReadState.lastReadUserInitiated ? "Chrome blocked reading the clipboard. " : "");
+  el.textContent = `${issue}Chrome's PDF viewer keeps highlighted text from extensions. `
+    + `Copy the passage (${copyKeys}), then choose Use copied text.`
+    + (autoRead
+      ? " After the first time, copying before you open Ghostwriter is enough."
+      : " To skip this step, turn on \u201cUse clipboard as a Source fallback\u201d in Settings.");
 }
 
+function bindPdfClipboardButton() {
+  const button = document.getElementById("pdfUseClipboard");
+  if (!button || button.dataset.bound) return;
+  button.dataset.bound = "1";
+  button.addEventListener("click", async () => {
+    await applyClipboardFallback({ wantPaste: true, force: true, requestPermission: true, userInitiated: true });
+    updatePdfSourceNotice();
+  });
+}
+
+// The background opens a tab with ?notice=restricted when Chrome would not let it read the
+// page (chrome:// pages, the Web Store). Say so instead of leaving an empty Source unexplained.
 function showPageNoticeFromUrl() {
   const notice = new URLSearchParams(location.search || "").get("notice");
   const el = document.getElementById("pageNotice");
