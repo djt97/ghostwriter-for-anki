@@ -62,8 +62,7 @@
       <img src="icons/icon128.png" alt="">
       <h1>Welcome to Ghostwriter</h1>
     </header>
-    <!-- Draft wording for DJ's rewrite. -->
-    <p class="lead">Ghostwriter helps you turn what you read into Anki cards. You write the card; the AI suggests wording only when you ask for it.</p>
+    <p class="lead">Ghostwriter helps you turn what you read into Anki cards. You begin writing the card you want, and then ask the AI to complete it for you! You can also have the AI tag your cards and export them to Anki with context and source metadata.</p>
 
     <section aria-labelledby="connect-title">
       <h2 id="connect-title"><span class="step">1</span>Connect to Anki</h2>
@@ -71,7 +70,7 @@
       <ol>
         <li>Open <a href="https://apps.ankiweb.net/" target="_blank" rel="noopener noreferrer">Anki</a> on this computer.</li>
         <li>In Anki, choose <strong>Tools → Add-ons → Get Add-ons…</strong>, paste the code <code id="addonCode">2055492159</code> <button type="button" class="quiet inline" id="copyCode">Copy</button>, then restart Anki.</li>
-        <li>When Anki asks whether to allow Ghostwriter to connect, choose <strong>Yes</strong>.</li>
+        <li>If Anki asks whether to allow Ghostwriter to connect, choose <strong>Yes</strong>.</li>
       </ol>
       <div class="status" id="ankiStatus" data-state="checking" role="status" aria-live="polite">
         <span class="dot" aria-hidden="true"></span>
@@ -90,7 +89,7 @@
         <button type="button" id="tryIt">Write a card from this paragraph</button>
         <span id="firstCard" class="muted" role="status" aria-live="polite"></span>
       </div>
-      <p class="muted">Write a question in Front and its answer in Back. Ask for a suggestion with the shortcut below if you want one, and press <kbd>Tab</kbd> to accept it.</p>
+      <p class="muted">Write a question in the Front field and its answer in the Back field. Ask for a suggestion with the shortcut below if you want one, and press <kbd>Tab</kbd> to accept it.</p>
       <p>On any web page, highlight text and press the shortcut to open the editor, or right-click and choose <strong>Create Anki card with Ghostwriter</strong>. In a PDF, copy the text first (<kbd id="keyCopy">⌘C</kbd>), open the editor and choose <strong>Use copied text</strong>; after you allow clipboard access once, copying before you open the editor is enough. Or use the right-click menu.</p>
       <table class="keys" aria-label="Keyboard shortcuts">
         <tr><td>Open the editor</td><td><kbd id="keyOpen">…</kbd></td></tr>
@@ -103,8 +102,8 @@
 
     <section aria-labelledby="ai-title">
       <h2 id="ai-title"><span class="step">3</span>About the AI</h2>
-      <p>You get 100 included AI requests, with no account. After that, add your own key, use a local model or Chrome's on-device model in Settings, or keep writing without suggestions.</p>
-      <p>Nothing goes to an AI model until you ask for a suggestion, with one exception you can switch off: when you add a card, its text, the page title and the site name are sent to suggest tags and context. <a href="https://github.com/djt97/ghostwriter-for-anki/blob/main/PRIVACY_POLICY.md" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>
+      <p>You get 100 AI requests for free, no account required. After that, you can bring your own key, use a local model or Chrome's on-device model in Settings, or keep writing card without AI-suggestions.</p>
+      <p>Note that nothing gets sent to an AI model unless/until you ask for a suggestion, with one exception (that you can switch off if you want, but it's extremely useful): when you add a card, its text, the page title and the site name are sent to suggest tags and context. <a href="https://github.com/djt97/ghostwriter-for-anki/blob/main/PRIVACY_POLICY.md" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>
     </section>
 
     <footer class="muted">
