@@ -813,7 +813,7 @@ function buildUpdateNotice({ previousVersion = "", currentVersion = "", preserve
     actions: [
       "Shortcuts use Ctrl on Windows and Linux (Cmd on Mac).",
       "Pasted screenshots and simple formatting such as bold and subscripts now reach Anki intact.",
-      "In a PDF, right-click highlighted text and choose Create Anki card with Ghostwriter.",
+      "In a PDF, copy the text and then open Ghostwriter, or right-click it and choose Create Anki card with Ghostwriter.",
       "Add to Anki sends each card directly; the old Review Queue is retired.",
     ],
     preservedCredentials,
