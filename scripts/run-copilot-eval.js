@@ -339,6 +339,7 @@ function loadEngine({ panelPath = path.join(ROOT, "panel.js") } = {}) {
     function getContextSourceText(page) { return String(page?.sourceText || page?.selection || "").trim(); }
     ${extractFunction(panelSource, "getFrontSuggestionBlockReason")}
     ${extractFunction(panelSource, "getFrontSuggestionWarning")}
+    ${extractFunction(panelSource, "isHardFrontBlockReason")}
     ${extractFunction(panelSource, "buildFrontGuardRetryPrompt")}
     return {
       renderSystemPrompt,
@@ -359,6 +360,7 @@ function loadEngine({ panelPath = path.join(ROOT, "panel.js") } = {}) {
       getFrontDefinitionDriftIssue,
       getFrontSuggestionBlockReason,
       getFrontSuggestionWarning,
+      isHardFrontBlockReason,
       trimAnswerBearingFrontTail,
       buildFrontGuardRetryPrompt,
       normalizeBackSuggestionForFront,
@@ -1197,6 +1199,7 @@ async function runPairPath({ fixture, testCase, prompts, helpers, config, row, f
   row.rawFront = pair.front;
   row.rawBack = pair.back;
   let checked = checkFront(completion.text, pair.front, pair.back);
+  const first = { checked, pair };
   row.frontSuffix = checked.suffix;
   let blockReason = checked.reason;
   if (blockReason) {
@@ -1220,8 +1223,19 @@ async function runPairPath({ fixture, testCase, prompts, helpers, config, row, f
       blockReason = "retry failed";
     }
   }
+  // As in panel.js: a draft still flagged after the retry is shown with a warning (the first
+  // draft if the retry gave none); only a dropped attribution or scope is withheld.
+  if (blockReason) {
+    const shown = checked.suffix ? { checked, pair } : (first.checked.suffix ? first : null);
+    if (shown && !helpers.isHardFrontBlockReason(blockReason)) {
+      row.frontSuffix = shown.checked.suffix;
+      pair = shown.pair;
+      row.frontFlag = blockReason;
+      blockReason = "";
+    }
+  }
   if (!row.frontSuffix || blockReason) {
-    // The extension offers a blocked draft as "Use anyway"; keep it for review.
+    // A hard block: the extension withholds it; keep it for review.
     if (row.frontSuffix) row.rejectedCard = { front: joinCompletion(frontPrefix, row.frontSuffix), back: pair.back, reason: blockReason };
     row.frontSuffix = "";
     row.front = "";
@@ -1230,7 +1244,7 @@ async function runPairPath({ fixture, testCase, prompts, helpers, config, row, f
     return row;
   }
   row.front = joinCompletion(frontPrefix, row.frontSuffix);
-  row.frontWarning = helpers.getFrontSuggestionWarning(row.frontSuffix, frontPrefix, {
+  row.frontWarning = row.frontFlag || helpers.getFrontSuggestionWarning(row.frontSuffix, frontPrefix, {
     page, protectedAnswer: pairAnswerFor(row.frontSuffix, pair.back) || frontPrompt.protectedAnswer,
   });
   let back = helpers.normalizeCopilotSuggestion(pair.back, "", { role: "back", maxWords: BACK_WORD_CAP });
@@ -1239,13 +1253,10 @@ async function runPairPath({ fixture, testCase, prompts, helpers, config, row, f
   const backIssue = back
     ? (helpers.getBackAnswerFitIssue(row.front, back) || helpers.getBackSourceAlignmentIssue(row.front, back, testCase.sourceText))
     : "";
-  if (backIssue) {
-    row.localBackGuard = { blockReason: backIssue, rejectedBack: back };
-    back = "";
-  }
+  // As in panel.js requestBackDraftFromFront: a flagged paired Back is shown with a warning; only
+  // an empty one falls back to the separate Back call.
+  if (backIssue) row.backWarning = backIssue;
   row.back = back;
-  // As in panel.js requestBackDraftFromFront: an empty or rejected paired Back falls back to the
-  // separate Back call.
   if (!row.back) {
     row.pairBackFallback = true;
     await requestBack({ fixture, testCase, prompts, helpers, config, row, includePrompts: false });
@@ -1562,12 +1573,11 @@ async function requestBack({ fixture, testCase, prompts, helpers, config, row, i
   back = helpers.stripFrontFromBack(back, row.front);
   back = helpers.normalizeBackSuggestionForFront(back, row.front);
   row.back = back;
-  const runtimeBackIssue = helpers.getBackAnswerFitIssue(row.front, row.back)
-    || helpers.getBackSourceAlignmentIssue(row.front, row.back, testCase.sourceText);
-  if (runtimeBackIssue) {
-    row.localBackGuard = { blockReason: runtimeBackIssue, rejectedBack: row.back };
-    row.back = "";
-  }
+  const runtimeBackIssue = row.back
+    ? (helpers.getBackAnswerFitIssue(row.front, row.back) || helpers.getBackSourceAlignmentIssue(row.front, row.back, testCase.sourceText))
+    : "";
+  // Shown with a warning in the extension, not withheld.
+  if (runtimeBackIssue) row.backWarning = runtimeBackIssue;
   if (!row.back && looksLikeTaskNarration(row.rawBack)) {
     row.modelOutputIssue = buildTaskNarrationIssue(config, "back", row.rawBack);
   }

@@ -166,10 +166,10 @@ describe('Copilot eval runner', () => {
     );
   });
 
-  it('mirrors runtime suppression when a Back answers the wrong source relation', () => {
+  it('mirrors the runtime: a Back that fails a check is kept, with a warning (2026-10-15)', () => {
     assert.match(runnerSource, /getBackSourceAlignmentIssue\(row\.front, row\.back, testCase\.sourceText\)/);
-    assert.match(runnerSource, /row\.localBackGuard = \{ blockReason: runtimeBackIssue, rejectedBack: row\.back \}/);
-    assert.match(runnerSource, /row\.back = ""/);
+    assert.match(runnerSource, /if \(runtimeBackIssue\) row\.backWarning = runtimeBackIssue;/);
+    assert.match(runnerSource, /if \(backIssue\) row\.backWarning = backIssue;/);
   });
 
   it('uses shared Cloze validation and performs exactly one guarded Cloze retry', () => {

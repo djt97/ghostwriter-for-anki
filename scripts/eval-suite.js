@@ -168,6 +168,7 @@ async function generateAndJudge({ item, config, judgeConfig, engine, budget, rep
     hardFlags: row.judgment ? runner.getHardFlags(row) : [],
     noCard: produced ? null : noCardReason(row),
     frontWarning: row.frontWarning || "",
+    backWarning: row.backWarning || "",
     gold: isCloze ? null : scoreBackAgainstGold(row.back, goldBacks),
     metrics: { calls: meter.calls, latencyMs: meter.latencyMs, inputTokens: meter.inputTokens, outputTokens: meter.outputTokens, costUsd: Number(meter.costUsd.toFixed(6)) },
     // Every raw reply, in order, so a later --replay can rerun the checks without a provider.

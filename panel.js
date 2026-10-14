@@ -2229,6 +2229,7 @@ function clearSuggestionUI(state, { removeClasses = false, mirrorValue = null } 
   clearStemSplitUI(state);
   if (state.suggestionEl) {
     if (removeClasses) state.suggestionEl.classList.remove("loading", "error");
+    state.suggestionEl.classList.remove("has-warning");
     state.suggestionEl.hidden = true;
   }
   if (state.textEl) state.textEl.textContent = "";
@@ -4225,7 +4226,8 @@ function backRestatesFront(frontText, backText) {
   if ((String(backText || "").match(/\d[\d.,]*/g) || []).some((n) => !frontNumbers.has(n))) return false;
   const overlap = back.filter((t) => front.has(t)).length;
   const novel = back.length - overlap;
-  return overlap >= 2 && novel <= 1;
+  // "...is in co-NP if its complement is in NP" adds "complement", which is the answer.
+  return (overlap >= 2 && novel === 0) || (overlap >= 3 && novel <= 1);
 }
 
 function getBackAnswerFitIssue(frontText, backText) {
@@ -4713,6 +4715,23 @@ function getFrontSuggestionWarning(suggestion, existingText, ctx = {}) {
   });
 }
 
+// Plain words for a check that flagged a suggestion; the suggestion is shown with them.
+function suggestionWarningText(reason) {
+  const r = String(reason || "");
+  if (/^Back answer restates/i.test(r)) return "Check this answer: it may repeat the question rather than answer it.";
+  if (/^Back answer ends with/i.test(r)) return "Check this answer: it may be cut off.";
+  if (/^Back answer contains multiple/i.test(r)) return "Check this answer: it may give more than one answer.";
+  if (/^Back answer includes an unasked date/i.test(r)) return "Check this answer: it includes a date the question doesn't ask for.";
+  if (/^Back does not answer/i.test(r)) return "Check this answer: it may answer a different question from the Front.";
+  if (/^front includes|answer-bearing/i.test(r)) return "Check this suggestion: the question may give away its answer.";
+  if (/^Front refers to 'this/i.test(r)) return "Check this suggestion: it says \"this\" without saying what it is.";
+  if (/^Front asks /i.test(r)) return "Check this suggestion: the question may fit several answers.";
+  if (/not present in the Source|outside definition/i.test(r)) return "Check this suggestion: it uses words the source doesn't, so it may add something from outside the passage.";
+  if (/dangling|repeats|grafts|pivot|semicolon|converted|could not be appended|restarted/i.test(r)) return "Check this suggestion: the question may be garbled or unfinished.";
+  if (/substitutes|changes the/i.test(r)) return "Check this suggestion: it may not match what the passage says.";
+  return "Check this suggestion: an automatic check flagged it.";
+}
+
 function isHardFrontBlockReason(reason) {
   return /^Front (?:drops the source attribution qualifier|omits the scope or date needed|omits the scope or date tied|uses the scope or date from)/.test(String(reason || ""));
 }
@@ -4748,6 +4767,7 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
   try {
     const providerSuggestion = await callFrontLLM(prompt, sys, controller, state, existingText);
     if (controller?.signal?.aborted) return "";
+    const firstPairBack = state._pairBack;
     // In one-call mode the model has said what its answer is: keep that off the Front. An
     // "answer" nearly as long as the question just restates it, and would block a sound Front.
     const pairAnswerFor = (suggestionText) => {
@@ -4836,16 +4856,18 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
       state._lastFrontBlockReason = retryReason;
       console.debug("[Copilot] Suppressed Front suggestion after rewrite:", retryReason, (existingText + ` ${retry || ""}`).trim());
     }
+    // Still flagged after the retry: show the draft like any suggestion, with a warning, and let
+    // the reader decide (DJ, 2026-10-15). Only a dropped attribution or scope, which makes a wrong
+    // card, is withheld.
+    const finalReason = retryReason || blockReason;
+    const draft = retry || suggestion;
+    if (draft && !isHardFrontBlockReason(finalReason)) {
+      if (!retry) state._pairBack = firstPairBack;
+      state._frontWarning = finalReason;
+      return draft;
+    }
     state._lastFrontLeakBlocked = true;
     clearSuggestionUI(state, { mirrorValue: state.textarea?.value || existingText || "" });
-    const finalReason = retryReason || blockReason;
-    if ((retry || suggestion) && !isHardFrontBlockReason(finalReason)) {
-      rememberRejectedCopilotDraft(state, {
-        suggestion: retry || suggestion,
-        preview: retry ? (existingText + ` ${retry}`).trim() : fullDraft,
-        reason: finalReason,
-      });
-    }
     return "";
   } finally {
     if (state._frontValidationCtx === ctx || state._frontValidationCtx === startCtx) {
@@ -5662,18 +5684,13 @@ async function requestBackDraftFromFront(frontForBack, { force = false, pairedBa
       sourceText: sourceTextForLimit,
       existingText: existingBack,
     });
-    const fitIssue = getBackAnswerFitIssue(frontForStrip, suggestion)
-      || getBackSourceAlignmentIssue(frontForStrip, suggestion, sourceTextForLimit);
-    if ((fitIssue || !suggestion) && pairedBack) {
+    // A flagged answer is shown with a warning, at once; only a missing one-call answer
+    // needs a separate Back request.
+    const fitIssue = suggestion
+      ? (getBackAnswerFitIssue(frontForStrip, suggestion) || getBackSourceAlignmentIssue(frontForStrip, suggestion, sourceTextForLimit))
+      : "";
+    if (!suggestion && pairedBack) {
       return requestBackDraftFromFront(frontForBack, { force: true });
-    }
-    if (fitIssue) {
-      clearSuggestionUI(backState, { mirrorValue: existingBack });
-      backState.suggestion = "";
-      rememberRejectedCopilotDraft(backState, { suggestion, reason: fitIssue });
-      showRejectedCopilotDraft(backState);
-      setCopilotStatus(`AI returned an unusable Back answer (${fitIssue}). Review the rejected draft or regenerate.`, true);
-      return;
     }
 
     if (!suggestion) {
@@ -5688,12 +5705,14 @@ async function requestBackDraftFromFront(frontForBack, { force = false, pairedBa
       return;
     }
     backState.suggestion = suggestion;
+    backState._backWarning = fitIssue;
     if (backState.suggestionEl) {
       backState.suggestionEl.hidden = false;
       backState.suggestionEl.classList.remove("loading", "error");
+      backState.suggestionEl.classList.toggle("has-warning", !!fitIssue);
     }
     if (backState.textEl) backState.textEl.textContent = suggestion;
-    if (backState.hintEl) backState.hintEl.textContent = "Press Tab or click Accept";
+    if (backState.hintEl) backState.hintEl.textContent = fitIssue ? `${suggestionWarningText(fitIssue)} Press Tab or click Accept.` : "Press Tab or click Accept";
     if (backState.ghostEl && backState.mirrorEl && backState.ghostTextEl) {
       backState.mirrorEl.textContent = existingBack;
       backState.ghostTextEl.textContent = suggestion;
@@ -6556,6 +6575,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
     state._lastFrontLeakBlocked = false;
     state._lastFrontLiveBlockReason = "";
     state._lastBackFitIssue = "";
+    state._backWarning = "";
     updateLocalMetrics((metrics) => {
       bumpMetric(metrics, "ai_suggestions_requested");
       return metrics;
@@ -6606,10 +6626,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
               || getBackSourceAlignmentIssue(frontForAnswer, displayedBack, sourceTextForLimit);
             if (fitIssue) {
               state._lastBackFitIssue = fitIssue;
-              // "Use anyway" inserts at the cursor, after the typed text: keep only the completion.
-              rememberRejectedCopilotDraft(state, { suggestion, preview: displayedBack, reason: fitIssue });
-              console.debug("[Copilot] Suppressed Back suggestion:", fitIssue, displayedBack);
-              suggestion = "";
+              state._backWarning = fitIssue;
             }
           }
         }
@@ -6619,9 +6636,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
           || getBackSourceAlignmentIssue(frontForAnswer, suggestion, sourceTextForLimit);
         if (fitIssue) {
           state._lastBackFitIssue = fitIssue;
-          rememberRejectedCopilotDraft(state, { suggestion, reason: fitIssue });
-          console.debug("[Copilot] Suppressed Back suggestion:", fitIssue, suggestion);
-          suggestion = "";
+          state._backWarning = fitIssue;
         }
       }
     }
@@ -6695,15 +6710,15 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
     state.suggestion = suggestion;
     hideCopilotFactPicker(); // a real suggestion arrived — clear any fact picker
     hideFrontNoCardNotice(state);
-    if (state.fieldId === "front" && state._frontWarning) {
-      showFrontNoCardNotice(state, "Check this suggestion: it uses words the source doesn't, so it may add something from outside the passage.");
-    }
+    const warning = state.fieldId === "front" ? state._frontWarning : state._backWarning;
+    if (state.fieldId === "front" && warning) showFrontNoCardNotice(state, suggestionWarningText(warning));
     if (state.suggestionEl) {
       state.suggestionEl.hidden = false;
       state.suggestionEl.classList.remove("loading", "error");
+      state.suggestionEl.classList.toggle("has-warning", !!warning);
     }
     if (state.textEl) state.textEl.textContent = suggestion;
-    if (state.hintEl) state.hintEl.textContent = "Press Tab or click Accept";
+    if (state.hintEl) state.hintEl.textContent = warning ? `${suggestionWarningText(warning)} Press Tab or click Accept.` : "Press Tab or click Accept";
     if (state.ghostEl && state.mirrorEl && state.ghostTextEl) {
       state.mirrorEl.textContent = textarea?.value || "";
       state.ghostTextEl.textContent = suggestion;

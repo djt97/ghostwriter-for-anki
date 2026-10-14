@@ -105,13 +105,12 @@ describe('streamed Front suggestions go through the guard step', () => {
     assert.equal(result, 'temperature at sea level?');
   });
 
-  it('keeps a draft that is still blocked after the retry, for "Use anyway"', async () => {
+  it('shows a draft still flagged after the retry, with the reason as a warning (2026-10-15)', async () => {
     const front = makeStreamingFront();
     const { result, calls, state } = await front.run(['100 degrees Celsius at sea level?', '100 degrees Celsius exactly?'], existing, ctx);
     assert.equal(calls, 2);
-    assert.equal(result, '');
-    assert.match(state.rejectedSuggestion || '', /100 degrees Celsius/);
-    assert.match(state.rejectedReason || state._lastFrontBlockReason || '', /Back answer/);
+    assert.equal(result, '100 degrees Celsius exactly?');
+    assert.match(state._frontWarning || '', /Back answer/);
   });
 
   it('never shows the blocked text while it streams', async () => {

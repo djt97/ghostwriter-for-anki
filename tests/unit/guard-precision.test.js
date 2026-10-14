@@ -25,7 +25,11 @@ const evalRunner = require('../../scripts/run-copilot-eval.js');
 // 2026-10-13: a draft cut at the 18-word cap that stops on a function word is dropped rather
 // than shown with a "?" added. The one gold card affected is 22 words long, so it could only
 // ever be shown cut ("...to lobby against the?"): gold 4 -> 5.
-const GOLD_HIDDEN_MAX = 5;
+// 2026-10-15: a check now retries the Front once and, if it still fires, shows the draft with a
+// warning (only a dropped attribution or scope is withheld); Back checks only warn. "Hidden"
+// here therefore counts cards a check flags. "Restates the Front" needs the Back to add nothing,
+// or one word to three shared ones: gold 5 -> 4.
+const GOLD_HIDDEN_MAX = 4;
 const BAD_FLAGGED_MIN = 20;
 
 describe('suggestion checks against fixture cards', () => {

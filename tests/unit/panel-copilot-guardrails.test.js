@@ -1477,9 +1477,12 @@ describe('answer-term word lists', () => {
 });
 
 describe('blocked Back drafts', () => {
-  it('keep only the completion for "Use anyway", so the typed Back is not inserted twice', () => {
-    assert.match(panelSource, /rememberRejectedCopilotDraft\(state, \{ suggestion, preview: displayedBack, reason: fitIssue \}\)/);
-    assert.doesNotMatch(panelSource, /rememberRejectedCopilotDraft\(state, \{ suggestion: displayedBack/);
+  it('shows a flagged Back as the suggestion with a warning, not as a blocked draft (2026-10-15)', () => {
+    const request = extractFunction(panelSource, 'requestCopilot');
+    assert.doesNotMatch(request, /rememberRejectedCopilotDraft\(state, \{ suggestion, (?:preview: displayedBack, )?reason: fitIssue \}\)/);
+    assert.equal((request.match(/state\._backWarning = fitIssue;/g) || []).length, 2);
+    assert.match(request, /const warning = state\.fieldId === "front" \? state\._frontWarning : state\._backWarning;/);
+    assert.match(request, /state\.hintEl\.textContent = warning \? `\$\{suggestionWarningText\(warning\)\} Press Tab or click Accept\.`/);
   });
 });
 
@@ -1503,7 +1506,7 @@ describe('source grounding warns instead of hiding', () => {
   it('records the warning for the suggestion that is shown and tells the user', () => {
     const guarded = extractFunction(panelSource, 'callFrontLLMWithLocalGuard');
     assert.equal((guarded.match(/state\._frontWarning = getFrontSuggestionWarning\(/g) || []).length, 3);
-    assert.match(panelSource, /if \(state\.fieldId === "front" && state\._frontWarning\) \{\n {6}showFrontNoCardNotice\(state, "Check this suggestion/);
+    assert.match(panelSource, /if \(state\.fieldId === "front" && warning\) showFrontNoCardNotice\(state, suggestionWarningText\(warning\)\);/);
   });
 });
 
@@ -1515,10 +1518,27 @@ describe('one-call cards in the request flow', () => {
     assert.match(request, /\} catch \(e\) \{\n {4}state\._pairMode = false;/);
   });
 
-  it('uses the paired answer for the Back unless it fails the Back checks', () => {
+  it('uses the paired answer for the Back at once, with a warning if a check flags it', () => {
     const back = extractFunction(panelSource, 'requestBackDraftFromFront');
     assert.match(back, /const raw = pairedBack\n\s+\? normalizeCopilotSuggestion\(pairedBack/);
-    assert.match(back, /if \(\(fitIssue \|\| !suggestion\) && pairedBack\) \{\n\s+return requestBackDraftFromFront\(frontForBack, \{ force: true \}\);/);
+    // Only a missing paired answer costs a separate Back request.
+    assert.match(back, /if \(!suggestion && pairedBack\) \{\n\s+return requestBackDraftFromFront\(frontForBack, \{ force: true \}\);/);
+    assert.doesNotMatch(back, /showRejectedCopilotDraft\(backState\)/);
+    assert.match(back, /backState\._backWarning = fitIssue;/);
+  });
+
+  it('words each warning for the reader', () => {
+    const text = new Function(`${extractFunction(panelSource, 'suggestionWarningText')}; return suggestionWarningText;`)();
+    assert.match(text('Back answer restates the Front instead of answering it'), /may repeat the question/);
+    assert.match(text('front includes distinctive Back answer terms'), /give away its answer/);
+    assert.match(text('Front asks how someone responded, which fits many answers; name the aspect'), /fit several answers/);
+    assert.match(text('Front adds concepts not present in the Source'), /words the source doesn't/);
+    assert.match(text('Front ends with a dangling word'), /garbled or unfinished/);
+    assert.match(text('something new'), /flagged it/);
+  });
+
+  it('does not call a Back that adds the answer a restatement', () => {
+    assert.equal(copilotFns.getBackAnswerFitIssue('What does it mean for a decision problem X to be a member of co-NP?', 'A decision problem X is in co-NP if its complement X is in NP'), '');
   });
 
   it('never stops a one-call reply early, since the answer comes after the question', () => {
