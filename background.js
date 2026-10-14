@@ -806,10 +806,10 @@ function buildUpdateNotice({ previousVersion = "", currentVersion = "", preserve
     createdAt: Date.now(),
     dismissed: false,
     title: `Ghostwriter updated to ${currentVersion || "the latest version"}`,
-    // What's new, shown once after an update. 0.7.0 DRAFT (raw material for DJ's rewrite).
+    // What's new, shown once after an update. 0.7.0.
     message: preservedCount
-      ? "Your API keys and Anki settings were preserved. This release adds Check card and makes suggestions quicker."
-      : "This release adds Check card and makes suggestions quicker.",
+      ? "Your API keys and Anki settings were preserved. This release adds a card-checking feature, and improves the speed of ghostwriting."
+      : "This release adds a card-checking feature and improves the speed of ghostwriting.",
     actions: [
       "Check card, next to Add, points out common card problems such as yes/no questions, vague questions and the answer on the front. It works offline.",
       "To be told while you type, turn on \"Check the card as I type (test)\" in Settings, under Beginner tips.",
