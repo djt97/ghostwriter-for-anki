@@ -106,18 +106,19 @@ describe('Copilot eval fixtures', () => {
     const earlyNeural = prefixCards.find((entry) => entry.prefix === 'Early neural');
     assert.ok(whatInspired);
     assert.ok(earlyNeural);
-    assert.equal(whatInspired.preferredCards[0].front, 'What inspired early neural networks?');
+    // DJ rated "What inspired early neural networks?" bad on 2026-10-13: the cue could be anything.
+    assert.equal(whatInspired.preferredCards.length, 0);
+    assert.ok(whatInspired.badButPlausibleCards.some((card) => card.front === 'What inspired early neural networks?'));
     assert.equal(earlyNeural.preferredCards[0].front, 'Early neural networks were inspired by...');
     assert.equal(earlyNeural.preferredCards[0].back, 'the human brain');
 
     const feature = fixture.cases.find((testCase) => testCase.id === 'feature-learning');
     assert.equal(feature.frontPrefix, 'In the deep');
-    assert.equal(feature.carding.verdict, 'basic');
-    assert.match(feature.carding.preferredCards[0].front, /hand-crafted\.\.\.$/);
+    assert.equal(feature.carding.verdict, 'maybe');
+    assert.match(feature.carding.preferredCards[0].front, /hand-crafted; rather\.\.\.$/);
 
-    const notBrain = fixture.cases.find((testCase) => testCase.id === 'not-brain-models');
-    assert.equal(notBrain.carding.verdict, 'basic');
-    assert.equal(notBrain.carding.preferredCards[0].back, 'No.');
+    // A "Do current" prefix can only become a yes/no question, which DJ never writes.
+    assert.equal(fixture.cases.some((testCase) => testCase.id === 'not-brain-models'), false);
 
     const unsupervised = fixture.cases.find((testCase) => testCase.id === 'unsupervised-benefit');
     assert.ok(unsupervised.carding.prefixCards.some((entry) => entry.prefix === 'Deep learning'));

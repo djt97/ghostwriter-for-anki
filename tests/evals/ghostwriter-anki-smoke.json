@@ -13,6 +13,11 @@
       "id": "cruft-computing-context",
       "section": "define cruft - Brave Search",
       "tags": ["anki", "software-engineering", "source-grounding"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Fine; not easy to guess unless you know the word."
+      },
       "sourceText": "Cruft is a slang term used primarily in computing and technology to describe unnecessary, redundant, or poorly written code, files, or digital information that accumulates over time and hinders performance.",
       "frontPrefix": "In what ",
       "carding": {
@@ -33,6 +38,11 @@
       "id": "compact-metric-space-conditions",
       "section": "Total Boundedness in Non-Complete Spaces",
       "tags": ["anki", "math", "topology"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Great card; the back needn't capitalise 'complete'."
+      },
       "sourceText": "In a metric space, compact iff complete plus totally bounded.",
       "frontPrefix": "In a ",
       "carding": {
@@ -43,7 +53,7 @@
           {
             "type": "basic",
             "front": "In a metric space, a set is compact if and only if it is... (two conditions)",
-            "back": "Complete and totally bounded."
+            "back": "complete and totally bounded."
           }
         ],
         "badButPlausibleCards": []
@@ -53,6 +63,11 @@
       "id": "sigmoid-neuron-overcomes-perceptron",
       "section": "Neural Networks and Deep Learning",
       "tags": ["anki", "machine-learning", "neural-networks"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "fix",
+        "note": "OK, but written for an article comparing perceptrons with sigmoid neurons; now that ReLU is standard, ask which neurons succeeded perceptrons."
+      },
       "sourceText": "We can overcome this problem by introducing a new type of artificial neuron called a sigmoid neuron. Sigmoid neurons are similar to perceptrons, but modified so that small changes in their weights and bias cause only a small change in their output.",
       "frontPrefix": "What type ",
       "carding": {
@@ -93,6 +108,11 @@
       "id": "ood-stands-for",
       "section": "Sigmoid neurons in MLPs - Claude",
       "tags": ["anki", "machine-learning", "abbreviation"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Great card."
+      },
       "sourceText": "In machine learning, OOD stands for Out-Of-Distribution.",
       "frontPrefix": "What does ",
       "carding": {
@@ -153,6 +173,11 @@
       "id": "kmeans-first-step",
       "section": "VQ bottleneck in machine learning - Claude",
       "tags": ["anki", "machine-learning", "algorithms"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Great."
+      },
       "sourceText": "You initialize k centroids randomly, then alternate two steps: assign each point to its nearest centroid, then move each centroid to the mean of its assigned points. Repeat until stable.",
       "frontPrefix": "What is ",
       "carding": {
@@ -173,20 +198,32 @@
       "id": "autoencoder-definition",
       "section": "VQ bottleneck in machine learning - Claude",
       "tags": ["anki", "machine-learning", "autoencoders"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "fix",
+        "note": "Too broad. Better: 'An autoencoder is a neural network that learns to...' -> 'compress data and then reconstruct it'."
+      },
       "sourceText": "An autoencoder is a neural network that learns to compress data and then reconstruct it.",
-      "frontPrefix": "What is ",
+      "frontPrefix": "An autoencoder is ",
       "carding": {
         "verdict": "basic",
         "rationale": "The source provides a direct definition of autoencoder.",
-        "plausibleUserPrefixes": ["What is "],
+        "plausibleUserPrefixes": ["An autoencoder is "],
         "preferredCards": [
           {
             "type": "basic",
-            "front": "What is an autoencoder?",
-            "back": "A neural network that learns to compress data and then reconstruct it."
+            "front": "An autoencoder is a neural network that learns to...",
+            "back": "compress data and then reconstruct it"
           }
         ],
-        "badButPlausibleCards": []
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What is an autoencoder?",
+            "back": "A neural network that learns to compress data and then reconstruct it.",
+            "whyBad": "Too broad (DJ)."
+          }
+        ]
       }
     },
     {
@@ -293,6 +330,11 @@
       "id": "abbott-repealed-mrrt",
       "section": "Fuel excise cut during inflation debate - Claude",
       "tags": ["anki", "australia", "public-policy"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Great card."
+      },
       "sourceText": "The Abbott government repealed the MRRT entirely in 2014.",
       "frontPrefix": "Which government ",
       "carding": {
@@ -393,6 +435,11 @@
       "id": "rocstories-contents",
       "section": "A Corpus and Evaluation Framework for Deeper Understanding of Commonsense Stories",
       "tags": ["anki", "nlp", "datasets"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Fine: the two facts naturally go together, and 'five-sentence' matters."
+      },
       "sourceText": "We created a new corpus of about 50k five-sentence commonsense stories, ROCStories, to enable this evaluation.",
       "frontPrefix": "What is ",
       "carding": {

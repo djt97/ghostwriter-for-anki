@@ -152,6 +152,9 @@ const KNOWN_MODELS = {
   claude: [
     { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (recommended)" },
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (alias)" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5 (slowest)" },
     { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (use for harder cards)" },
   ],
   local: [
@@ -1138,6 +1141,7 @@ async function save() {
     showMiniCopilotMode: normalizeMiniCopilotMode($("#showMiniCopilotMode").value || "auto"),
     showSourceModePill: !!$("#showSourceModePill")?.checked,
     showShortcutHints: document.querySelector("#showShortcutHints")?.checked !== false,
+    checkCardWhileTyping: document.querySelector("#checkCardWhileTyping")?.checked === true,
     contentFont: document.querySelector("#contentFont")?.value === "sans" ? "sans" : "serif",
     editorViewMode: document.querySelector("#editorViewMode")?.value || base.editorViewMode || "auto",
     defaultEditorSurface: normalizeEditorSurface(document.querySelector("#defaultEditorSurface")?.value || base.defaultEditorSurface),
@@ -1271,6 +1275,8 @@ async function load() {
   if (pill) pill.checked = opts.showSourceModePill !== false;
   const shortcutHints = document.querySelector("#showShortcutHints");
   if (shortcutHints) shortcutHints.checked = opts.showShortcutHints ?? D.showShortcutHints ?? true;
+  const liveCheck = document.querySelector("#checkCardWhileTyping");
+  if (liveCheck) liveCheck.checked = opts.checkCardWhileTyping === true;
   const contentFontSelect = document.querySelector("#contentFont");
   if (contentFontSelect) contentFontSelect.value = opts.contentFont === "sans" ? "sans" : "serif";
   const viewSelect = document.querySelector("#editorViewMode");

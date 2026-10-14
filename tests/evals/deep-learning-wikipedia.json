@@ -127,55 +127,50 @@
       "id": "brain-inspiration",
       "section": "Lead",
       "tags": ["history", "inspiration", "maybe"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "bad",
+        "note": "Vague cue: 'what' could be anything."
+      },
       "sourceText": "Early forms of neural networks were inspired by information processing and distributed communication nodes in biological systems, particularly the human brain.",
       "frontPrefix": "What inspired",
       "carding": {
         "verdict": "maybe",
         "rationale": "The historical detail may be worth remembering for some readers, but the highlighted wording is broad and not very vivid.",
         "plausibleUserPrefixes": ["What inspired", "Early neural"],
-        "preferredCards": [
-          {
-            "type": "basic",
-            "front": "What inspired early neural networks?",
-            "back": "the human brain"
-          }
-        ],
+        "preferredCards": [],
         "alternateCards": [
           {
             "type": "basic",
             "front": "What biological system inspired early neural networks?",
             "back": "the human brain",
             "rationale": "Acceptable, but a little category-shaped compared with the user's more ordinary cue."
-          },
-          {
-            "type": "basic",
-            "front": "What inspired early forms of neural networks?",
-            "back": "information processing and distributed communication nodes in biological systems, particularly the human brain",
-            "rationale": "Long, but acceptable for a 'What inspired...' cue because it answers the broader relation the user started."
           }
         ],
         "prefixCards": [
           {
             "prefix": "What inspired",
-            "preferredCards": [
-              {
-                "type": "basic",
-                "front": "What inspired early neural networks?",
-                "back": "the human brain"
-              }
-            ],
+            "preferredCards": [],
             "alternateCards": [
               {
                 "type": "basic",
                 "front": "What biological system inspired early neural networks?",
                 "back": "the human brain",
                 "rationale": "Acceptable, but a little category-shaped compared with the user's more ordinary cue."
+              }
+            ],
+            "badButPlausibleCards": [
+              {
+                "type": "basic",
+                "front": "What inspired early neural networks?",
+                "back": "the human brain",
+                "whyBad": "Vague cue: 'what' could be anything (DJ)."
               },
               {
                 "type": "basic",
                 "front": "What inspired early forms of neural networks?",
                 "back": "information processing and distributed communication nodes in biological systems, particularly the human brain",
-                "rationale": "Long, but acceptable for a 'What inspired...' cue because it answers the broader relation the user started."
+                "whyBad": "Vague cue: 'what' could be anything (DJ)."
               }
             ]
           },
@@ -190,45 +185,18 @@
             ]
           }
         ],
-        "badButPlausibleCards": []
-      }
-    },
-    {
-      "id": "not-brain-models",
-      "section": "Lead",
-      "tags": ["contrast", "caveat", "worth-remembering"],
-      "sourceText": "However, current neural networks do not intend to model the brain function of organisms, and are generally seen as low-quality models for that purpose.",
-      "frontPrefix": "Do current",
-      "carding": {
-        "verdict": "basic",
-        "rationale": "A yes/no card is not ideal, but this prefix has a clear intended contrast: current neural networks are not intended as brain-function models.",
-        "plausibleUserPrefixes": ["Do current"],
-        "preferredCards": [
-          {
-            "type": "basic",
-            "front": "Do current neural networks intend to model the brain function of organisms?",
-            "back": "No."
-          }
-        ],
-        "alternateCards": [
-          {
-            "type": "basic",
-            "front": "Do current neural networks aim to model organism brain function?",
-            "back": "No; they are generally seen as low-quality models for that purpose."
-          }
-        ],
         "badButPlausibleCards": [
           {
             "type": "basic",
-            "front": "Do current neural networks intend to model?",
-            "back": "the brain function of organisms",
-            "whyBad": "Malformed target: the prefix implies yes/no, but the Back supplies an object."
+            "front": "What inspired early neural networks?",
+            "back": "the human brain",
+            "whyBad": "Vague cue: 'what' could be anything (DJ)."
           },
           {
             "type": "basic",
-            "front": "Do current neural networks as models of brain function?",
-            "back": "not intend to model brain function",
-            "whyBad": "Malformed yes/no Front."
+            "front": "What inspired early forms of neural networks?",
+            "back": "information processing and distributed communication nodes in biological systems, particularly the human brain",
+            "whyBad": "Vague cue: 'what' could be anything (DJ)."
           }
         ]
       }
@@ -264,16 +232,21 @@
       "id": "feature-learning",
       "section": "Overview",
       "tags": ["contrast", "answer-shape", "worth-remembering"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "fix",
+        "note": "A cue word before the dots ('rather...') is better, but the natural contrast to 'not hand-crafted' gives the answer away."
+      },
       "sourceText": "In the deep learning approach, features are not hand-crafted and the model discovers useful feature representations from the data automatically.",
       "frontPrefix": "In the deep",
       "carding": {
-        "verdict": "basic",
-        "rationale": "A source-stem card preserves the useful contrast: features are not hand-crafted; the model discovers representations automatically.",
+        "verdict": "maybe",
+        "rationale": "Worth a card only with a cue before the dots, and even then the contrast with 'not hand-crafted' makes the answer easy to guess.",
         "plausibleUserPrefixes": ["In the deep", "In deep"],
         "preferredCards": [
           {
             "type": "basic",
-            "front": "In the deep learning approach, features are not hand-crafted...",
+            "front": "In the deep learning approach, features are not hand-crafted; rather...",
             "back": "the model discovers useful feature representations from the data automatically"
           }
         ],
@@ -283,7 +256,7 @@
             "preferredCards": [
               {
                 "type": "basic",
-                "front": "In the deep learning approach, features are not hand-crafted...",
+                "front": "In the deep learning approach, features are not hand-crafted; rather...",
                 "back": "the model discovers useful feature representations from the data automatically"
               }
             ]
@@ -307,6 +280,14 @@
             "back": "they are discovered automatically from the data",
             "whyBad": "Plausible but underspecified; the contrast with hand-crafted feature engineering is doing most of the work."
           }
+        ],
+        "alternateCards": [
+          {
+            "type": "basic",
+            "front": "In the deep learning approach, features are not hand-crafted...",
+            "back": "the model discovers useful feature representations from the data automatically",
+            "rationale": "DJ accepts fronts that trail off, but prefers a cue word before the dots."
+          }
         ]
       }
     },
@@ -314,6 +295,11 @@
       "id": "cap-definition",
       "section": "Overview",
       "tags": ["definition", "abbreviation", "maybe"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Fine, but doesn't get at why we care about credit assignment."
+      },
       "sourceText": "The CAP is the chain of transformations from input to output. CAPs describe potentially causal connections between input and output.",
       "frontPrefix": "What is",
       "carding": {
@@ -369,6 +355,11 @@
       "id": "unsupervised-benefit",
       "section": "Overview",
       "tags": ["why", "advantage", "worth-remembering"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "fix",
+        "note": "Cue could be improved, e.g. ask what kind of data makes unsupervised learning useful."
+      },
       "sourceText": "Deep learning algorithms can be applied to unsupervised learning tasks. This is an important benefit because unlabeled data is more abundant than labeled data.",
       "frontPrefix": "Why is",
       "carding": {
@@ -483,6 +474,11 @@
       "id": "nonlinear-relationships",
       "section": "Deep neural networks",
       "tags": ["capability", "answer-shape", "skip"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "unsure",
+        "note": "Can't judge from the information shown."
+      },
       "sourceText": "DNNs can model complex non-linear relationships.",
       "frontPrefix": "What can",
       "carding": {
@@ -504,6 +500,11 @@
       "id": "extra-layers",
       "section": "Deep neural networks",
       "tags": ["advantage", "mechanism", "maybe"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "bad",
+        "note": "Vague 'enable'."
+      },
       "sourceText": "The extra layers enable composition of features from lower layers, potentially modeling complex data with fewer units than a similarly performing shallow network.",
       "frontPrefix": "What do",
       "carding": {
@@ -513,11 +514,6 @@
         "preferredCards": [
           {
             "type": "basic",
-            "front": "What do extra layers enable in DNNs?",
-            "back": "composition of features from lower layers"
-          },
-          {
-            "type": "basic",
             "front": "What advantage can extra layers give DNNs over similarly performing shallow networks?",
             "back": "they can model complex data with fewer units"
           }
@@ -525,11 +521,13 @@
         "prefixCards": [
           {
             "prefix": "What do",
-            "preferredCards": [
+            "preferredCards": [],
+            "badButPlausibleCards": [
               {
                 "type": "basic",
                 "front": "What do extra layers enable in DNNs?",
-                "back": "composition of features from lower layers"
+                "back": "composition of features from lower layers",
+                "whyBad": "Vague 'enable' (DJ)."
               }
             ]
           },
@@ -550,6 +548,12 @@
             "front": "What do advantage do extra layers in deep learning provide over a similarly performing shallow network?",
             "back": "they enable composition of lower-layer features",
             "whyBad": "Malformed Front and mixed target."
+          },
+          {
+            "type": "basic",
+            "front": "What do extra layers enable in DNNs?",
+            "back": "composition of features from lower layers",
+            "whyBad": "Vague 'enable' (DJ)."
           }
         ]
       }
@@ -622,20 +626,32 @@
       "id": "training-parameters",
       "section": "Challenges",
       "tags": ["list", "training", "worth-remembering"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "fix",
+        "note": "If the list is worth remembering, the front should name the count: 'What are the three training parameters for a DNN?'. Only for lists you really care about."
+      },
       "sourceText": "DNNs must consider many training parameters, such as the size (number of layers and number of units per layer), the learning rate, and initial weights.",
-      "frontPrefix": "What training",
+      "frontPrefix": "What are",
       "carding": {
-        "verdict": "basic",
-        "rationale": "A short, bounded list that is reasonably stable because the Front specifies the category.",
-        "plausibleUserPrefixes": ["What training"],
+        "verdict": "maybe",
+        "rationale": "A list card is fine only when the front names the count, and only for a list worth remembering.",
+        "plausibleUserPrefixes": ["What are"],
         "preferredCards": [
           {
             "type": "basic",
-            "front": "What training parameters must DNNs consider?",
+            "front": "What are the three training parameters for a DNN?",
             "back": "size, learning rate, and initial weights"
           }
         ],
-        "badButPlausibleCards": []
+        "badButPlausibleCards": [
+          {
+            "type": "basic",
+            "front": "What training parameters must DNNs consider?",
+            "back": "size, learning rate, and initial weights",
+            "whyBad": "A list without its count: the front should say how many items (DJ)."
+          }
+        ]
       }
     }
   ]

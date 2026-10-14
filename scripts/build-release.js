@@ -21,6 +21,7 @@ const RELEASE_SOURCE_FILES = [
   'shortcuts.js',
   'anki-connect.js',
   'anki-note.js',
+  'card-checks.js',
   'stage2-migration.js',
   'options.html',
   'welcome.html',

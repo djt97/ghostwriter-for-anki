@@ -1,6 +1,6 @@
 {
   "name": "ghostwriter",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "license": "GPL-3.0-only",
   "author": "Daniel Thornton",
@@ -15,6 +15,7 @@
     "build:mathjax": "node ./node_modules/mathjax-full/components/bin/makeAll"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "@playwright/test": "^1.48.0",
     "eslint": "^9.39.4",
     "mathjax-full": "^3.2.1",

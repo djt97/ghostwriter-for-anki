@@ -244,7 +244,7 @@ function lpcgResetHarness(mediaOptions = {}) {
   };
   const autoTagNode = addNode.body.body.find((statement) => statement.type === 'IfStatement' && statement.test.type === 'Identifier' && statement.test.name === 'wantAutoTag');
   assert.ok(autoTagNode, 'Could not find actual Add auto-tag block');
-  const resetCalls = { cancel: 0, clear: 0, persist: [], draftWrites: [], locks: 0, chrome: 0 };
+  const resetCalls = { cancel: 0, clear: 0, persist: [], draftWrites: [], locks: 0, chrome: 0, cardCheck: 0 };
   for (const [id, value] of Object.entries({ front: 'Sent front', back: 'Sent back', notes: 'Sent notes', source: 'Sent source', tags: 'sent-tag', lpcgText: 'Original fixture poem' })) {
     harness.elements[`#${id}`].value = value;
   }
@@ -263,6 +263,7 @@ function lpcgResetHarness(mediaOptions = {}) {
       resetCalls.persist.push(Object.fromEntries(Object.entries(harness.elements).map(([id, node]) => [id, node.value])));
     },
     updateOverlaySourceChrome() { resetCalls.chrome += 1; },
+    resetCardCheckUI() { resetCalls.cardCheck += 1; },
     aiSuggestTags: mediaOptions.aiSuggestTags || (async () => ['auto-fixture']),
   });
   vm.runInContext(`
@@ -309,6 +310,8 @@ describe('LPCG text edited during Add', () => {
     assert.equal(harness.resetCalls.persist[0]['#lpcgText'], '');
     assert.equal(harness.resetCalls.locks, 1);
     assert.equal(harness.lpcgState.selected.size, 0);
+    // The sent card's Check card results are cleared with it.
+    assert.equal(harness.resetCalls.cardCheck, 1);
   });
 
   it('preserves post-start LPCG text and protects its pasted image through the actual retirement worker', async () => {

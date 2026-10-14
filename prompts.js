@@ -58,6 +58,61 @@ The sentence together with its deletion(s) IS the whole card: do not write a sep
 Keep the sentence <= {{frontWordCap}} words, not counting the cloze markup.
   `.trim(),
 
+  // System prompt for one call that completes the Front and gives the Back together.
+  pairSystem: `
+You help a reader write one Anki flashcard about a passage they highlighted. The reader has started the question; write the whole question, starting with their words exactly as typed, and give the answer.
+
+A good card:
+- Asks for the one thing the reader's words point at. Keep their subject; never switch to another fact in the passage.
+- Has exactly one correct answer, even months later and out of context: keep the passage's qualifiers (who, when, under which condition) in the question, and name what "it" or "this" refers to.
+- Never contains the answer, or a word that gives it away, in the question.
+- Answers with the bare fact: a name, number, term or short phrase. Use one sentence only for a why or how question. One fact; no second clause, list or alternative names.
+- If the passage is a list, asks about the one item or the idea the reader's words point at, rather than asking for the whole list.
+- Uses only the passage, title and notes. Add nothing from elsewhere.
+Keep the whole question under {{frontWordCap}} words and the answer under {{backWordCap}} words.
+
+Reply with exactly two lines and nothing else:
+FRONT: <the whole question, starting with the reader's words>
+BACK: <the answer>
+If no card with one clear answer fits the reader's words, reply with the two labels and nothing after them.
+
+Examples:
+
+Passage: Water boils at 100 °C at sea level, and at lower temperatures at altitude.
+Question so far: At what temperature
+FRONT: At what temperature does water boil at sea level?
+BACK: 100 °C
+
+Passage: In "The Road Not Taken", the speaker says that taking the road less traveled by has made all the difference.
+Question so far: In "The Road Not Taken", what
+FRONT: In "The Road Not Taken", what has "made all the difference"?
+BACK: Taking the road less traveled by
+
+Passage: The US government has three branches: the legislative makes the laws, the executive carries them out, and the judicial interprets them.
+Question so far: Which branch
+FRONT: Which branch of the US government interprets the laws?
+BACK: The judicial branch
+
+Passage: Surge pricing raises ride-sharing fares at peak times, which draws more drivers onto the road.
+Question so far: Why do ride-sharing fares rise
+FRONT: Why do ride-sharing fares rise at peak times?
+BACK: To draw more drivers onto the road.
+  `.trim(),
+
+  // User prompt for the one-call card. meta: { existing, other (typed Back), notes, page, caps }.
+  buildPairUserPrompt(meta) {
+    const { existing, other, notes, page } = meta;
+    const clip = (s, n) => (s || "").replace(/\s+/g, " ").trim().slice(0, n);
+    const source = page?.sourceText || page?.selection || "";
+    const lines = [];
+    if (source) lines.push(`Passage: ${clip(source, 700)}`);
+    if (page?.title) lines.push(`Title: ${clip(page.title, 80)}`);
+    if (notes) lines.push(`Notes: ${clip(notes, 120)}`);
+    if (other && other.trim()) lines.push(`The reader has already written the answer: ${clip(other, 160)}. Complete the question so that this is its answer, and repeat it after BACK:.`);
+    lines.push(`Question so far: ${clip(existing, 160) || "(nothing yet; write the whole question)"}`);
+    return lines.join("\n");
+  },
+
   /**
    * Optional: replace the entire "user" prompt template.
    * This function receives the same inputs the panel uses to build the prompt.

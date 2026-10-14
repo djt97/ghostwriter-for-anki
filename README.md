@@ -1,6 +1,6 @@
 # Ghostwriter for Anki (Chrome/Edge, Manifest V3)
 
-**Current Version:** `0.6.0`
+**Current Version:** `0.7.0`
 
 Ghostwriter for Anki helps you turn web highlights into Anki cards without leaving your reading flow. Highlight text, open Ghostwriter, write with optional suggestions from Ghostwriter, then send the card straight to Anki.
 

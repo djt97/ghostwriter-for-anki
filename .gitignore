@@ -39,3 +39,6 @@ docs/store-screenshots/.tmp-*
 /*.png
 *.mp3
 Ghostwriter_v2-1-transcript.md
+
+# DJ's own Anki cards sampled for local tests: private, never commit
+tests/evals/private/

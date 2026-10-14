@@ -121,6 +121,11 @@
       "id": "marie-curie-first-woman-nobel",
       "section": "Marie Curie",
       "tags": ["history", "nobel", "basic"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Fine."
+      },
       "sourceText": "Marie Curie was the first woman to win a Nobel Prize and the first person to win Nobel Prizes in two scientific fields.",
       "frontPrefix": "Who was",
       "carding": {
@@ -202,6 +207,11 @@
       "id": "water-formula",
       "section": "Water",
       "tags": ["chemistry", "formula", "basic"],
+      "djReview": {
+        "date": "2026-10-13",
+        "verdict": "good",
+        "note": "Fine."
+      },
       "sourceText": "Water is an inorganic compound with the chemical formula H2O.",
       "frontPrefix": "What is",
       "carding": {

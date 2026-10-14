@@ -202,6 +202,7 @@ const copilotFns = new Function('COPILOT_CORE', `
     extractSourceLatexMathSpans,
     getBackAnswerFitIssue,
     inferExplicitDefinitionFromSource,
+    getAnswerTerms,
   };
 `)(COPILOT_CORE);
 
@@ -1207,6 +1208,9 @@ Then
     );
     // Atomic answers and definitions must NOT be flagged.
     assert.equal(copilotFns.getBackAnswerFitIssue('Why can the Dead Sea keep swimmers afloat?', 'its density'), '');
+    // Nor a Back that adds a number the Front lacks (2026-10-13).
+    assert.equal(copilotFns.getBackAnswerFitIssue('How many bits of information are transmitted per spike?', 'About 2 bits per spike'), '');
+    assert.equal(copilotFns.getBackAnswerFitIssue("What is Europe's maternal death rate per 100,000 live births?", '8 deaths per 100,000 live births'), '');
     assert.equal(copilotFns.getBackAnswerFitIssue('Why can the Dead Sea keep swimmers afloat?', 'due to high salt content'), '');
     assert.equal(
       copilotFns.getBackAnswerFitIssue('What is spaced repetition?', 'a learning technique that reviews material at increasing intervals'),
@@ -1460,5 +1464,83 @@ describe('definition parse survives parenthetical asides and embedded clauses', 
       }),
       /substitutes a related term/
     );
+  });
+});
+
+describe('answer-term word lists', () => {
+  it('match words the leak check reduces, such as "called" and "leaves"', () => {
+    const terms = copilotFns.getAnswerTerms('the method called backpropagation updates leaves', { distinctiveOnly: true });
+    assert.ok(terms.includes('backpropagation'), JSON.stringify(terms));
+    assert.ok(!terms.includes('cal'), JSON.stringify(terms));
+    assert.ok(!terms.includes('leave'), JSON.stringify(terms));
+  });
+});
+
+describe('blocked Back drafts', () => {
+  it('keep only the completion for "Use anyway", so the typed Back is not inserted twice', () => {
+    assert.match(panelSource, /rememberRejectedCopilotDraft\(state, \{ suggestion, preview: displayedBack, reason: fitIssue \}\)/);
+    assert.doesNotMatch(panelSource, /rememberRejectedCopilotDraft\(state, \{ suggestion: displayedBack/);
+  });
+});
+
+describe('provider pause', () => {
+  it('still lets the exact source split run, and says why there is no AI suggestion', () => {
+    const request = extractFunction(panelSource, 'requestCopilot');
+    const split = request.indexOf('inferSourceStemCompletion(');
+    const pause = request.indexOf('Date.now() < copilot.pauseUntil');
+    assert.ok(split > 0 && pause > split, 'the pause check comes after the source split');
+    assert.match(request, /asked Ghostwriter to wait/);
+  });
+});
+
+describe('source grounding warns instead of hiding', () => {
+  it('is no longer one of the checks that hide a Front draft', () => {
+    const block = extractFunction(panelSource, 'getFrontSuggestionBlockReason');
+    assert.doesNotMatch(block, /getFrontSourceGroundingIssue/);
+    assert.match(extractFunction(panelSource, 'getFrontSuggestionWarning'), /getFrontSourceGroundingIssue/);
+  });
+
+  it('records the warning for the suggestion that is shown and tells the user', () => {
+    const guarded = extractFunction(panelSource, 'callFrontLLMWithLocalGuard');
+    assert.equal((guarded.match(/state\._frontWarning = getFrontSuggestionWarning\(/g) || []).length, 3);
+    assert.match(panelSource, /if \(state\.fieldId === "front" && state\._frontWarning\) \{\n {6}showFrontNoCardNotice\(state, "Check this suggestion/);
+  });
+});
+
+describe('one-call cards in the request flow', () => {
+  it('uses one call only when both fields are wanted', () => {
+    const request = extractFunction(panelSource, 'requestCopilot');
+    assert.match(request, /const pairMode = state\.fieldId === "front" && withOther && !clozeMode && !isFrontFromBack/);
+    assert.match(request, /requestBackDraftFromFront\(frontForBack, \{ force: true, pairedBack \}\)/);
+    assert.match(request, /\} catch \(e\) \{\n {4}state\._pairMode = false;/);
+  });
+
+  it('uses the paired answer for the Back unless it fails the Back checks', () => {
+    const back = extractFunction(panelSource, 'requestBackDraftFromFront');
+    assert.match(back, /const raw = pairedBack\n\s+\? normalizeCopilotSuggestion\(pairedBack/);
+    assert.match(back, /if \(\(fitIssue \|\| !suggestion\) && pairedBack\) \{\n\s+return requestBackDraftFromFront\(frontForBack, \{ force: true \}\);/);
+  });
+
+  it('never stops a one-call reply early, since the answer comes after the question', () => {
+    assert.equal((panelSource.match(/const reachedCap = !state\._pairMode && /g) || []).length, 2);
+  });
+});
+
+describe('fixes from the v0.7.0 release review', () => {
+  it('checks a streamed pair-mode retry against the answer the first reply gave', () => {
+    const guarded = extractFunction(panelSource, 'callFrontLLMWithLocalGuard');
+    assert.match(guarded, /if \(pairAnswer\) ctx = state\._frontValidationCtx = \{ \.\.\.ctx, protectedAnswer: pairAnswer \}/);
+    assert.match(guarded, /state\._frontValidationCtx === ctx \|\| state\._frontValidationCtx === startCtx/);
+  });
+
+  it('starts each request without the previous suggestion\'s warning', () => {
+    assert.match(extractFunction(panelSource, 'requestCopilot'), /state\._pairBack = "";\n\s*\/\/ A warning belongs[^\n]*\n\s*state\._frontWarning = "";/);
+  });
+
+  it('clears Check card results after Add and hides the button for LPCG', () => {
+    assert.match(panelSource, /if \(!kept\.includes\("front"\)\) resetCardCheckUI\(\);/);
+    const typeUi = extractFunction(panelSource, 'updateCardTypeUI');
+    assert.match(typeUi, /checkButton\.hidden = isLpcg/);
+    assert.match(extractFunction(panelSource, 'resetCardCheckUI'), /cardCheckLive\.dismissed\.clear\(\)/);
   });
 });

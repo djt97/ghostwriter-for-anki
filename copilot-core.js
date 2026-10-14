@@ -360,7 +360,17 @@
     };
   }
 
+  // "What is Dario" + "What is Dario's concept..." repeats the prefix and continues it with a
+  // possessive; ignoring apostrophes would read "darios" as a changed word.
+  function possessiveContinuation(existingText, completionText) {
+    const fold = (value) => String(value || "").replace(/\u2019/gu, "'").replace(/\s+/gu, " ").trim().toLowerCase();
+    const existing = fold(existingText);
+    const completion = fold(completionText);
+    return !!existing && completion.startsWith(existing) && /^'s\b/u.test(completion.slice(existing.length));
+  }
+
   function classifyFrontCompletion(existingText, completionText) {
+    if (possessiveContinuation(existingText, completionText)) return "exact-repeat";
     const existing = buildTextIndex(existingText, { ignoreApostrophes: true }).text;
     const completion = buildTextIndex(completionText, { ignoreApostrophes: true }).text;
     if (!completion) return "empty";
@@ -371,13 +381,50 @@
       return isWordChar(next) ? "prefix-drift" : "exact-repeat";
     }
     if (existing.startsWith(completion)) return "partial-repeat";
-    const firstExisting = existing.split(" ")[0];
-    const firstCompletion = completion.split(" ")[0];
-    if (firstExisting && firstExisting === firstCompletion) return "prefix-drift";
+    // A fresh question instead of a continuation ("How did the US" + "What actions were
+    // taken..."): the typed text is an unfinished question and the completion opens a new one
+    // with a capitalised question word. "When X happened," + "what did..." still continues it.
+    if (/^(?:What|Which|Who|Whom|Whose|When|Where|Why|How)\b/u.test(String(completionText || "").trim())
+      && /^(?:what|which|who|whom|whose|when|where|why|how)\b/iu.test(String(existingText || "").trim())
+      && !/[,:;]\s*$/u.test(String(existingText || ""))) {
+      return "prefix-drift";
+    }
+    // A restarted question ("What is the capital" + "What city is...") repeats the opening word.
+    // A shared function word alone ("The capital of " + "the United States") is a real suffix.
+    const existingWords = existing.split(" ");
+    const completionWords = completion.split(" ");
+    if (existingWords[0] && existingWords[0] === completionWords[0]) {
+      if (RESTART_OPENERS.has(existingWords[0])) return "prefix-drift";
+      // "Under Gaut expressivist" + "Under Gaut's expressivist view..." restarts it too.
+      if (existingWords.length > 1 && nearSameWord(existingWords[1], completionWords[1])) return "prefix-drift";
+    }
     return "suffix";
   }
 
+  // The same word give or take a plural, possessive or one-letter slip ("gaut"/"gauts").
+  function nearSameWord(a = "", b = "") {
+    if (!a || !b) return false;
+    if (a === b || a === `${b}s` || b === `${a}s`) return true;
+    if (Math.min(a.length, b.length) < 4 || Math.abs(a.length - b.length) > 1) return false;
+    let i = 0;
+    while (i < a.length && a[i] === b[i]) i += 1;
+    const rest = (x, skip) => x.slice(i + skip);
+    return rest(a, 1) === rest(b, 1) || rest(a, 1) === rest(b, 0) || rest(a, 0) === rest(b, 1);
+  }
+
+  const RESTART_OPENERS = new Set([
+    "what", "which", "who", "whom", "whose", "when", "where", "why", "how",
+    "define", "state", "name", "list", "describe", "explain", "give", "identify",
+    "is", "are", "was", "were", "does", "do", "did", "can", "could",
+  ]);
+
   function stripExactRepeatedPrefix(existingText, completionText) {
+    if (possessiveContinuation(existingText, completionText)) {
+      const text = String(completionText || "").replace(/^\s+/u, "");
+      const typed = String(existingText || "").replace(/\s+/gu, " ").trim();
+      const at = text.replace(/\s+/gu, " ").toLowerCase().indexOf(typed.toLowerCase());
+      if (at === 0) return text.replace(/\s+/gu, " ").slice(typed.length);
+    }
     const index = buildTextIndex(completionText, { ignoreApostrophes: true });
     const prefix = buildTextIndex(existingText, { ignoreApostrophes: true }).text;
     if (!prefix || !index.text.startsWith(prefix)) return String(completionText || "");
@@ -396,7 +443,13 @@
     const remaining = Math.max(0, Number(maxFrontWords) - wordCount(existingText));
     if (!raw.trim() || remaining < 1) return "";
     const words = raw.trim().split(/\s+/u);
-    return words.slice(0, remaining).join(" ");
+    const kept = words.slice(0, remaining);
+    // A draft cut at the word cap that stops on a function word ("...and the invention of") is
+    // unfinished; once a "?" is added it would pass as a question ending on a preposition.
+    const cut = words.length > remaining || (words.length === remaining && !/\?\s*$/u.test(raw));
+    const last = String(kept[kept.length - 1] || "").replace(/[^\p{L}\p{N}']+$/gu, "");
+    if (cut && /^(?:of|to|with|by|for|from|in|on|at|into|about|between|the|a|an|and|or|than|that|which|whose|because|as|its|their)$/iu.test(last)) return "";
+    return kept.join(" ");
   }
 
   function parseClozeDeletions(value) {
@@ -487,6 +540,73 @@
     return visible + text.slice(cursor);
   }
 
+  // Claude request settings for short card completions. Claude 5.x models think by default, and
+  // thinking tokens count against max_tokens, so a 30-40 token completion can come back empty.
+  // Switch thinking off where the model allows it; where it can't be (Opus 5.5, Fable), ask for
+  // low effort and leave room for the thinking. Older models take the request unchanged. Current
+  // models reject a custom temperature, so none is ever sent.
+  function getClaudeRequestShape(model, maxTokens) {
+    const id = String(model || "").trim().toLowerCase();
+    const requested = Math.max(1, Number(maxTokens) || 1024);
+    const shape = { maxTokens: requested, thinking: null, effort: "", fallbacks: false };
+    if (/^claude-(?:fable|mythos)-/u.test(id) || /^claude-opus-5-5\b/u.test(id)) {
+      return { ...shape, maxTokens: Math.max(requested, 2048), effort: "low", fallbacks: true };
+    }
+    if (/^claude-sonnet-5-5\b/u.test(id)) {
+      return { ...shape, thinking: { type: "between_tools" }, effort: "low", fallbacks: true };
+    }
+    if (/^claude-opus-5\b/u.test(id)) {
+      return { ...shape, thinking: { type: "disabled" }, effort: "low", fallbacks: true };
+    }
+    if (/^claude-(?:haiku-5-5|sonnet-5)\b/u.test(id)) {
+      return { ...shape, thinking: { type: "disabled" }, effort: "low" };
+    }
+    return shape;
+  }
+
+  // The reply's first text block; thinking blocks come first on models that think. A refusal
+  // yields no text.
+  function getClaudeReplyText(data) {
+    if (!data || data.stop_reason === "refusal") return "";
+    const block = (Array.isArray(data.content) ? data.content : []).find((part) => part?.type === "text");
+    return String(block?.text || "").trim();
+  }
+
+  // A one-call card reply: "FRONT: ...\nBACK: ...". Labels may be bold or lower case; an empty
+  // label means the model found no single clear answer.
+  function parsePairCompletion(raw) {
+    let front = null;
+    let back = null;
+    for (const line of String(raw || "").replace(/\r/g, "").split("\n")) {
+      const match = line.replace(/\*\*/g, "").match(/^\s*(front|back)\s*:(.*)$/iu);
+      if (!match) continue;
+      const value = match[2].trim();
+      if (match[1].toLowerCase() === "front" && front === null) front = value;
+      if (match[1].toLowerCase() === "back" && back === null) back = value;
+    }
+    if (front === null && back === null) return { front: "", back: "", labelled: false };
+    return { front: front || "", back: back || "", labelled: true };
+  }
+
+  // A model sometimes narrates the task ("The user wants...", "Based on the source, ...") instead
+  // of completing the card. Real answers can open with the same words ("the source code", "We the
+  // People", "Based on income", "I/O operations"), so a narration needs one of these openers
+  // followed by a narrating verb or a reference to the task.
+  const TASK_NARRATION_PATTERN = new RegExp([
+    "^(?:",
+    "the\\s+user(?:'s)?\\s+(?:wants|wanted|is|was|has|had|asks|asked|typed|wrote|provided|needs|started|seems|prefix|front|back|card|question|input|text|request)\\b",
+    "|i(?:'(?:m|ll|ve|d)\\b|\\s+(?:will|would|think|need|can|cannot|should|am|have|see|notice|believe|must|might|could|don't|do\\s+not)\\b)",
+    "|we(?:'(?:re|ll|ve|d)\\b|\\s+(?:need|can|should|will|would|have|want|must|see|are\\s+asked)\\b)",
+    "|(?:looking\\s+at|based\\s+on)\\s+(?:the|this)\\s+(?:source|text|passage|prefix|front|back|card|context|sentence|highlight|information|provided|given)\\b",
+    "|(?:this|the)\\s+(?:card|front|back|source|prefix|completion|question)\\s+(?:is|asks|should|would|needs|wants|seems|requires|says|mentions|states|field|text)\\b",
+    "|here(?:'s|\\s+is)\\s+(?:the|a|my|your)\\s+(?:completion|answer|front|back|card|suggestion)\\b",
+    ")",
+  ].join(""), "iu");
+
+  function startsWithTaskNarration(text) {
+    return TASK_NARRATION_PATTERN.test(String(text || "").trim());
+  }
+
   function cleanClozeCompletionText(raw) {
     if (!raw) return "";
     let text = String(raw)
@@ -500,10 +620,9 @@
       .replace(/^["'`]+|["'`]+$/gu, "")
       .trim();
     if (!text) return "";
-    const startsWithMeta = /^(?:the user\b|i\b|we\b|looking at\b|based on\b|this (?:card|front|back|source)\b|the (?:front|back|source)\b)/iu.test(text);
-    if (!startsWithMeta) return text;
+    if (!startsWithTaskNarration(text)) return text;
     const labelled = text.match(/\b(?:answer|back|completion)\s*[:\-]\s*["“]?(.+?)["”]?$/iu);
-    if (labelled?.[1] && !/^(?:the user\b|i\b|looking at\b)/iu.test(labelled[1].trim())) {
+    if (labelled?.[1] && !startsWithTaskNarration(labelled[1])) {
       return labelled[1].trim();
     }
     return "";
@@ -1375,6 +1494,45 @@
     return tuples;
   }
 
+  // Open frames that fit many answers. On locally judged Memory Machines cards each marked a
+  // harmful card 69-100% of the time (26 cards for "how does X affect/vary", 5 to 18 for the
+  // rest). Only a frame the completion creates counts: if the reader typed its key words
+  // ("What happens", "important"), the frame is theirs.
+  const OPEN_FRAMES = [
+    {
+      frame: /\bwhy\s+(?:is|are|was|were)\b[^?]*\b(?:significant|important|interesting|notable|relevant)\b/iu,
+      typed: /\b(?:significant|important|interesting|notable|relevant)\b/iu,
+      reason: "Front asks why something is significant or important, which fits many answers; ask for the specific effect, reason or consequence",
+    },
+    {
+      frame: /\bhow\s+did\b[^?]*\brespond\b/iu,
+      typed: /\brespond/iu,
+      reason: "Front asks how someone responded, which fits many answers; name the aspect, timing or contrast the passage gives",
+    },
+    {
+      frame: /\bwhat\s+happens\s+(?:to|when|in|if)\b/iu,
+      typed: /\bwhat\s+happens\b/iu,
+      reason: "Front asks what happens, which fits many answers; name the property or change the passage gives",
+    },
+    {
+      frame: /\bhow\s+(?:does|do|did|can)\b[^?]*\b(?:affect|affects|influence|influences|relate|relates|vary|varies|impact|impacts)\b/iu,
+      typed: /\b(?:affect|influence|relate|vary|varies|impact)/iu,
+      reason: "Front asks how one thing affects or relates to another, which fits many answers; name the specific effect, direction or contrast",
+    },
+    {
+      frame: /\bthis\s+(?:task|study|process|system|method|approach|case|context|example)\b/iu,
+      typed: /\bthis\s+\w/iu,
+      reason: "Front refers to 'this ...' without saying what it is; name it",
+    },
+  ];
+
+  function getOpenFrameIssue(frontText, existingText = "") {
+    const front = String(frontText || "");
+    const typed = String(existingText || "");
+    const hit = OPEN_FRAMES.find((entry) => entry.frame.test(front) && !entry.typed.test(typed));
+    return hit ? hit.reason : "";
+  }
+
   function getAttributionQualifierIssue(frontText, {
     sourceText = "",
     existingText = "",
@@ -1581,12 +1739,17 @@
     buildClozeGuardRetryPrompt,
     classifyFrontCompletion,
     cleanClozeCompletionText,
+    startsWithTaskNarration,
+    getClaudeRequestShape,
+    getClaudeReplyText,
+    parsePairCompletion,
     containsTokenPhrase,
     filterSourceGroundedFacts,
     firstSourceSentence,
     splitSourceSentencesVerbatim,
     startsWithReferent,
     getAttributionQualifierIssue,
+    getOpenFrameIssue,
     repairFrontAttributionQualifier,
     getCardSourceGroundingIssue,
     inferLiteralSourceSplit,

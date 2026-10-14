@@ -209,15 +209,14 @@ describe('background.js pure functions', () => {
   describe('buildUpdateNotice', () => {
     it('summarizes what changed in this release while preserving credentials', () => {
       const notice = buildUpdateNotice({
-        previousVersion: '0.5.0',
-        currentVersion: '0.6.0',
+        previousVersion: '0.6.0',
+        currentVersion: '0.7.0',
         preservedCredentials: { openaiKey: true },
       });
       const text = `${notice.message} ${notice.actions.join(' ')}`;
-      assert.match(notice.title, /0\.6\.0/);
+      // The wording is DJ's; only its shape is pinned here.
+      assert.match(notice.title, /0\.7\.0/);
       assert.match(notice.message, /API keys/);
-      assert.match(text, /Ctrl on Windows/i);
-      assert.match(text, /PDF/);
       assert.equal(notice.dismissed, false);
       assert.ok(notice.actions.length >= 2);
       assert.doesNotMatch(text, /AI suggestions|10 per day|20 lifetime/i);

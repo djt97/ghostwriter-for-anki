@@ -133,6 +133,7 @@ describe('Copilot eval runner', () => {
       },
     };
     const helpers = {
+      renderSystemPrompt: (text) => text,
       selectRelevantSource: (source) => source,
       getSourceStemMatch: () => null,
       inferProtectedAnswerFromSource: () => '',
@@ -146,6 +147,11 @@ describe('Copilot eval runner', () => {
     assert.equal(seen.length, 2);
     assert.equal(seen[0].prefixEndsWithSpace, true, 'Front prompt preserves trailing-space intent');
     assert.equal(seen[1].prefixEndsWithSpace, true, 'Cloze prompt preserves trailing-space intent');
+  });
+
+  it('sends system prompts rendered the way the panel renders them', () => {
+    assert.match(runnerSource, /system: helpers\.renderSystemPrompt\(prompts\.frontSystem\)/);
+    assert.match(runnerSource, /function renderSystemPrompt\(text\) \{ return appendStrictMathRule\(renderPromptTemplate\(text\)\); \}/);
   });
 
   it('uses the shared runtime core and mirrors the one-retry Front guard', () => {

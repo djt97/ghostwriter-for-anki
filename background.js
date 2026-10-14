@@ -806,15 +806,15 @@ function buildUpdateNotice({ previousVersion = "", currentVersion = "", preserve
     createdAt: Date.now(),
     dismissed: false,
     title: `Ghostwriter updated to ${currentVersion || "the latest version"}`,
-    // What's new, shown once after an update (draft wording for DJ's rewrite).
+    // What's new, shown once after an update. 0.7.0 DRAFT (raw material for DJ's rewrite).
     message: preservedCount
-      ? "Your API keys and Anki settings were preserved. This release fixes how cards reach Anki and how shortcuts work."
-      : "This release fixes how cards reach Anki and how shortcuts work.",
+      ? "Your API keys and Anki settings were preserved. This release adds Check card and makes suggestions quicker."
+      : "This release adds Check card and makes suggestions quicker.",
     actions: [
-      "Shortcuts use Ctrl on Windows and Linux (Cmd on Mac).",
-      "Pasted screenshots and simple formatting such as bold and subscripts now reach Anki intact.",
-      "In a PDF, copy the text and then open Ghostwriter, or right-click it and choose Create Anki card with Ghostwriter.",
-      "Add to Anki sends each card directly; the old Review Queue is retired.",
+      "Check card, next to Add, points out common card problems such as yes/no questions, vague questions and the answer on the front. It works offline.",
+      "To be told while you type, turn on \"Check the card as I type (test)\" in Settings, under Beginner tips.",
+      "A suggestion now writes the question and the answer in one request, so it arrives sooner and uses fewer free requests.",
+      "Claude Haiku, Sonnet and Opus 5.5 work with your own Claude key.",
     ],
     preservedCredentials,
   };

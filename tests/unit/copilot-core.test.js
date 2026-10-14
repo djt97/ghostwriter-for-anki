@@ -174,6 +174,24 @@ describe('copilot-core completion and qualifier guards', () => {
     assert.equal(core.classifyFrontCompletion("CNN's are ", 'CNNs'), 'partial-repeat');
     assert.equal(core.classifyFrontCompletion('Who introduced ', 'Who introduced'), 'partial-repeat');
     assert.equal(core.classifyFrontCompletion('What do', 'What does deep learning use?'), 'prefix-drift');
+    // A typed name continued as a possessive repeats the prefix; it doesn't change it.
+    assert.equal(core.classifyFrontCompletion('What is Dario', "What is Dario's idea of a compressed century?"), 'exact-repeat');
+    assert.equal(core.normalizeFrontSuffix('What is Dario', "What is Dario's idea of a compressed century?"), "'s idea of a compressed century?");
+    assert.equal(core.normalizeFrontSuffix('What are Michael', 'What are Michael\u2019s two components?'), '\u2019s two components?');
+    assert.equal(core.classifyFrontCompletion('What is Dario', 'What is Darios idea?'), 'prefix-drift');
+    // Restarting with a near-identical second word is a rewrite too.
+    assert.equal(core.classifyFrontCompletion('Under Gaut expressivist', "Under Gaut's expressivist view, what do we enjoy?"), 'prefix-drift');
+    assert.equal(core.classifyFrontCompletion('The capital of ', 'the United States is which city?'), 'suffix');
+    // A draft cut at the word cap on a function word is unfinished.
+    assert.equal(core.normalizeFrontSuffix('Which period', 'of human history lies between the first stone tools and the invention of writing?', { maxFrontWords: 15 }), '');
+    assert.equal(core.normalizeFrontSuffix('Which period', 'of human history lies between the first stone tools and the invention of writing?', { maxFrontWords: 16 }), 'of human history lies between the first stone tools and the invention of writing?');
+    assert.equal(core.normalizeFrontSuffix('What is a hammer', 'used for?', { maxFrontWords: 18 }), 'used for?');
+    // A fresh question in place of a continuation is a rewrite, not a suffix.
+    assert.equal(core.classifyFrontCompletion('How did the US', 'What actions were taken despite industry opposition?'), 'prefix-drift');
+    assert.equal(core.normalizeFrontSuffix('How did the US', 'What actions were taken despite industry opposition?'), '');
+    assert.equal(core.classifyFrontCompletion('When the war ended,', 'what did the government ration?'), 'suffix');
+    assert.equal(core.classifyFrontCompletion('What is the reason', 'why birds migrate in autumn?'), 'suffix');
+    assert.equal(core.classifyFrontCompletion('In 1953, the Dutch', 'What did they build?'), 'suffix');
   });
 
   it('enforces the complete Front word budget', () => {
@@ -309,6 +327,58 @@ describe('copilot-core completion and qualifier guards', () => {
       core.cleanClozeCompletionText('The user wants a cloze completion.'),
       ''
     );
+  });
+
+  it('treats a restarted question as drift but keeps a suffix that repeats a function word', () => {
+    assert.equal(core.classifyFrontCompletion('What is the capital', 'What city is the capital of France?'), 'prefix-drift');
+    assert.equal(core.classifyFrontCompletion('In 1991, the city', 'In 1991, which city hosted it?'), 'prefix-drift');
+    assert.equal(core.classifyFrontCompletion('The capital of ', 'the United States is...'), 'suffix');
+    assert.equal(core.classifyFrontCompletion('In 1991, ', 'in which city was Kaleida founded?'), 'suffix');
+    assert.equal(core.normalizeFrontSuffix('The capital of ', 'the United States is...'), 'the United States is...');
+  });
+
+  it('switches Claude thinking off where the model allows it, and leaves older models alone', () => {
+    assert.deepEqual(core.getClaudeRequestShape('claude-haiku-5-5', 40), { maxTokens: 40, thinking: { type: 'disabled' }, effort: 'low', fallbacks: false });
+    assert.deepEqual(core.getClaudeRequestShape('claude-sonnet-5-5', 40), { maxTokens: 40, thinking: { type: 'between_tools' }, effort: 'low', fallbacks: true });
+    // Opus 5.5 can't switch thinking off: low effort, and room for the thinking tokens.
+    assert.deepEqual(core.getClaudeRequestShape('claude-opus-5-5', 40), { maxTokens: 2048, thinking: null, effort: 'low', fallbacks: true });
+    assert.deepEqual(core.getClaudeRequestShape('claude-haiku-4-5-20251001', 40), { maxTokens: 40, thinking: null, effort: '', fallbacks: false });
+  });
+
+  it('reads the first text block of a Claude reply, after any thinking block', () => {
+    assert.equal(core.getClaudeReplyText({ content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: ' Paris ' }] }), 'Paris');
+    assert.equal(core.getClaudeReplyText({ stop_reason: 'refusal', content: [{ type: 'text', text: 'No.' }] }), '');
+    assert.equal(core.getClaudeReplyText(null), '');
+  });
+
+  it('reads a one-call FRONT/BACK reply', () => {
+    assert.deepEqual(core.parsePairCompletion('FRONT: does water boil at sea level?\nBACK: 100 °C'), { front: 'does water boil at sea level?', back: '100 °C', labelled: true });
+    assert.deepEqual(core.parsePairCompletion('**Front:** what?\n**Back:** x'), { front: 'what?', back: 'x', labelled: true });
+    assert.deepEqual(core.parsePairCompletion('FRONT:\nBACK:'), { front: '', back: '', labelled: true });
+    assert.deepEqual(core.parsePairCompletion('no labels here'), { front: '', back: '', labelled: false });
+  });
+
+  it('drops task narration but keeps answers that open with the same words', () => {
+    for (const narration of [
+      'The user wants a definition of the term.',
+      'I will complete the Front.',
+      "I'll keep it short.",
+      'We need to find the answer.',
+      'Looking at the source, the answer is X.',
+      'Based on the source, it is X.',
+      'This card asks about Paris.',
+      'The front is asking for a date.',
+      'Here is the completion: Paris',
+    ]) {
+      assert.equal(core.startsWithTaskNarration(narration), true, narration);
+    }
+    for (const answer of [
+      'the source code', 'We the People', 'Based on income', 'I/O operations',
+      'the back of the knee', 'the front lobe', 'I', 'the user interface', 'the source of the Nile',
+    ]) {
+      assert.equal(core.startsWithTaskNarration(answer), false, answer);
+      assert.equal(core.cleanClozeCompletionText(answer), answer);
+    }
   });
 
   it('rejects a Cloze that leaves the typed relation answer visible and hides later trivia', () => {
@@ -877,3 +947,21 @@ f(X^{i\leftarrow1})-f(X^{i\leftarrow0})
     );
   });
 });
+
+describe('open question frames', () => {
+  it('flags a frame the completion adds, with a reason the retry can use', () => {
+    assert.match(core.getOpenFrameIssue('How did the Dutch government respond to the floods of 1953?', 'How did the Dutch'), /how someone responded/);
+    assert.match(core.getOpenFrameIssue('Why is the Bruce effect significant for female mice?', 'Why is the Bruce'), /significant or important/);
+    assert.match(core.getOpenFrameIssue('How does a mouse\'s learning rate vary between tasks?', 'How does a'), /affects or relates/);
+    assert.match(core.getOpenFrameIssue('What is the information complexity of this task?', 'What is the information'), /'this \.\.\.'/);
+  });
+
+  it('leaves frames the reader typed, and specific questions, alone', () => {
+    assert.equal(core.getOpenFrameIssue('What happens to representations across successive layers?', 'What happens'), '');
+    assert.equal(core.getOpenFrameIssue('Why is it important to sleep before an exam?', 'Why is it important'), '');
+    assert.equal(core.getOpenFrameIssue('How did the Dutch government respond to engineers\' warnings before the 1953 floods?', 'How did the Dutch government respond'), '');
+    assert.equal(core.getOpenFrameIssue('Why can the Dead Sea keep swimmers afloat?', 'Why can'), '');
+    assert.equal(core.getOpenFrameIssue('What did Yugoslavia borrow from Soviet culture?', 'What did'), '');
+  });
+});
+

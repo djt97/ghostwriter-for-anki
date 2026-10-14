@@ -1393,6 +1393,13 @@
     body.is-overlay-surface .primary-action-row .maintenance-action {
       display: none;
     }
+    body.is-overlay-surface .primary-action-row:has(#checkCard:not([hidden])) {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+    body.is-overlay-surface .primary-action-row #checkCard {
+      min-height: 38px;
+      border-radius: 10px;
+    }
 
     body.is-overlay-surface .primary-action-row #add{
       justify-content: center;
@@ -1485,6 +1492,27 @@
       color: var(--text);
     }
     .page-notice-action { display: block; width: auto; margin: -4px 0 10px; font-size: 12px; }
+    .card-check-results {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--note-border);
+      border-radius: var(--radii-sm);
+      background: var(--note-bg);
+      color: var(--note-ink);
+    }
+    .card-check-results[hidden] { display: none; }
+    .card-check-results ul { margin: 0; padding-left: 18px; }
+    .card-check-results li + li { margin-top: 4px; }
+    .card-check-results .card-check-field { font-weight: 600; }
+    .card-check-results .card-check-note { opacity: .85; }
+    .card-check-results.is-clean { border-color: var(--border); background: var(--surface-2); color: var(--muted); }
+    .card-check-hint { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; color: var(--muted); }
+    .card-check-hint[hidden] { display: none; }
+    .card-check-hint-text { flex: 1 1 auto; }
+    .card-check-hint-dismiss { border: 0; background: transparent; color: inherit; padding: 0 4px; font-size: 14px; line-height: 1; cursor: pointer; }
+    /* Scrolled into view clear of the overlay's fixed Check card / Add row. */
+    body.is-overlay-surface .card-check-results,
+    body.is-overlay-surface .card-check-hint { scroll-margin-bottom: 72px; }
   </style>
 </head>
 <body>
@@ -1793,6 +1821,11 @@
               </div>
             </div>
           </div>
+          <div id="cardCheckResults" class="card-check-results small" role="status" aria-live="polite" hidden></div>
+          <div id="cardCheckHint" class="card-check-hint small" role="status" aria-live="polite" hidden>
+            <span class="card-check-hint-text"></span>
+            <button type="button" class="card-check-hint-dismiss" aria-label="Dismiss this check for this card">×</button>
+          </div>
         </div>
 
       </div>
@@ -1834,6 +1867,7 @@
     <div class="btns primary-action-row">
       <button id="refresh" class="maintenance-action">↻ Refresh decks/types</button>
 
+      <button type="button" id="checkCard" title="Check this card for common writing problems (offline; it can't check facts)">Check card</button>
       <button class="primary primary-with-shortcut" id="add">
         <span class="button-label">Add to Anki</span>
         <kbd id="addShortcutButtonHint" class="button-shortcut">Cmd + Shift + A</kbd>
@@ -1923,6 +1957,7 @@
   <script src="shortcuts.js" defer></script>
   <script src="anki-connect.js" defer></script>
   <script src="anki-note.js" defer></script>
+  <script src="card-checks.js" defer></script>
   <script src="copilot-core.js" defer></script>
   <script src="prompts.js" defer></script>
   <script src="native-ai.js" defer></script>

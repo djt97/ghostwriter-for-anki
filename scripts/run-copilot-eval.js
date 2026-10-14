@@ -246,14 +246,20 @@ function extractFunction(source, name) {
   throw new Error(`Could not extract function: ${name}`);
 }
 
-function loadEngine() {
-  const panelSource = fs.readFileSync(path.join(ROOT, "panel.js"), "utf8");
+// panelPath lets a script load another version of panel.js, e.g. to compare checks offline.
+function loadEngine({ panelPath = path.join(ROOT, "panel.js") } = {}) {
+  const panelSource = fs.readFileSync(panelPath, "utf8");
   const promptsSource = fs.readFileSync(path.join(ROOT, "prompts.js"), "utf8");
   const promptWindow = {};
   const prompts = new Function("window", `${promptsSource}\nreturn window.QUICKFLASH_PROMPTS;`)(promptWindow);
 
   const helpers = new Function("COPILOT_CORE", `
     const copilot = { frontWordCap: ${FRONT_WORD_CAP}, backWordCap: ${BACK_WORD_CAP} };
+    ${extractStringConst(panelSource, "STRICT_MATH_RULE")}
+    ${extractFunction(panelSource, "appendStrictMathRule")}
+    ${extractFunction(panelSource, "renderPromptTemplate")}
+    // The panel sends system prompts with the word caps filled in and the strict math rule added.
+    function renderSystemPrompt(text) { return appendStrictMathRule(renderPromptTemplate(text)); }
     ${extractDeclaration(panelSource, "FRONT_ANSWER_CUE_TERMS")}
     ${extractDeclaration(panelSource, "FRONT_ANSWER_CONTEXT_TERMS")}
     ${extractDeclaration(panelSource, "FRONT_ANSWER_GENERIC_TERMS")}
@@ -332,8 +338,11 @@ function loadEngine() {
     ${extractFunction(panelSource, "getFrontDefinitionDriftIssue")}
     function getContextSourceText(page) { return String(page?.sourceText || page?.selection || "").trim(); }
     ${extractFunction(panelSource, "getFrontSuggestionBlockReason")}
+    ${extractFunction(panelSource, "getFrontSuggestionWarning")}
     ${extractFunction(panelSource, "buildFrontGuardRetryPrompt")}
     return {
+      renderSystemPrompt,
+      getTypedWordCount,
       normalizeCopilotSuggestion,
       getFrontNormalizationRetryReason,
       getSourceStemMatch,
@@ -349,6 +358,7 @@ function loadEngine() {
       getFrontRelationshipDriftIssue,
       getFrontDefinitionDriftIssue,
       getFrontSuggestionBlockReason,
+      getFrontSuggestionWarning,
       trimAnswerBearingFrontTail,
       buildFrontGuardRetryPrompt,
       normalizeBackSuggestionForFront,
@@ -403,6 +413,17 @@ function resolveProviderConfig(args) {
     };
   }
 
+  if (provider === "anthropic") {
+    const providerKey = readEnvApiKey("ANTHROPIC_API_KEY");
+    return {
+      provider,
+      baseUrl: (args.baseUrl || "https://api.anthropic.com").replace(/\/+$/g, ""),
+      apiKey: args.apiKey || providerKey.value || args.genericApiKey,
+      apiKeySource: args.apiKeySource || providerKey.source || args.genericApiKeySource,
+      model: args.model || "claude-haiku-5-5",
+    };
+  }
+
   if (provider === "openrouter") {
     const providerKey = readEnvApiKey("OPENROUTER_API_KEY");
     const apiKey = args.apiKey || providerKey.value || args.genericApiKey;
@@ -444,19 +465,21 @@ function clip(value, max = 120) {
   return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}...`;
 }
 
+// As panel.js completionNeedsLeadingSpace: punctuation and possessives attach to the typed text.
 function joinCompletion(prefix, suggestion) {
   const p = String(prefix || "").trim();
   const s = String(suggestion || "").trim();
   if (!p) return s;
   if (!s) return p;
-  return `${p} ${s}`.replace(/\s+/g, " ").trim();
+  const attaches = ".,!?;:\u2026%)]>'\u2019\"-\u2013\u2014}".includes(s[0]);
+  return `${p}${attaches ? "" : " "}${s}`.replace(/\s+/g, " ").trim();
 }
 
 function makePage(fixture, testCase) {
   return {
     selection: testCase.sourceText,
-    title: fixture.source?.title || "",
-    url: fixture.source?.url || "",
+    title: testCase.pageTitle || fixture.source?.title || "",
+    url: testCase.pageUrl || fixture.source?.url || "",
   };
 }
 
@@ -678,7 +701,7 @@ function buildFrontPrompt({ fixture, testCase, prompts, helpers }) {
     frontPrefix
   );
   return {
-    system: prompts.frontSystem,
+    system: helpers.renderSystemPrompt(prompts.frontSystem),
     prompt: prompts.buildUserPrompt({
       fieldId: "front",
       existing: frontPrefix,
@@ -701,7 +724,7 @@ function buildBackPrompt({ fixture, testCase, front, prompts, helpers }) {
   page.selection = helpers.selectRelevantSource(testCase.sourceText, "", front, { before: 1, after: 1 });
   const answerRole = helpers.inferAnswerRoleFromFront(front);
   return {
-    system: prompts.backSystem,
+    system: helpers.renderSystemPrompt(prompts.backSystem),
     prompt: prompts.buildUserPrompt({
       fieldId: "back",
       existing: "",
@@ -724,7 +747,7 @@ function buildClozePrompt({ fixture, testCase, prompts, helpers }) {
     expandOnlyIfTailMissing: true,
   });
   return {
-    system: prompts.clozeSystem || prompts.frontSystem,
+    system: helpers.renderSystemPrompt(prompts.clozeSystem || prompts.frontSystem),
     prompt: prompts.buildUserPrompt({
       fieldId: "front",
       existing: frontPrefix,
@@ -738,9 +761,44 @@ function buildClozePrompt({ fixture, testCase, prompts, helpers }) {
   };
 }
 
-async function chatCompletion(config, { system, prompt, maxTokens }) {
+// scripts/eval-suite.js sets an observer to record each call's latency and token use.
+let completionObserver = null;
+let completionOverride = null;
+// Answers completions from saved replies instead of a provider (eval-suite.js --replay).
+function setCompletionOverride(fn) {
+  completionOverride = typeof fn === "function" ? fn : null;
+}
+function setCompletionObserver(fn) {
+  completionObserver = typeof fn === "function" ? fn : null;
+}
+
+async function chatCompletion(config, request) {
+  const started = Date.now();
+  let result = null;
+  try {
+    result = completionOverride ? await completionOverride(config, request) : await providerCompletion(config, request);
+    return result;
+  } finally {
+    if (completionObserver) {
+      completionObserver({
+        provider: config.provider,
+        model: config.model,
+        latencyMs: Date.now() - started,
+        usage: result?.usage || null,
+        ok: !!result,
+        text: result?.text ?? "",
+        purpose: request.purpose || "",
+      });
+    }
+  }
+}
+
+async function providerCompletion(config, { system, prompt, maxTokens }) {
   if (config.provider === "gemini") {
     return geminiCompletion(config, { system, prompt, maxTokens });
+  }
+  if (config.provider === "anthropic") {
+    return require("./eval/anthropic.js").anthropicCompletion(config, { system, prompt, maxTokens });
   }
 
   const payload = {
@@ -778,16 +836,20 @@ async function chatCompletion(config, { system, prompt, maxTokens }) {
     throw new Error(`${config.provider} error ${response.status}: ${message}`);
   }
   const content = data?.choices?.[0]?.message?.content;
+  const usage = data?.usage
+    ? { inputTokens: data.usage.prompt_tokens || 0, outputTokens: data.usage.completion_tokens || 0 }
+    : null;
   if (typeof content === "string") {
-    return { text: content.trim(), model: String(data?.model || "") };
+    return { text: content.trim(), model: String(data?.model || ""), usage };
   }
   if (Array.isArray(content)) {
     return {
       text: content.map((part) => part?.text || part?.content || "").join("").trim(),
       model: String(data?.model || ""),
+      usage,
     };
   }
-  return { text: "", model: String(data?.model || "") };
+  return { text: "", model: String(data?.model || ""), usage };
 }
 
 async function geminiCompletion(config, { system, prompt, maxTokens }) {
@@ -1086,6 +1148,112 @@ function getHardFlags(row) {
   ));
 }
 
+function buildPairPrompt({ fixture, testCase, prompts, helpers }) {
+  const page = makePage(fixture, testCase);
+  const frontPrefix = getEvalPrefix(testCase);
+  // The Back may sit one sentence away from the one the prefix targets.
+  page.selection = helpers.selectRelevantSource(testCase.sourceText, frontPrefix, "", { before: 1, after: 1 });
+  return {
+    system: helpers.renderSystemPrompt(prompts.pairSystem),
+    prompt: prompts.buildPairUserPrompt({ existing: frontPrefix, other: "", notes: "", page }),
+  };
+}
+
+// One call for Front and Back together. The Front is checked against the model's own answer,
+// retried once if blocked, and the Back goes through the same checks as in the two-call flow.
+async function runPairPath({ fixture, testCase, prompts, helpers, config, row, frontPrefix, frontPrompt }) {
+  const pairPrompt = buildPairPrompt({ fixture, testCase, prompts, helpers });
+  const page = makePage(fixture, testCase);
+  const ask = (prompt, purpose) => chatCompletion(config, { system: pairPrompt.system, prompt, maxTokens: 90, purpose });
+  const readFront = (raw) => helpers.normalizeFrontSuggestionForPrefix(
+    frontPrefix,
+    helpers.normalizeCopilotSuggestion(raw, frontPrefix, { role: "front", maxWords: FRONT_WORD_CAP })
+  );
+  // As in panel.js callFrontLLMWithLocalGuard: the model's own answer guards the Front only when
+  // it is short (a long one just restates the question); an answer-bearing tail is trimmed; and a
+  // reply that doesn't continue the prefix gets the normalization retry.
+  const pairAnswerFor = (suffix, back) => (back && helpers.getTypedWordCount(back)
+    <= Math.max(6, 0.6 * helpers.getTypedWordCount(`${frontPrefix} ${suffix || ""}`)) ? back : "");
+  const checkFront = (raw, pairFront, back) => {
+    const suffix = readFront(pairFront);
+    const protectedAnswer = pairAnswerFor(suffix, back) || frontPrompt.protectedAnswer;
+    const trimmed = suffix ? (helpers.trimAnswerBearingFrontTail(suffix, frontPrefix, protectedAnswer) || suffix) : "";
+    const reason = trimmed
+      ? helpers.getFrontSuggestionBlockReason(trimmed, frontPrefix, { protectedAnswer, page })
+      : helpers.getFrontNormalizationRetryReason(frontPrefix, raw);
+    return { suffix: trimmed, reason };
+  };
+  let completion;
+  try {
+    completion = await ask(pairPrompt.prompt, "pair");
+  } catch (err) {
+    row.modelOutputIssue = buildProviderCallIssue(config, "pair", err);
+    row.judgment = judgeCase(testCase, row, helpers);
+    return row;
+  }
+  row.rawPair = completion.text;
+  row.frontActualModel = completion.model;
+  let pair = COPILOT_CORE.parsePairCompletion(completion.text);
+  row.rawFront = pair.front;
+  row.rawBack = pair.back;
+  let checked = checkFront(completion.text, pair.front, pair.back);
+  row.frontSuffix = checked.suffix;
+  let blockReason = checked.reason;
+  if (blockReason) {
+    row.localGuard = { blockReason };
+    try {
+      const retry = await ask(helpers.buildFrontGuardRetryPrompt(
+        pairPrompt.prompt,
+        row.frontSuffix ? joinCompletion(frontPrefix, row.frontSuffix) : pair.front,
+        blockReason
+      ).replace(/\nOutput:\s*$/u, "\nReply again with the two lines FRONT: and BACK:."), "pair-retry");
+      row.rawPairRetry = retry.text;
+      pair = COPILOT_CORE.parsePairCompletion(retry.text);
+      row.rawFront = pair.front;
+      row.rawBack = pair.back;
+      checked = checkFront(retry.text, pair.front, pair.back);
+      row.frontSuffix = checked.suffix;
+      blockReason = checked.reason;
+      row.localGuard.retryBlockReason = blockReason;
+    } catch (err) {
+      row.modelOutputIssue = buildProviderCallIssue(config, "pair-retry", err);
+      blockReason = "retry failed";
+    }
+  }
+  if (!row.frontSuffix || blockReason) {
+    // The extension offers a blocked draft as "Use anyway"; keep it for review.
+    if (row.frontSuffix) row.rejectedCard = { front: joinCompletion(frontPrefix, row.frontSuffix), back: pair.back, reason: blockReason };
+    row.frontSuffix = "";
+    row.front = "";
+    row.back = "";
+    row.judgment = judgeCase(testCase, row, helpers);
+    return row;
+  }
+  row.front = joinCompletion(frontPrefix, row.frontSuffix);
+  row.frontWarning = helpers.getFrontSuggestionWarning(row.frontSuffix, frontPrefix, {
+    page, protectedAnswer: pairAnswerFor(row.frontSuffix, pair.back) || frontPrompt.protectedAnswer,
+  });
+  let back = helpers.normalizeCopilotSuggestion(pair.back, "", { role: "back", maxWords: BACK_WORD_CAP });
+  back = helpers.stripFrontFromBack(back, row.front);
+  back = helpers.normalizeBackSuggestionForFront(back, row.front);
+  const backIssue = back
+    ? (helpers.getBackAnswerFitIssue(row.front, back) || helpers.getBackSourceAlignmentIssue(row.front, back, testCase.sourceText))
+    : "";
+  if (backIssue) {
+    row.localBackGuard = { blockReason: backIssue, rejectedBack: back };
+    back = "";
+  }
+  row.back = back;
+  // As in panel.js requestBackDraftFromFront: an empty or rejected paired Back falls back to the
+  // separate Back call.
+  if (!row.back) {
+    row.pairBackFallback = true;
+    await requestBack({ fixture, testCase, prompts, helpers, config, row, includePrompts: false });
+  }
+  row.judgment = judgeCase(testCase, row, helpers);
+  return row;
+}
+
 async function runCase({ fixture, testCase, prompts, helpers, config, live, includePrompts }) {
   const frontPrompt = buildFrontPrompt({ fixture, testCase, prompts, helpers });
   const carding = getCarding(testCase);
@@ -1141,6 +1309,7 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
       }
       try {
         const clozeCompletion = await chatCompletion(config, {
+      purpose: "cloze",
           system: clozePrompt.system,
           prompt: clozePrompt.prompt,
           maxTokens: 90,
@@ -1173,6 +1342,7 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
             { maxFrontWords: FRONT_WORD_CAP, maxDeletions }
           );
           const retryCompletion = await chatCompletion(config, {
+            purpose: "cloze-retry",
             system: clozePrompt.system,
             prompt: retryPrompt,
             maxTokens: 90,
@@ -1222,8 +1392,13 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     return row;
   }
 
+  if (config.pairMode) {
+    return runPairPath({ fixture, testCase, prompts, helpers, config, row, frontPrefix, frontPrompt });
+  }
+
   try {
     const frontCompletion = await chatCompletion(config, {
+      purpose: "front",
       system: frontPrompt.system,
       prompt: frontPrompt.prompt,
       maxTokens: 40,
@@ -1299,6 +1474,7 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
     };
     try {
       const retryCompletion = await chatCompletion(config, {
+            purpose: "front-retry",
         system: frontPrompt.system,
         prompt: helpers.buildFrontGuardRetryPrompt(
           frontPrompt.prompt,
@@ -1350,45 +1526,51 @@ async function runCase({ fixture, testCase, prompts, helpers, config, live, incl
   }
 
   if (row.front) {
-    const backPrompt = buildBackPrompt({ fixture, testCase, front: row.front, prompts, helpers });
-    row.answerRole = backPrompt.answerRole?.kind || null;
-    if (includePrompts) {
-      row.backPrompt = backPrompt.prompt;
-      row.backSystem = backPrompt.system;
-    }
-    try {
-      const backCompletion = await chatCompletion(config, {
-        system: backPrompt.system,
-        prompt: backPrompt.prompt,
-        maxTokens: 30,
-      });
-      row.rawBack = backCompletion.text;
-      row.backActualModel = backCompletion.model;
-    } catch (err) {
-      row.modelOutputIssue = buildProviderCallIssue(config, "back", err);
-      row.judgment = judgeCase(testCase, row, helpers);
-      return row;
-    }
-    let back = helpers.normalizeCopilotSuggestion(row.rawBack, "", {
-      role: "back",
-      maxWords: BACK_WORD_CAP,
-    });
-    back = helpers.stripFrontFromBack(back, row.front);
-    back = helpers.normalizeBackSuggestionForFront(back, row.front);
-    row.back = back;
-    const runtimeBackIssue = helpers.getBackAnswerFitIssue(row.front, row.back)
-      || helpers.getBackSourceAlignmentIssue(row.front, row.back, testCase.sourceText);
-    if (runtimeBackIssue) {
-      row.localBackGuard = { blockReason: runtimeBackIssue, rejectedBack: row.back };
-      row.back = "";
-    }
-    if (!row.back && looksLikeTaskNarration(row.rawBack)) {
-      row.modelOutputIssue = buildTaskNarrationIssue(config, "back", row.rawBack);
-    }
+    row.frontWarning = helpers.getFrontSuggestionWarning(row.frontSuffix, frontPrefix, { page: makePage(fixture, testCase) });
+    await requestBack({ fixture, testCase, prompts, helpers, config, row, includePrompts });
   }
 
   row.judgment = judgeCase(testCase, row, helpers);
   return row;
+}
+
+// The separate Back call for a finished Front, with the extension's Back checks.
+async function requestBack({ fixture, testCase, prompts, helpers, config, row, includePrompts }) {
+  const backPrompt = buildBackPrompt({ fixture, testCase, front: row.front, prompts, helpers });
+  row.answerRole = backPrompt.answerRole?.kind || null;
+  if (includePrompts) {
+    row.backPrompt = backPrompt.prompt;
+    row.backSystem = backPrompt.system;
+  }
+  try {
+    const backCompletion = await chatCompletion(config, {
+      purpose: "back",
+      system: backPrompt.system,
+      prompt: backPrompt.prompt,
+      maxTokens: 30,
+    });
+    row.rawBack = backCompletion.text;
+    row.backActualModel = backCompletion.model;
+  } catch (err) {
+    row.modelOutputIssue = buildProviderCallIssue(config, "back", err);
+    return;
+  }
+  let back = helpers.normalizeCopilotSuggestion(row.rawBack, "", {
+    role: "back",
+    maxWords: BACK_WORD_CAP,
+  });
+  back = helpers.stripFrontFromBack(back, row.front);
+  back = helpers.normalizeBackSuggestionForFront(back, row.front);
+  row.back = back;
+  const runtimeBackIssue = helpers.getBackAnswerFitIssue(row.front, row.back)
+    || helpers.getBackSourceAlignmentIssue(row.front, row.back, testCase.sourceText);
+  if (runtimeBackIssue) {
+    row.localBackGuard = { blockReason: runtimeBackIssue, rejectedBack: row.back };
+    row.back = "";
+  }
+  if (!row.back && looksLikeTaskNarration(row.rawBack)) {
+    row.modelOutputIssue = buildTaskNarrationIssue(config, "back", row.rawBack);
+  }
 }
 
 function tableEscape(value) {
@@ -1638,7 +1820,30 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err?.stack || err?.message || String(err));
-  process.exitCode = 1;
-});
+// Other scripts (scripts/check-guard-precision.js) reuse the engine loader and fixture helpers.
+module.exports = {
+  ROOT,
+  loadEngine,
+  makePage,
+  getCarding,
+  getEvalPrefix,
+  getPrefixCarding,
+  expandCasePrefixes,
+  normalizeForCompare,
+  resolveProviderConfig,
+  runCase,
+  judgeCase,
+  getHardFlags,
+  chatCompletion,
+  setCompletionObserver,
+  setCompletionOverride,
+  FRONT_WORD_CAP,
+  BACK_WORD_CAP,
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err?.stack || err?.message || String(err));
+    process.exitCode = 1;
+  });
+}

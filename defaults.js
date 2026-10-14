@@ -46,6 +46,7 @@ window.GHOSTWRITER_DEFAULTS = Object.freeze({
   defaultEditorSurface: "overlay",
   closeOverlayAfterQueue: false,
   showShortcutHints: true,
+  checkCardWhileTyping: false, // test: a one-line card check after a pause in typing
 
   // Debug
   debugMode: false,

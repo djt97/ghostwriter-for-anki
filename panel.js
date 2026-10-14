@@ -2013,25 +2013,33 @@ async function claudeCompletion(prompt, options = {}) {
 
   const systemPrompt = options.system || getCopilotSystemPrompt("front");
   const endpoint = `${baseUrl}/v1/messages`;
-  const maxTokens = options.maxTokens || 1024;
+  const shape = COPILOT_CORE.getClaudeRequestShape(model, options.maxTokens || 1024);
 
   const payload = {
     model,
-    max_tokens: maxTokens,
+    max_tokens: shape.maxTokens,
     system: systemPrompt,
     messages: [{ role: "user", content: prompt }],
   };
+  if (shape.thinking) payload.thinking = shape.thinking;
+  if (shape.effort) payload.output_config = { effort: shape.effort };
+  const headers = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+    "anthropic-dangerous-direct-browser-access": "true",
+  };
+  // On Anthropic's own API, a request a model declines is re-run on a fallback model.
+  if (shape.fallbacks && /^https:\/\/api\.anthropic\.com$/i.test(baseUrl)) {
+    payload.fallbacks = "default";
+    headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
+  }
 
   recordDebugRequest({ provider: "claude", model, endpoint, prompt, system: systemPrompt });
 
   const res = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
+    headers,
     body: JSON.stringify(payload),
     signal: options.signal,
   });
@@ -2049,7 +2057,7 @@ async function claudeCompletion(prompt, options = {}) {
   }
 
   const data = await res.json();
-  const out = (data?.content?.[0]?.text || "").trim();
+  const out = COPILOT_CORE.getClaudeReplyText(data);
   setActiveModelBackend("claude");
   recordDebugResponse(out);
   return out;
@@ -2129,6 +2137,8 @@ try {
     copilot.prompts.frontFromBack = (p.frontFromBackSystem || "").trim() || copilot.prompts.frontFromBack;
     copilot.prompts.cloze = (p.clozeSystem || "").trim() || copilot.prompts.cloze;
     copilot._userPromptBuilder = typeof p.buildUserPrompt === "function" ? p.buildUserPrompt : null;
+    copilot.pairPrompt = (p.pairSystem || "").trim();
+    copilot._pairPromptBuilder = typeof p.buildPairUserPrompt === "function" ? p.buildPairUserPrompt : null;
   }
 } catch {}
 const basePromptDefaults = {
@@ -2299,6 +2309,7 @@ function copilotBackoffFrom(res) {
 }
 
 function getCopilotSystemPrompt(kind = "front") {
+  if (kind === "pair" && copilot.pairPrompt) return appendStrictMathRule(renderPromptTemplate(copilot.pairPrompt));
   const prompts = copilot?.prompts || {};
   if (kind === "front" && prompts.front?.trim()) {
     return appendStrictMathRule(renderPromptTemplate(prompts.front.trim()));
@@ -3683,7 +3694,7 @@ function normalizeCopilotSuggestion(raw, existingText, { role = "front", maxWord
   let text = String(raw)
     .replace(/^[\s\u200b]+/, "")
     .replace(/[\s\u200b]+$/, "")
-    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/^['"`]+(?!s\b)|['"`]+$/g, "")
     .replace(/\r?\n+/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -3794,11 +3805,10 @@ function stripCopilotMetaOutput(rawText) {
     .replace(/^["'`]+|["'`]+$/g, "")
     .trim();
 
-  const startsWithMeta = /^(?:the user\b|i\b|we\b|looking at\b|based on\b|this (?:card|front|back|source)\b|the (?:front|back|source)\b)/i.test(text);
-  if (!startsWithMeta) return text;
+  if (!COPILOT_CORE.startsWithTaskNarration(text)) return text;
 
   const labelled = text.match(/\b(?:answer|back|completion)\s*[:\-]\s*["“]?(.+?)["”]?$/i);
-  if (labelled?.[1] && !/^(?:the user\b|i\b|looking at\b)/i.test(labelled[1].trim())) {
+  if (labelled?.[1] && !COPILOT_CORE.startsWithTaskNarration(labelled[1])) {
     return labelled[1].trim();
   }
 
@@ -3945,19 +3955,23 @@ function getAnswerTerms(value, { distinctiveOnly = false } = {}) {
     .filter((term) => term.length >= 3);
   const unique = [...new Set(terms)];
   if (!distinctiveOnly) return unique;
-  const distinctive = unique.filter((term) => !FRONT_ANSWER_GENERIC_TERMS.has(term));
+  // The word lists hold plain words ("called", "leaves"); reduce them the same way as the text
+  // ("cal", "leave") before comparing, or those entries never match.
+  const generic = new Set(getAnswerTerms([...FRONT_ANSWER_GENERIC_TERMS].join(" ")));
+  const distinctive = unique.filter((term) => !generic.has(term));
   if (distinctive.length) return distinctive;
-  return unique.filter((term) => !FRONT_ANSWER_CUE_TERMS.has(term));
+  const cue = new Set(getAnswerTerms([...FRONT_ANSWER_CUE_TERMS].join(" ")));
+  return unique.filter((term) => !cue.has(term));
 }
 
 function getSourceGroundingTerms(value) {
-  const nonGroundingTerms = new Set([
+  const nonGroundingTerms = new Set(getAnswerTerms([
     ...FRONT_ANSWER_GENERIC_TERMS,
     "about", "after", "before", "between", "during", "from", "into", "onto",
     "over", "under", "through", "toward", "towards", "without", "within",
     "standard", "main", "primary", "basic", "important", "specific", "beneficial",
     "source", "card", "front", "back", "question", "answer",
-  ]);
+  ].join(" ")));
   return getAnswerTerms(value, { distinctiveOnly: true })
     .filter((term) => term.length >= 4)
     .filter((term) => !nonGroundingTerms.has(term));
@@ -4201,11 +4215,14 @@ function preserveSourceLatexForBackSuggestion(backText, { sourceText = "", exist
 // A Back "restates the Front" when it echoes the Front's key words and adds almost nothing
 // new (e.g. Front "Why can the Dead Sea keep swimmers afloat?" -> Back "Its density keeps
 // swimmers afloat"). Atomic answers introduce new content; restatements don't.
+// A Back that adds a number the Front lacks answers it ("About 2 bits per spike").
 function backRestatesFront(frontText, backText) {
   const stop = new Set(["its", "it", "their", "his", "her", "the", "this", "that", "these", "those", "such"]);
   const front = new Set(getAnswerTerms(frontText));
   const back = getAnswerTerms(backText).filter((t) => !stop.has(t));
   if (back.length < 3) return false;
+  const frontNumbers = new Set(String(frontText || "").match(/\d[\d.,]*/g) || []);
+  if ((String(backText || "").match(/\d[\d.,]*/g) || []).some((n) => !frontNumbers.has(n))) return false;
   const overlap = back.filter((t) => front.has(t)).length;
   const novel = back.length - overlap;
   return overlap >= 2 && novel <= 1;
@@ -4606,7 +4623,10 @@ function getFrontCompletionFitIssue(frontText) {
   if (/^in\s+(?:words|short|brief|one\s+word),?\s+(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
     return "";
   }
+  // An opening phrase set off by a comma is fine: "According to Friedman, what do...", "In 'The
+  // Road Not Taken', what has...". Without the comma it's a graft: "Deep learning what is...".
   if (!/^(?:who|what|when|where|why|how|which|whom|whose|do|does|did|is|are|was|were|can|could|should|would|has|have|had|define|state|name|list|describe|explain)\b/i.test(text)
+      && !/^[^?!]{2,160},\s+(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)
       && /\b(?:who|what|when|where|why|how|which|whom|whose)\s+(?:is|are|was|were|do|does|did|can|could|should|would|has|have|had)\b/i.test(text)) {
     return "Front grafts a question fragment onto a declarative cue";
   }
@@ -4616,16 +4636,11 @@ function getFrontCompletionFitIssue(frontText) {
   if (/\b(?:in|into|of|for|with|by|to|from)\s+(?:a|an|the|one|two|three|several|multiple|many)\s*[?.!]?$/i.test(text)) {
     return "Front ends with a dangling phrase";
   }
-  if (/\b(?:refer\s+to|stand\s+for)\s*\?$/i.test(text)) {
-    return "";
-  }
-  if (/\bdown\s+to\s*\?$/i.test(text)) {
-    return "";
-  }
-  if (/\b(?:characteri[sz]ed|defined|determined|measured|represented|identified|distinguished|classified)\s+by\s*\?$/i.test(text)) {
-    return "";
-  }
-  if (/\b(?:of|to|than|with|by|for|because|that|which|who|where|when|how)\s*[?.!]?$/i.test(text)) {
+  // A finished question may end on a preposition ("What are CNNs used for?", "What did Gillard
+  // replace the RSPT with?"). Without the question mark the same word means the completion was
+  // cut off; a conjunction or question word is dangling either way.
+  if (/\b(?:than|because|that|which|who|where|when|how)\s*[?.!]?$/i.test(text)
+      || /\b(?:of|to|with|by|for|from)\s*[.!]?$/i.test(text)) {
     return "Front ends with a dangling word";
   }
   if (/;/.test(text) && /;[^?]*(?:because|therefore|which|this|that|it|they|and)\b/i.test(text)) {
@@ -4672,7 +4687,7 @@ function getFrontSuggestionBlockReason(suggestion, existingText, ctx = {}) {
   return getFrontAnswerLeakReason(fullDraft, {
     existingText,
     backText: protectedAnswer,
-  }) || getFrontCompletionFitIssue(fullDraft) || getFrontRelationshipDriftIssue(fullDraft, {
+  }) || getFrontCompletionFitIssue(fullDraft) || COPILOT_CORE?.getOpenFrameIssue?.(fullDraft, existingText) || getFrontRelationshipDriftIssue(fullDraft, {
     sourceText: getContextSourceText(ctx.page),
     existingText,
   }) || getFrontDefinitionDriftIssue(fullDraft, {
@@ -4682,7 +4697,15 @@ function getFrontSuggestionBlockReason(suggestion, existingText, ctx = {}) {
     sourceText: getContextSourceText(ctx.page),
     existingText,
     protectedAnswer,
-  }) || getFrontSourceGroundingIssue(fullDraft, {
+  });
+}
+
+// Checks too unreliable to hide a draft. Source grounding fired on 12 gold cards for every 5
+// known-bad ones in the eval fixtures, so a Front it flags is still shown, with a note.
+function getFrontSuggestionWarning(suggestion, existingText, ctx = {}) {
+  if (!suggestion) return "";
+  const fullDraft = (existingText + ` ${suggestion}`).trim();
+  return getFrontSourceGroundingIssue(fullDraft, {
     sourceText: getContextSourceText(ctx.page),
     title: ctx.page?.title || "",
     notes: ctx.notes || "",
@@ -4719,10 +4742,22 @@ function buildFrontGuardRetryPrompt(basePrompt, rejectedDraft, reason) {
 async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existingText, ctx = {}) {
   state._lastFrontLeakBlocked = false;
   state._lastFrontBlockReason = "";
+  state._frontWarning = "";
   state._frontValidationCtx = ctx;
+  const startCtx = ctx;
   try {
     const providerSuggestion = await callFrontLLM(prompt, sys, controller, state, existingText);
     if (controller?.signal?.aborted) return "";
+    // In one-call mode the model has said what its answer is: keep that off the Front. An
+    // "answer" nearly as long as the question just restates it, and would block a sound Front.
+    const pairAnswerFor = (suggestionText) => {
+      const back = state._pairMode ? String(state._pairBack || "").trim() : "";
+      const frontWords = getTypedWordCount(`${existingText} ${suggestionText || ""}`);
+      return back && getTypedWordCount(back) <= Math.max(6, 0.6 * frontWords) ? back : "";
+    };
+    const pairAnswer = pairAnswerFor(providerSuggestion);
+    // The live display of a streamed retry checks against this answer too.
+    if (pairAnswer) ctx = state._frontValidationCtx = { ...ctx, protectedAnswer: pairAnswer };
     const protectedAnswer = String(ctx.protectedAnswer || ctx.other || "").trim();
     const suggestion = trimAnswerBearingFrontTail(
       providerSuggestion,
@@ -4735,7 +4770,10 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
     const blockReason = suggestion
       ? getFrontSuggestionBlockReason(suggestion, existingText, ctx)
       : normalizationReason;
-    if (!blockReason) return suggestion;
+    if (!blockReason) {
+      state._frontWarning = getFrontSuggestionWarning(suggestion, existingText, ctx);
+      return suggestion;
+    }
 
     const fullDraft = suggestion
       ? (existingText + ` ${suggestion}`).trim()
@@ -4755,6 +4793,7 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
           && !getFrontSuggestionBlockReason(repairedSuggestion, existingText, ctx)) {
         console.debug("[Copilot] Repaired Front qualifier locally:", repairedFull);
         state._lastFrontBlockReason = "";
+        state._frontWarning = getFrontSuggestionWarning(repairedSuggestion, existingText, ctx);
         return repairedSuggestion;
       }
     }
@@ -4771,9 +4810,13 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
     }
 
     copilot._skipRateLimit = true;
-    const retryPrompt = buildFrontGuardRetryPrompt(prompt, fullDraft, blockReason);
+    const retryPrompt = state._pairMode
+      ? buildFrontGuardRetryPrompt(prompt, fullDraft, blockReason).replace(/\nOutput:\s*$/u, "\nReply again with the two lines FRONT: and BACK:.")
+      : buildFrontGuardRetryPrompt(prompt, fullDraft, blockReason);
     const providerRetry = await callFrontLLM(retryPrompt, sys, controller, state, existingText);
     if (controller?.signal?.aborted) return "";
+    const retryPairAnswer = pairAnswerFor(providerRetry);
+    if (retryPairAnswer) ctx = state._frontValidationCtx = { ...ctx, protectedAnswer: retryPairAnswer };
     const retry = trimAnswerBearingFrontTail(
       providerRetry,
       existingText,
@@ -4785,6 +4828,7 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
       : getFrontNormalizationRetryReason(existingText, state._lastFrontRawOutput);
     if (retry && !retryReason) {
       state._lastFrontBlockReason = "";
+      state._frontWarning = getFrontSuggestionWarning(retry, existingText, ctx);
       return retry;
     }
 
@@ -4804,7 +4848,7 @@ async function callFrontLLMWithLocalGuard(prompt, sys, controller, state, existi
     }
     return "";
   } finally {
-    if (state._frontValidationCtx === ctx) {
+    if (state._frontValidationCtx === ctx || state._frontValidationCtx === startCtx) {
       delete state._frontValidationCtx;
     }
   }
@@ -4844,6 +4888,8 @@ function makeLinkedAbort(parentSignal) {
 }
 
 function getCopilotMaxTokens(role) {
+  // A one-call card returns the whole question and the answer: "FRONT: ...\nBACK: ...".
+  if (role === "pair") return 120;
   const isBack = role === "back";
   const fallback = isBack ? 30 : 40;
   const configured = Number(isBack ? copilot.backMaxTokens : copilot.frontMaxTokens);
@@ -4851,12 +4897,21 @@ function getCopilotMaxTokens(role) {
   return Math.max(fallback, Math.min(configured, 64));
 }
 
+// In one-call mode the reply holds both fields; the Front paths read only its FRONT line, and
+// the BACK line is kept on the state for the Back draft.
+function frontTextFromRaw(state, raw) {
+  if (!state?._pairMode) return raw;
+  const pair = COPILOT_CORE.parsePairCompletion(raw);
+  state._pairBack = pair.back;
+  return pair.labelled ? pair.front : "";
+}
+
 async function geminiFrontStream(prompt, sys, local, state, existingText, capWords) {
   let acc = "";
   let anyVisible = false;
   try {
     await geminiCompletionStream(prompt, {
-      maxTokens: getCopilotMaxTokens("front"),
+      maxTokens: getCopilotMaxTokens(state?._pairMode ? "pair" : "front"),
       temperature: 0.1,
       stop: undefined,
       system: sys,
@@ -4865,15 +4920,12 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
       onDelta: (chunk) => {
         acc += chunk;
         state._lastFrontRawOutput = acc;
-        const live = getDisplayableFrontSuggestion(
-          state,
-          normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords }),
-          existingText
-        );
-        anyVisible = anyVisible || !!live;
-        updateSuggestionUI(state, live);
-        const reachedCap = (COPILOT_CORE?.wordCount?.(existingText) || getTypedWordCount(existingText))
-          + (COPILOT_CORE?.wordCount?.(live) || getTypedWordCount(live)) >= capWords;
+        const draft = normalizeCopilotSuggestion(frontTextFromRaw(state, acc), existingText, { role: "front", maxWords: capWords });
+        anyVisible = anyVisible || !!draft;
+        updateSuggestionUI(state, getDisplayableFrontSuggestion(state, draft, existingText));
+        // No early stop in one-call mode: the answer comes after the question.
+        const reachedCap = !state._pairMode && (COPILOT_CORE?.wordCount?.(existingText) || getTypedWordCount(existingText))
+          + (COPILOT_CORE?.wordCount?.(draft) || getTypedWordCount(draft)) >= capWords;
         if (reachedCap && !local.signal.aborted) {
           abortCopilotController(local, COPILOT_ABORT_EARLY_STOP);
         }
@@ -4881,7 +4933,7 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
       onDone: () => {
         const live = getDisplayableFrontSuggestion(
           state,
-          normalizeCopilotSuggestion(acc, existingText, { role: "front", maxWords: capWords }),
+          normalizeCopilotSuggestion(frontTextFromRaw(state, acc), existingText, { role: "front", maxWords: capWords }),
           existingText
         );
         updateSuggestionUI(state, live);
@@ -4889,16 +4941,19 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
     });
   } catch (err) {
     if (err?.name === "AbortError") {
-      const current = finalizeFrontQuestion((state.textEl?.textContent || "").trim());
-      updateSuggestionUI(state, current);
-      return current;
+      return normalizeFrontSuggestionForPrefix(
+        existingText,
+        normalizeCopilotSuggestion(frontTextFromRaw(state, acc), existingText, { role: "front", maxWords: capWords })
+      );
     }
     console.warn("Gemini stream failed; falling back to non-stream.", err);
   }
 
-  const liveNow = normalizeFrontSuggestionForPrefix(existingText, (state.textEl?.textContent || "").trim());
-  updateSuggestionUI(state, liveNow);
-  if (liveNow) return liveNow;
+  const draftNow = normalizeFrontSuggestionForPrefix(
+    existingText,
+    normalizeCopilotSuggestion(frontTextFromRaw(state, acc), existingText, { role: "front", maxWords: capWords })
+  );
+  if (draftNow) return draftNow;
 
   if (!anyVisible && !acc.trim()) {
     return geminiFrontNonStream(prompt, sys, local, state, existingText, capWords);
@@ -4908,26 +4963,26 @@ async function geminiFrontStream(prompt, sys, local, state, existingText, capWor
 
 async function geminiFrontNonStream(prompt, sys, local, state, existingText, capWords) {
   const raw = await geminiCompletion(prompt, {
-    maxTokens: getCopilotMaxTokens("front"),
+    maxTokens: getCopilotMaxTokens(state?._pairMode ? "pair" : "front"),
     temperature: 0.1,
     stop: undefined,
     system: sys,
     signal: local.signal,
   }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
   state._lastFrontRawOutput = raw || "";
-  let single = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
+  let single = normalizeCopilotSuggestion(frontTextFromRaw(state, raw || ""), existingText, { role: "front", maxWords: capWords });
   if (!single) {
     showLiteFallbackToast("Used lite fallback");
     const rawLite = await geminiCompletion(prompt, {
       model: "gemini-2.5-flash-lite",
-      maxTokens: getCopilotMaxTokens("front"),
+      maxTokens: getCopilotMaxTokens(state?._pairMode ? "pair" : "front"),
       temperature: 0.1,
       stop: undefined,
       system: sys,
       signal: local.signal,
     }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
     state._lastFrontRawOutput = rawLite || "";
-    single = normalizeCopilotSuggestion(rawLite || "", existingText, { role: "front", maxWords: capWords });
+    single = normalizeCopilotSuggestion(frontTextFromRaw(state, rawLite || ""), existingText, { role: "front", maxWords: capWords });
   }
   return normalizeFrontSuggestionForPrefix(existingText, single);
 }
@@ -4946,7 +5001,7 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
   }, timeoutMs);
   try {
     await ultimateCompletionStream(prompt, {
-      maxTokens: getCopilotMaxTokens("front"),
+      maxTokens: getCopilotMaxTokens(state?._pairMode ? "pair" : "front"),
       temperature: 0.1,
       stop: undefined,
       signal: local.signal,
@@ -4956,15 +5011,13 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
       onDelta: (chunk) => {
         partial += chunk;
         state._lastFrontRawOutput = partial;
-        const live = getDisplayableFrontSuggestion(
-          state,
-          normalizeCopilotSuggestion(partial, existingText, { role: "front", maxWords: capWords }),
-          existingText
-        );
-        suggestion = live;
-        updateSuggestionUI(state, live);
-        const reachedCap = (COPILOT_CORE?.wordCount?.(existingText) || getTypedWordCount(existingText))
-          + (COPILOT_CORE?.wordCount?.(live) || getTypedWordCount(live)) >= capWords;
+        // Only what passes the checks is shown while it streams; the whole draft goes back to
+        // callFrontLLMWithLocalGuard, which retries once or keeps it as a blocked draft.
+        suggestion = normalizeCopilotSuggestion(frontTextFromRaw(state, partial), existingText, { role: "front", maxWords: capWords });
+        updateSuggestionUI(state, getDisplayableFrontSuggestion(state, suggestion, existingText));
+        // No early stop in one-call mode: the answer comes after the question.
+        const reachedCap = !state._pairMode && (COPILOT_CORE?.wordCount?.(existingText) || getTypedWordCount(existingText))
+          + (COPILOT_CORE?.wordCount?.(suggestion) || getTypedWordCount(suggestion)) >= capWords;
         if ((reachedCap || Date.now() > deadline) && !local.signal.aborted) {
           abortedByEarlyStop = true;
           abortCopilotController(local, COPILOT_ABORT_EARLY_STOP);
@@ -4979,7 +5032,7 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
   if (parentSignal?.aborted && !abortedByEarlyStop) return "";
   if (!suggestion && !partial.trim() && !abortedByEarlyStop && !parentSignal?.aborted) {
     const raw = await ultimateCompletion(prompt, {
-      maxTokens: getCopilotMaxTokens("front"),
+      maxTokens: getCopilotMaxTokens(state?._pairMode ? "pair" : "front"),
       temperature: 0.1,
       stop: undefined,
       signal: local.signal,
@@ -4988,7 +5041,7 @@ async function openAIFrontStream(prompt, sys, local, state, existingText, capWor
     }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
     if (parentSignal?.aborted) return "";
     state._lastFrontRawOutput = raw || "";
-    suggestion = normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords });
+    suggestion = normalizeCopilotSuggestion(frontTextFromRaw(state, raw || ""), existingText, { role: "front", maxWords: capWords });
   }
   return normalizeFrontSuggestionForPrefix(existingText, suggestion);
 }
@@ -5015,7 +5068,7 @@ async function callFrontLLM(prompt, sys, ctrl, state, existingText) {
         state._lastFrontRawOutput = raw || "";
         return normalizeFrontSuggestionForPrefix(
           existingText,
-          normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords })
+          normalizeCopilotSuggestion(frontTextFromRaw(state, raw || ""), existingText, { role: "front", maxWords: capWords })
         );
       }
       if (nativeAttempt.forceFreeTier) {
@@ -5161,14 +5214,14 @@ async function openAIBackCall(prompt, sys, signal, existingText, capWords, force
 
 async function claudeFrontCall(prompt, sys, local, state, existingText, capWords) {
   const raw = await claudeCompletion(prompt, {
-    maxTokens: getCopilotMaxTokens("front"),
+    maxTokens: getCopilotMaxTokens(state?._pairMode ? "pair" : "front"),
     system: sys,
     signal: local.signal,
   }).catch((err) => (err?.name === "AbortError" ? "" : Promise.reject(err)));
   state._lastFrontRawOutput = raw || "";
   return normalizeFrontSuggestionForPrefix(
     existingText,
-    normalizeCopilotSuggestion(raw || "", existingText, { role: "front", maxWords: capWords })
+    normalizeCopilotSuggestion(frontTextFromRaw(state, raw || ""), existingText, { role: "front", maxWords: capWords })
   );
 }
 
@@ -5309,6 +5362,16 @@ function selectRelevantSource(
   const start = Math.max(0, bestIdx - Math.max(before, referentBack));
   const end = Math.min(sentences.length, bestIdx + effectiveAfter + 1);
   return sentences.slice(start, end).join(" ");
+}
+
+function buildCopilotPairPrompt(existing, { notes = "", page = null } = {}) {
+  const pageSourceText = getContextSourceText(page || {});
+  // The answer may sit one sentence away from the one the typed words target.
+  const focused = selectRelevantSource(pageSourceText, existing, "", { before: 1, after: 1 });
+  const focusedPage = focused && focused !== pageSourceText
+    ? { ...(page || {}), sourceText: focused, selection: focused }
+    : (page || {});
+  return copilot._pairPromptBuilder({ existing, other: "", notes, page: focusedPage });
 }
 
 function buildCopilotCompletionPrompt(fieldId, existing, ctx = {}) {
@@ -5456,7 +5519,9 @@ function setBackDraftSuggestionFromSourceStem(backText, frontText, { force = fal
   return true;
 }
 
-async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
+// pairedBack: the answer a one-call card already gave. It goes through the same checks as a
+// drafted Back; only if it fails is a separate Back call made.
+async function requestBackDraftFromFront(frontForBack, { force = false, pairedBack = "" } = {}) {
   if (!force) return;
   // Cloze cards carry their answer inside {{c1::...}}; don't auto-draft a Q&A "back".
   if (isClozeCopilotActive(frontForBack)) return;
@@ -5510,8 +5575,8 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     return;
   }
 
-  // Respect any active server‑side backoff.
-  if (Date.now() < (copilot.pauseUntil || 0)) {
+  // Respect any active server‑side backoff (a paired answer needs no call).
+  if (!pairedBack && Date.now() < (copilot.pauseUntil || 0)) {
     clearSuggestionUI(backState, { mirrorValue: existingBack });
     backState.suggestion = "";
     if (isCurrentCopilotRequest(backState, controller)) backState.controller = null;
@@ -5567,13 +5632,18 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
       }
       return;
     }
-    copilot._lastAt = Date.now();
-    updateLocalMetrics((metrics) => {
-      bumpMetric(metrics, "ai_suggestions_requested");
-      return metrics;
-    });
+    if (!pairedBack) {
+      copilot._lastAt = Date.now();
+      updateLocalMetrics((metrics) => {
+        bumpMetric(metrics, "ai_suggestions_requested");
+        return metrics;
+      });
+    }
 
-    const raw = await callBackLLM(prompt, sys, controller, existingBack);
+    // A paired answer gets the same cleanup as a Back reply (callBackLLM normalises its output).
+    const raw = pairedBack
+      ? normalizeCopilotSuggestion(pairedBack, existingBack, { role: "back", maxWords: copilot.backWordCap })
+      : await callBackLLM(prompt, sys, controller, existingBack);
     if (!isCurrentCopilotRequest(backState, controller)) return;
     if (controller.signal.aborted) {
       if (isCopilotTimeoutAbort(controller)) {
@@ -5594,6 +5664,9 @@ async function requestBackDraftFromFront(frontForBack, { force = false } = {}) {
     });
     const fitIssue = getBackAnswerFitIssue(frontForStrip, suggestion)
       || getBackSourceAlignmentIssue(frontForStrip, suggestion, sourceTextForLimit);
+    if ((fitIssue || !suggestion) && pairedBack) {
+      return requestBackDraftFromFront(frontForBack, { force: true });
+    }
     if (fitIssue) {
       clearSuggestionUI(backState, { mirrorValue: existingBack });
       backState.suggestion = "";
@@ -6151,7 +6224,7 @@ function applyCopilotProposedCard(card) {
   } finally {
     copilot._suspendCrossClear = false;
   }
-  setCopilotStatus("Card inserted — edit or send.", true);
+  setCopilotStatus("Card inserted — edit or send.");
 }
 
 // panel.js — accept/reject/clear helpers for compact panel
@@ -6260,11 +6333,6 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
   }
   const len = trimmed.replace(/\s+/g, "").length;
   const minChars = state.fieldId === "front" ? copilot.frontMinChars : copilot.backMinChars;
-  if (Date.now() < copilot.pauseUntil) {
-    clearSuggestionUI(state, { mirrorValue: value });
-    state.suggestion = "";
-    return;
-  }
   if (!force && len < minChars) {
     state.suggestion = "";
     clearSuggestionUI(state, { mirrorValue: value });
@@ -6430,6 +6498,18 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
     cleanupBeforeLlm();
     return;
   }
+  // The provider asked for a pause. The exact source split above needs no model, so it has
+  // already had its chance; say why there is no AI suggestion instead of returning silently.
+  if (Date.now() < copilot.pauseUntil) {
+    const seconds = Math.max(1, Math.ceil((copilot.pauseUntil - Date.now()) / 1000));
+    const message = `The AI provider asked Ghostwriter to wait. Try again in ${seconds}s.`;
+    setCopilotStatus(message);
+    showFrontNoCardNotice(state, message);
+    clearSuggestionUI(state, { mirrorValue: value });
+    state.suggestion = "";
+    cleanupBeforeLlm();
+    return;
+  }
   if (!ensureAiSourceInputWithinLimit(sourceTextForLimit, { notify: "copilot" })) {
     clearSuggestionUI(state, { mirrorValue: value });
     state.suggestion = "";
@@ -6437,17 +6517,27 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
     return;
   }
 
-  const prompt = buildCopilotCompletionPrompt(state.fieldId, existingForCopilot, {
-    other,
-    protectedAnswer,
-    notes,
-    page,
-    sourceMode: mode,
-    cloze: clozeMode,
-  });
+  // One call for the whole card when both fields are wanted. In the eval it gave the same or
+  // better cards with about half the calls. Not for cloze, a Front written from a typed Back,
+  // or when the Back already has text.
+  const pairMode = state.fieldId === "front" && withOther && !clozeMode && !isFrontFromBack
+    && !((document.querySelector("#back")?.value || "").trim())
+    && !!copilot.pairPrompt && typeof copilot._pairPromptBuilder === "function";
+  const prompt = pairMode
+    ? buildCopilotPairPrompt(existingForCopilot, { notes, page })
+    : buildCopilotCompletionPrompt(state.fieldId, existingForCopilot, {
+      other,
+      protectedAnswer,
+      notes,
+      page,
+      sourceMode: mode,
+      cloze: clozeMode,
+    });
 
   try {
-    const sys = getCopilotSystemPrompt(clozeMode ? "cloze" : isFrontFromBack ? "front-from-back" : state.fieldId);
+    const sys = pairMode
+      ? getCopilotSystemPrompt("pair")
+      : getCopilotSystemPrompt(clozeMode ? "cloze" : isFrontFromBack ? "front-from-back" : state.fieldId);
     const since = Date.now() - (copilot._lastAt || 0);
     if (!force && since < copilot.minIntervalMs) {
       await new Promise(r => setTimeout(r, copilot.minIntervalMs - since));
@@ -6470,6 +6560,10 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       bumpMetric(metrics, "ai_suggestions_requested");
       return metrics;
     });
+    state._pairMode = pairMode;
+    state._pairBack = "";
+    // A warning belongs to the suggestion it was raised for (a Cloze request sets none).
+    state._frontWarning = "";
     let suggestion = state.fieldId === "front"
       ? (clozeMode
         ? await callClozeLLM(prompt, sys, controller, existingForCopilot)
@@ -6481,6 +6575,8 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
           sourceMode: mode,
         }))
       : await callBackLLM(prompt, sys, controller, trimmed);
+    const pairedBack = pairMode ? String(state._pairBack || "").trim() : "";
+    state._pairMode = false;
     if (!isCurrentCopilotRequest(state, controller)) return;
     if (controller.signal.aborted) {
       if (isCopilotTimeoutAbort(controller)) {
@@ -6510,7 +6606,8 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
               || getBackSourceAlignmentIssue(frontForAnswer, displayedBack, sourceTextForLimit);
             if (fitIssue) {
               state._lastBackFitIssue = fitIssue;
-              rememberRejectedCopilotDraft(state, { suggestion: displayedBack, reason: fitIssue });
+              // "Use anyway" inserts at the cursor, after the typed text: keep only the completion.
+              rememberRejectedCopilotDraft(state, { suggestion, preview: displayedBack, reason: fitIssue });
               console.debug("[Copilot] Suppressed Back suggestion:", fitIssue, displayedBack);
               suggestion = "";
             }
@@ -6598,6 +6695,9 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
     state.suggestion = suggestion;
     hideCopilotFactPicker(); // a real suggestion arrived — clear any fact picker
     hideFrontNoCardNotice(state);
+    if (state.fieldId === "front" && state._frontWarning) {
+      showFrontNoCardNotice(state, "Check this suggestion: it uses words the source doesn't, so it may add something from outside the passage.");
+    }
     if (state.suggestionEl) {
       state.suggestionEl.hidden = false;
       state.suggestionEl.classList.remove("loading", "error");
@@ -6617,7 +6717,8 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       // only the exact literal source-split path may install a deterministic paired Back.
       if (withOther && backIsBlank && frontForBack) {
         copilot._skipRateLimit = true; // bypass local limiter for speed
-        requestBackDraftFromFront(frontForBack, { force: true }); // already passes Front + Source + Notes
+        // A one-call card brought its answer; otherwise draft one (Front + Source + Notes).
+        requestBackDraftFromFront(frontForBack, { force: true, pairedBack });
       }
     } else if (state.fieldId === "back" && withOther) {
       const frontBlank = !((document.querySelector("#front")?.value || "").trim());
@@ -6630,6 +6731,7 @@ async function requestCopilot(state, { force = false, withOther = false, localOn
       }
     }
   } catch (e) {
+    state._pairMode = false;
     if (e?.name === "AbortError") {
       if (!isCurrentCopilotRequest(state, controller)) return;
       state.suggestion = "";
@@ -6915,6 +7017,7 @@ async function initCopilot() {
     };
     copilot.showSourceModePill = opts.showSourceModePill !== false;
     copilot.clipboardFallback = isClipboardFallbackEnabled(opts);
+    setLiveCardCheckEnabled(opts.checkCardWhileTyping === true);
     const D = window.GHOSTWRITER_DEFAULTS || {};
     const shortcut = typeof opts.copilotShortcut === "string" ? opts.copilotShortcut.trim() : "";
     copilot.triggerShortcut = shortcut || D.copilotShortcut || "Cmd+Shift+X";
@@ -6977,6 +7080,7 @@ async function initCopilot() {
         setCopilotEnabled(next.autoCompleteAI !== false);
         copilot.clipboardFallback = isClipboardFallbackEnabled(next);
         updatePdfSourceNotice();
+        setLiveCardCheckEnabled(next.checkCardWhileTyping === true);
         applyContentFontPreference(next);
         updateShortcutCoach();
         updateShortcutHelpText();
@@ -9763,6 +9867,10 @@ function updateCardTypeUI() {
   if (lpcgPanel) lpcgPanel.hidden = !isLpcg;
   // Hide the normal Front / Back / Context editors when using LPCG
   if (standardFields) standardFields.hidden = isLpcg;
+  // Check card reads the Front and Back, which LPCG doesn't use.
+  const checkButton = $("#checkCard");
+  if (checkButton) checkButton.hidden = isLpcg;
+  if (isLpcg) resetCardCheckUI();
 }
 
 function tokenizeLpcgLine(line) {
@@ -10501,6 +10609,7 @@ async function addCurrentCardToAnki() {
       if ((el.value || "") === typedAtStart[id]) el.value = "";
       else kept.push(id);
     }
+    if (!kept.includes("front")) resetCardCheckUI();
     const contextEl = document.querySelector("#context");
     if (contextEl && (contextEl.value || "") === contextAfterAdd) {
       contextEl.value = stickyActive ? (finalStickyValue || stickyBase || "") : "";
@@ -11399,6 +11508,7 @@ async function initPanel() {
     initSourceDisplayToggle();
     initLongSourceNotice();
     bindPdfClipboardButton();
+    bindCardCheck();
     bindClipboardImagePaste();
     initDebugPanel();
 
@@ -11454,6 +11564,131 @@ function updatePdfSourceNotice() {
     + (autoRead
       ? " After the first time, copying before you open Ghostwriter is enough."
       : " To skip this step, turn on \u201cUse clipboard as a Source fallback\u201d in Settings.");
+}
+
+// "Check card": offline checks of the card as written (card-checks.js). They look at how the
+// card is built, not at whether its facts are right.
+function renderCardCheck(flags, { message = "" } = {}) {
+  const box = $("#cardCheckResults");
+  if (!box) return;
+  box.replaceChildren();
+  box.classList.toggle("is-clean", !!message);
+  if (message) {
+    box.textContent = message;
+    box.hidden = false;
+    box.scrollIntoView?.({ block: "nearest" });
+    return;
+  }
+  const list = document.createElement("ul");
+  for (const flag of flags) {
+    const item = document.createElement("li");
+    if (flag.severity === "note") item.className = "card-check-note";
+    const field = document.createElement("span");
+    field.className = "card-check-field";
+    field.textContent = flag.field === "back" ? "Back: " : "Front: ";
+    item.append(field, document.createTextNode(flag.message));
+    list.append(item);
+  }
+  box.append(list);
+  box.hidden = false;
+  box.scrollIntoView?.({ block: "nearest" });
+}
+
+function runCardCheck() {
+  const checks = window.GHOSTWRITER_CARD_CHECKS;
+  if (!checks) return;
+  const front = $("#front")?.value || "";
+  const back = $("#back")?.value || "";
+  if (!front.trim()) {
+    renderCardCheck([], { message: "Write the Front first, then check the card." });
+    return;
+  }
+  // A cloze card has no question-and-answer pair; only its text is checked.
+  const flags = checks.checkCard({ front, back: detectClozeSyntax(front) ? "" : back });
+  renderCardCheck(flags, {
+    message: flags.length ? "" : "No problems the offline checks can see. They look at how the card is written, not at whether its facts are right.",
+  });
+}
+
+// Test option "Check the card as I type": after a pause, at most one line for the strongest
+// problem. Only once the Front looks finished, never the softer notes, and a dismissed check
+// stays quiet until the card is cleared.
+const cardCheckLive = { enabled: false, timer: null, dismissed: new Set() };
+
+function frontLooksFinished(front) {
+  const text = String(front || "").trim();
+  return /(?:\?|\.\.\.|…)$/.test(text) || text.split(/\s+/).filter(Boolean).length >= 6;
+}
+
+function hideLiveCardCheck() {
+  const hint = $("#cardCheckHint");
+  if (hint) hint.hidden = true;
+}
+
+// The card was sent or cleared: its check results and dismissals no longer apply.
+function resetCardCheckUI() {
+  const box = $("#cardCheckResults");
+  if (box) box.hidden = true;
+  clearTimeout(cardCheckLive.timer);
+  cardCheckLive.dismissed.clear();
+  hideLiveCardCheck();
+}
+
+function runLiveCardCheck() {
+  const checks = window.GHOSTWRITER_CARD_CHECKS;
+  const hint = $("#cardCheckHint");
+  if (!checks || !hint || !cardCheckLive.enabled) return;
+  const front = $("#front")?.value || "";
+  const back = $("#back")?.value || "";
+  if (!frontLooksFinished(front) || $("#cardCheckResults")?.hidden === false) {
+    hint.hidden = true;
+    return;
+  }
+  const flag = checks.checkCard({ front, back: detectClozeSyntax(front) ? "" : back })
+    .find((f) => f.severity !== "note" && !cardCheckLive.dismissed.has(f.id));
+  if (!flag) {
+    hint.hidden = true;
+    return;
+  }
+  hint.dataset.checkId = flag.id;
+  hint.querySelector(".card-check-hint-text").textContent = `${flag.field === "back" ? "Back" : "Front"}: ${flag.message}`;
+  hint.hidden = false;
+  hint.scrollIntoView?.({ block: "nearest" });
+}
+
+function setLiveCardCheckEnabled(enabled) {
+  cardCheckLive.enabled = !!enabled;
+  if (!cardCheckLive.enabled) {
+    clearTimeout(cardCheckLive.timer);
+    hideLiveCardCheck();
+  }
+}
+
+function bindCardCheck() {
+  const button = $("#checkCard");
+  if (!button || button.dataset.bound) return;
+  button.dataset.bound = "1";
+  button.addEventListener("click", () => {
+    hideLiveCardCheck();
+    runCardCheck();
+  });
+  $("#cardCheckHint .card-check-hint-dismiss")?.addEventListener("click", () => {
+    const id = $("#cardCheckHint")?.dataset.checkId;
+    if (id) cardCheckLive.dismissed.add(id);
+    hideLiveCardCheck();
+  });
+  // The results describe the card as it was checked; editing it makes them stale.
+  for (const id of ["front", "back"]) {
+    $("#" + id)?.addEventListener("input", () => {
+      const box = $("#cardCheckResults");
+      if (box) box.hidden = true;
+      if (!($("#front")?.value || "").trim()) cardCheckLive.dismissed.clear();
+      if (!cardCheckLive.enabled) return;
+      hideLiveCardCheck();
+      clearTimeout(cardCheckLive.timer);
+      cardCheckLive.timer = setTimeout(runLiveCardCheck, 1200);
+    });
+  }
 }
 
 function bindPdfClipboardButton() {

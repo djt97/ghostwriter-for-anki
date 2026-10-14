@@ -7,6 +7,7 @@
       "id": "dead-sea-afloat",
       "section": "supermemo 20 rules - ill-formulated Dead Sea example",
       "tags": ["dense-source", "minimum-information", "source-grounding"],
+      "djReview": { "date": "2026-10-13", "verdict": "good", "note": "Fine, though it begs why the density is high; pair it with a card about the salt content." },
       "sourceText": "Salt lake located on the border between Israel and Jordan. Its shoreline is the lowest point on the Earth's surface, averaging 396 m below sea level. It is 74 km long. It is seven times as salty (30% by volume) as the ocean. Its density keeps swimmers afloat. Only simple organisms can live in its saline waters.",
       "frontPrefix": "Why can the Dead Sea keep ",
       "carding": {
@@ -212,6 +213,7 @@
       "id": "dechter-term-qualifier",
       "section": "univocal cue - a disambiguating source qualifier must survive completion",
       "tags": ["qualifier-preservation", "univocal", "source-grounding", "regression"],
+      "djReview": { "date": "2026-10-13", "verdict": "good", "note": "Great, no comments." },
       "sourceText": "The term deep learning was introduced to the machine learning community by Rina Dechter in 1986, and to artificial neural networks by Igor Aizenberg and colleagues in 2000, in the context of Boolean threshold neurons.",
       "frontPrefix": "Who introduced ",
       "carding": {
