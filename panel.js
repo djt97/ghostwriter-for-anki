@@ -11621,7 +11621,7 @@ function runCardCheck() {
   // A cloze card has no question-and-answer pair; only its text is checked.
   const flags = checks.checkCard({ front, back: detectClozeSyntax(front) ? "" : back });
   renderCardCheck(flags, {
-    message: flags.length ? "" : "No problems the offline checks can see. They look at how the card is written, not at whether its facts are right.",
+    message: flags.length ? "" : "No problems found with card construction. Note that this does not check for factual accuracy.",
   });
 }
 
